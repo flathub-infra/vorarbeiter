@@ -15,4 +15,4 @@ COPY . /app
 WORKDIR /app
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["gunicorn", "vorarbeiter.wsgi:application", "--bind", "0.0.0.0:8000"]
+CMD ["gunicorn", "vorarbeiter.wsgi:application", "--bind", "0.0.0.0:8000", "--access-logfile=-", "--error-logfile=-"]
