@@ -1,6 +1,9 @@
+import hmac
+import hashlib
 import json
 import logging
-from django.http import HttpResponse, HttpResponseBadRequest
+from django.conf import settings
+from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from .models import GitHubWebhookEvent
@@ -9,9 +12,33 @@ from .models import GitHubWebhookEvent
 logger = logging.getLogger(__name__)
 
 
+def verify_github_signature(request):
+    if not settings.GITHUB_WEBHOOK_SECRET:
+        logger.warning("GitHub webhook secret not configured, rejecting webhook")
+        return False
+
+    signature_header = request.headers.get("X-Hub-Signature-256")
+    if not signature_header:
+        logger.warning("No X-Hub-Signature-256 header in request")
+        return False
+
+    payload = request.body
+    expected_signature = (
+        "sha256="
+        + hmac.new(
+            settings.GITHUB_WEBHOOK_SECRET.encode(), payload, hashlib.sha256
+        ).hexdigest()
+    )
+
+    return hmac.compare_digest(signature_header, expected_signature)
+
+
 @csrf_exempt
 @require_POST
 def github_webhook(request):
+    if not verify_github_signature(request):
+        return HttpResponseForbidden("Invalid signature")
+
     event_type = request.headers.get("X-GitHub-Event")
 
     if event_type not in ["pull_request", "push", "issue_comment"]:

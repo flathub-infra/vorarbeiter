@@ -39,6 +39,9 @@ ALLOWED_HOSTS: list[str] = (
     else []
 )
 
+# GitHub webhook settings
+GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+
 
 # Application definition
 
