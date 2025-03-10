@@ -9,3 +9,12 @@ dependencies = [
     "dj-database-url>=2.2.0",
     "gunicorn>=21.2.0",
 ]
+
+[dependency-groups]
+dev = [
+    "django-stubs[compatible-mypy]>=5.1.3",
+    "django-stubs-ext>=5.1.3",
+    "mypy>=1.15.0",
+    "types-dj-database-url>=1.3.0.4",
+    "ruff>=0.9.10",
+]
