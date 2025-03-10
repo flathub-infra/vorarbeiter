@@ -8,6 +8,7 @@ dependencies = [
     "django>=5.1.7",
     "dj-database-url>=2.2.0",
     "gunicorn>=21.2.0",
+    "sentry-sdk[django]>=2.22.0",
 ]
 
 [dependency-groups]
