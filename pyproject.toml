@@ -6,4 +6,5 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "django>=5.1.7",
+    "dj-database-url>=2.2.0",
 ]
