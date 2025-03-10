@@ -4,14 +4,13 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('webhooks', '0001_initial'),
+        ("webhooks", "0001_initial"),
     ]
 
     operations = [
         migrations.RenameModel(
-            old_name='GitHubWebhook',
-            new_name='GitHubWebhookEvent',
+            old_name="GitHubWebhook",
+            new_name="GitHubWebhookEvent",
         ),
     ]

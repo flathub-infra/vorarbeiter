@@ -5,23 +5,42 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='GitHubWebhook',
+            name="GitHubWebhook",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('event_type', models.CharField(choices=[('pull_request', 'Pull Request'), ('push', 'Push'), ('issue_comment', 'Issue Comment')], max_length=50)),
-                ('payload', models.JSONField()),
-                ('repository', models.CharField(max_length=255)),
-                ('sender', models.CharField(max_length=255)),
-                ('received_at', models.DateTimeField(default=django.utils.timezone.now)),
-                ('processed', models.BooleanField(default=False)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "event_type",
+                    models.CharField(
+                        choices=[
+                            ("pull_request", "Pull Request"),
+                            ("push", "Push"),
+                            ("issue_comment", "Issue Comment"),
+                        ],
+                        max_length=50,
+                    ),
+                ),
+                ("payload", models.JSONField()),
+                ("repository", models.CharField(max_length=255)),
+                ("sender", models.CharField(max_length=255)),
+                (
+                    "received_at",
+                    models.DateTimeField(default=django.utils.timezone.now),
+                ),
+                ("processed", models.BooleanField(default=False)),
             ],
         ),
     ]
