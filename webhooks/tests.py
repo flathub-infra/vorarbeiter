@@ -153,6 +153,38 @@ class GitHubWebhookViewTest(TestCase):
         webhook = GitHubWebhookEvent.objects.first()
         self.assertEqual(webhook.event_type, "issue_comment")
 
+    @override_settings(GITHUB_WEBHOOK_SECRET="test_secret")
+    def test_ping_webhook(self):
+        payload = {
+            "zen": "Mind your words, they are important.",
+            "hook_id": 12345,
+            "hook": {
+                "type": "Repository",
+                "id": 12345,
+                "name": "web",
+                "url": "https://api.github.com/repos/test/repo/hooks/12345",
+                "events": ["pull_request", "push", "issue_comment"],
+            },
+            "repository": {"full_name": "test/repo"},
+            "sender": {"login": "testuser"},
+        }
+        payload_string = json.dumps(payload)
+        headers = {
+            "HTTP_X_GITHUB_EVENT": "ping",
+            "HTTP_X_HUB_SIGNATURE_256": self._generate_signature(payload_string),
+        }
+
+        response = self.client.post(
+            self.url,
+            data=payload_string,
+            content_type="application/json",
+            **headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        # Ping events are not stored in the database
+        self.assertEqual(GitHubWebhookEvent.objects.count(), 0)
+
 
 class GitHubWebhookSignatureTest(TestCase):
     def setUp(self):

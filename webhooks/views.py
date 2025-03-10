@@ -41,6 +41,11 @@ def github_webhook(request):
 
     event_type = request.headers.get("X-GitHub-Event")
 
+    # Handle ping event specially - GitHub sends this when setting up a webhook
+    if event_type == "ping":
+        logger.info("Received ping event from GitHub")
+        return HttpResponse("Webhook configured successfully", status=200)
+
     if event_type not in ["pull_request", "push", "issue_comment"]:
         return HttpResponseBadRequest(f"Unsupported event type: {event_type}")
 
