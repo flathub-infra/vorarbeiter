@@ -11,6 +11,7 @@ class GitHubWebhookEvent(models.Model):
         ("issue_comment", "Issue Comment"),
     ]
 
+    id = models.UUIDField(primary_key=True, editable=False, verbose_name="Delivery ID")
     event_type = models.CharField(max_length=50, choices=EVENT_TYPES)
     payload = models.JSONField()
     repository = models.CharField(max_length=255)

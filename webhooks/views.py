@@ -41,7 +41,6 @@ def github_webhook(request):
 
     event_type = request.headers.get("X-GitHub-Event")
 
-    # Handle ping event specially - GitHub sends this when setting up a webhook
     if event_type == "ping":
         logger.info("Received ping event from GitHub")
         return HttpResponse("Webhook configured successfully", status=200)
@@ -60,10 +59,23 @@ def github_webhook(request):
     except KeyError:
         return HttpResponseBadRequest("Missing required payload fields")
 
-    GitHubWebhookEvent.objects.create(
-        event_type=event_type, payload=payload, repository=repository, sender=sender
-    )
+    delivery_id = request.headers.get("X-GitHub-Delivery")
+    if not delivery_id:
+        return HttpResponseBadRequest("Missing X-GitHub-Delivery header")
 
-    logger.info(f"Received {event_type} webhook from {repository} by {sender}")
+    try:
+        GitHubWebhookEvent.objects.create(
+            id=delivery_id,
+            event_type=event_type,
+            payload=payload,
+            repository=repository,
+            sender=sender,
+        )
+        logger.info(
+            f"Received {event_type} webhook from {repository} by {sender} (delivery: {delivery_id})"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create webhook event: {e}")
+        return HttpResponse("Webhook already processed", status=200)
 
     return HttpResponse("Webhook received", status=202)

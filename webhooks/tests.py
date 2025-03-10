@@ -21,6 +21,7 @@ class GitHubWebhookViewTest(TestCase):
     def setUp(self):
         self.client = Client()
         self.url = reverse("github_webhook")
+        self.delivery_id = "72d3162e-cc78-11e3-81ab-4c9367dc0958"  # Example UUID
 
     def _generate_signature(self, payload_string, secret="test_secret"):
         """Helper method to generate a valid signature for tests."""
@@ -39,6 +40,7 @@ class GitHubWebhookViewTest(TestCase):
         headers = {
             "HTTP_X_GITHUB_EVENT": "unsupported_event",
             "HTTP_X_HUB_SIGNATURE_256": self._generate_signature(payload),
+            "HTTP_X_GITHUB_DELIVERY": self.delivery_id,
         }
         response = self.client.post(
             self.url, data=payload, content_type="application/json", **headers
@@ -47,11 +49,11 @@ class GitHubWebhookViewTest(TestCase):
 
     @override_settings(GITHUB_WEBHOOK_SECRET="test_secret")
     def test_invalid_json(self):
-        # For invalid JSON, we need to generate a valid signature for exactly that invalid JSON string
         invalid_data = "invalid json"
         headers = {
             "HTTP_X_GITHUB_EVENT": "pull_request",
             "HTTP_X_HUB_SIGNATURE_256": self._generate_signature(invalid_data),
+            "HTTP_X_GITHUB_DELIVERY": self.delivery_id,
         }
         response = self.client.post(
             self.url, data=invalid_data, content_type="application/json", **headers
@@ -64,6 +66,7 @@ class GitHubWebhookViewTest(TestCase):
         headers = {
             "HTTP_X_GITHUB_EVENT": "pull_request",
             "HTTP_X_HUB_SIGNATURE_256": self._generate_signature(payload),
+            "HTTP_X_GITHUB_DELIVERY": self.delivery_id,
         }
         response = self.client.post(
             self.url, data=payload, content_type="application/json", **headers
@@ -82,6 +85,7 @@ class GitHubWebhookViewTest(TestCase):
         headers = {
             "HTTP_X_GITHUB_EVENT": "pull_request",
             "HTTP_X_HUB_SIGNATURE_256": self._generate_signature(payload_string),
+            "HTTP_X_GITHUB_DELIVERY": self.delivery_id,
         }
 
         response = self.client.post(
@@ -107,9 +111,11 @@ class GitHubWebhookViewTest(TestCase):
             "ref": "refs/heads/main",
         }
         payload_string = json.dumps(payload)
+        delivery_id = "82d3162e-cc78-11e3-81ab-4c9367dc0958"
         headers = {
             "HTTP_X_GITHUB_EVENT": "push",
             "HTTP_X_HUB_SIGNATURE_256": self._generate_signature(payload_string),
+            "HTTP_X_GITHUB_DELIVERY": delivery_id,
         }
 
         response = self.client.post(
@@ -135,9 +141,11 @@ class GitHubWebhookViewTest(TestCase):
             "comment": {"body": "Test comment"},
         }
         payload_string = json.dumps(payload)
+        delivery_id = "92d3162e-cc78-11e3-81ab-4c9367dc0958"
         headers = {
             "HTTP_X_GITHUB_EVENT": "issue_comment",
             "HTTP_X_HUB_SIGNATURE_256": self._generate_signature(payload_string),
+            "HTTP_X_GITHUB_DELIVERY": delivery_id,
         }
 
         response = self.client.post(
@@ -169,9 +177,11 @@ class GitHubWebhookViewTest(TestCase):
             "sender": {"login": "testuser"},
         }
         payload_string = json.dumps(payload)
+        delivery_id = "a2d3162e-cc78-11e3-81ab-4c9367dc0958"
         headers = {
             "HTTP_X_GITHUB_EVENT": "ping",
             "HTTP_X_HUB_SIGNATURE_256": self._generate_signature(payload_string),
+            "HTTP_X_GITHUB_DELIVERY": delivery_id,
         }
 
         response = self.client.post(
@@ -182,7 +192,6 @@ class GitHubWebhookViewTest(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        # Ping events are not stored in the database
         self.assertEqual(GitHubWebhookEvent.objects.count(), 0)
 
 
@@ -197,7 +206,11 @@ class GitHubWebhookSignatureTest(TestCase):
             "pull_request": {"number": 1},
         }
         self.payload_string = json.dumps(self.payload)
-        self.headers = {"HTTP_X_GITHUB_EVENT": "pull_request"}
+        self.delivery_id = "b2d3162e-cc78-11e3-81ab-4c9367dc0958"
+        self.headers = {
+            "HTTP_X_GITHUB_EVENT": "pull_request",
+            "HTTP_X_GITHUB_DELIVERY": self.delivery_id,
+        }
 
     @override_settings(GITHUB_WEBHOOK_SECRET="")
     def test_missing_secret_setting(self):
