@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: main
+  pull_request:
+    branches: main
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Check code formatting
+        run: uvx ruff format --check .
+
+      - name: Check for code errors
+        run: uvx ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up venv
+        run: |
+          uv venv
+          uv sync
+
+      - name: Run migrations
+        run: |
+          source .venv/bin/activate
+          python manage.py migrate
+
+      - name: Run tests
+        run: |
+          source .venv/bin/activate
+          python manage.py test -v 2
