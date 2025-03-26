@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "webhooks",
+    "pipelines",
 ]
 
 MIDDLEWARE = [
