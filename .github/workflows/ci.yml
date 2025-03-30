@@ -23,19 +23,13 @@ jobs:
           uv sync
 
       - name: Check code formatting
-        run: |
-          source .venv/bin/activate
-          ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Check for code errors
-        run: |
-          source .venv/bin/activate
-          ruff check .
+        run: uv run ruff check .
 
       - name: Run type checking
-        run: |
-          source .venv/bin/activate
-          mypy .
+        run: uv run mypy .
 
   test:
     runs-on: ubuntu-latest
@@ -52,11 +46,7 @@ jobs:
           uv sync
 
       - name: Run migrations
-        run: |
-          source .venv/bin/activate
-          python manage.py migrate
+        run: uv run python manage.py migrate
 
       - name: Run tests
-        run: |
-          source .venv/bin/activate
-          python manage.py test -v 2
+        run: uv run python manage.py test -v 2
