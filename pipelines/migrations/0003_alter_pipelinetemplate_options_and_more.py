@@ -4,28 +4,33 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('pipelines', '0002_rename_and_extend_provider'),
+        ("pipelines", "0002_rename_and_extend_provider"),
     ]
 
     operations = [
         migrations.AlterModelOptions(
-            name='pipelinetemplate',
-            options={'ordering': ['name', '-version'], 'verbose_name': 'Pipeline Template', 'verbose_name_plural': 'Pipeline Templates'},
+            name="pipelinetemplate",
+            options={
+                "ordering": ["name", "-version"],
+                "verbose_name": "Pipeline Template",
+                "verbose_name_plural": "Pipeline Templates",
+            },
         ),
         migrations.AddField(
-            model_name='pipelinetemplate',
-            name='version',
-            field=models.PositiveIntegerField(default=1, help_text='Version number of this pipeline template'),
+            model_name="pipelinetemplate",
+            name="version",
+            field=models.PositiveIntegerField(
+                default=1, help_text="Version number of this pipeline template"
+            ),
         ),
         migrations.AlterField(
-            model_name='pipelinetemplate',
-            name='name',
+            model_name="pipelinetemplate",
+            name="name",
             field=models.CharField(max_length=200),
         ),
         migrations.AlterUniqueTogether(
-            name='pipelinetemplate',
-            unique_together={('name', 'version')},
+            name="pipelinetemplate",
+            unique_together={("name", "version")},
         ),
     ]
