@@ -1,0 +1,62 @@
+name: Test Callback
+
+on:
+  workflow_dispatch:
+    inputs:
+      callback_url:
+        description: 'URL to report status back to'
+        required: true
+      task_type:
+        description: 'Type of task to simulate'
+        required: true
+        default: 'success'
+        type: choice
+        options:
+          - success
+          - failure
+          - sleep
+      sleep_duration:
+        description: 'Sleep duration in seconds (only for task_type=sleep)'
+        required: false
+        default: '10'
+
+jobs:
+  test-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Print inputs
+        run: |
+          echo "Callback URL: ${{ inputs.callback_url }}"
+          echo "Task type: ${{ inputs.task_type }}"
+
+      - name: Simulate task
+        run: |
+          if [ "${{ inputs.task_type }}" = "failure" ]; then
+            echo "Simulating a failing task"
+            exit 1
+          elif [ "${{ inputs.task_type }}" = "sleep" ]; then
+            echo "Sleeping for ${{ inputs.sleep_duration }} seconds"
+            sleep ${{ inputs.sleep_duration }}
+            echo "Finished sleeping"
+          else
+            echo "Simulating a successful task"
+          fi
+
+      - name: Report status success
+        if: success()
+        run: |
+          curl -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d '{"status": "success", "results": {"message": "Task completed successfully"}}' \
+            -f || echo "Failed to report status"
+
+      - name: Report status failure
+        if: failure()
+        run: |
+          curl -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d '{"status": "failure", "results": {"message": "Task failed with an error"}}' \
+            -f || echo "Failed to report status"
