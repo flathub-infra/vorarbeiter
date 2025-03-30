@@ -38,6 +38,7 @@ class PipelineTemplateAdmin(admin.ModelAdmin):
     list_filter = ("name",)
     search_fields = ("name", "description")
     readonly_fields = ("created_at", "updated_at")
+    actions = ["run_pipeline"]
     fieldsets = (
         (None, {"fields": ("name", "version", "description")}),
         (
@@ -48,6 +49,50 @@ class PipelineTemplateAdmin(admin.ModelAdmin):
             },
         ),
     )
+
+    @admin.action(description="Run pipeline")
+    def run_pipeline(self, request, queryset):
+        import asyncio
+        from .models import PipelineInstance, JobInstance
+        from .services import PipelineRunner
+
+        count = 0
+        for template in queryset:
+            pipeline = PipelineInstance.objects.create(
+                pipeline_template=template,
+                trigger_parameters={
+                    "triggered_by": "admin",
+                    "user": request.user.username,
+                },
+            )
+
+            for job_template in template.job_templates.all():
+                JobInstance.objects.create(
+                    pipeline_instance=pipeline, job_template=job_template
+                )
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    raise RuntimeError("Event loop is closed")
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            try:
+                loop.run_until_complete(PipelineRunner.start_pipeline(pipeline.id))
+                count += 1
+            except Exception as e:
+                self.message_user(
+                    request,
+                    f"Error starting pipeline {template.name}: {str(e)}",
+                    level="ERROR",
+                )
+
+        self.message_user(
+            request,
+            f"Started {count} pipeline(s). Check Pipeline Instances for status.",
+        )
 
 
 class JobTemplateDependencyInline(admin.TabularInline):

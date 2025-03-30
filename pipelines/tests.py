@@ -1,6 +1,6 @@
 import json
 import uuid
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch, AsyncMock
 from django.test import TestCase, Client
 from django.db import IntegrityError, transaction
 from .models import (
@@ -302,7 +302,6 @@ class GitHubActionsProviderTest(TestCase):
             execution_parameters={"dynamic_value": "dynamic-test-value"},
         )
 
-        # Get the provider implementation
         self.provider_impl = self.provider.get_implementation()
 
     def test_process_inputs(self):
@@ -321,18 +320,13 @@ class GitHubActionsProviderTest(TestCase):
         self.assertEqual(result["nested"], "nested-value")
 
     def test_payload_construction(self):
-        # Manually construct the expected inputs
-
-        # Check that _process_inputs integrates the callback_url correctly
         processed_inputs = self.provider_impl._process_inputs(
             self.job_template.provider_config.get("inputs", {}),
             self.job_instance.execution_parameters,
         )
 
-        # Remove callback_url for comparison (added by GitHubActionsProvider.dispatch_job)
         processed_inputs.pop("callback_url", None)
 
-        # We're just testing the template variable substitution here
         self.assertEqual(processed_inputs["param1"], "value1")
         self.assertEqual(processed_inputs["param2"], "dynamic-test-value")
 
@@ -382,14 +376,12 @@ class JobCallbackTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "success")
 
-        # Check job was updated
         self.job_instance.refresh_from_db()
         self.assertEqual(self.job_instance.status, JobInstance.Status.SUCCEEDED)
         self.assertEqual(
             self.job_instance.results, {"message": "Job completed successfully"}
         )
 
-        # Check pipeline status was updated
         mock_check_pipeline.assert_called_once_with(self.pipeline_instance)
 
     def test_failure_callback(self):
@@ -406,7 +398,6 @@ class JobCallbackTest(TestCase):
 
         self.assertEqual(response.status_code, 200)
 
-        # Check job was updated
         self.job_instance.refresh_from_db()
         self.assertEqual(self.job_instance.status, JobInstance.Status.FAILED)
         self.assertEqual(
@@ -447,3 +438,64 @@ class JobCallbackTest(TestCase):
             JobInstance.objects.filter(callback_id=uuid.uuid4()).count() == 0,
             "Random UUID should not match any existing job",
         )
+
+
+class AdminActionsTest(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+
+        self.admin_user = User.objects.create_superuser(
+            "admin", "admin@example.com", "password"
+        )
+
+        self.provider = Provider.objects.create(
+            name="Test Provider",
+            provider_type="github",
+            credentials={"token": "test_token"},
+            settings={"owner": "test-owner", "repo": "test-repo"},
+        )
+
+        self.pipeline_template = PipelineTemplate.objects.create(
+            name="Test Pipeline",
+            version=1,
+            description="Test pipeline for admin actions",
+        )
+
+        self.job_template = JobTemplate.objects.create(
+            pipeline_template=self.pipeline_template,
+            name="Test Job",
+            provider=self.provider,
+            provider_config={"workflow": "test.yml"},
+        )
+
+    @patch("pipelines.services.PipelineRunner")
+    def test_run_pipeline_action(self, mock_runner):
+        from pipelines.admin import PipelineTemplateAdmin
+        from django.contrib.admin.sites import AdminSite
+        from django.test.client import RequestFactory
+
+        mock_runner.start_pipeline = AsyncMock()
+
+        admin = PipelineTemplateAdmin(model=PipelineTemplate, admin_site=AdminSite())
+        admin.message_user = MagicMock()
+
+        request = RequestFactory().get("/")
+        request.user = self.admin_user
+
+        queryset = PipelineTemplate.objects.filter(id=self.pipeline_template.id)
+
+        admin.run_pipeline(request, queryset)
+
+        self.assertEqual(PipelineInstance.objects.count(), 1)
+        pipeline = PipelineInstance.objects.first()
+        self.assertEqual(pipeline.pipeline_template, self.pipeline_template)
+        self.assertEqual(pipeline.trigger_parameters["triggered_by"], "admin")
+        self.assertEqual(pipeline.trigger_parameters["user"], "admin")
+
+        self.assertEqual(JobInstance.objects.count(), 1)
+        job = JobInstance.objects.first()
+        self.assertEqual(job.pipeline_instance, pipeline)
+        self.assertEqual(job.job_template, self.job_template)
+
+        mock_runner.start_pipeline.assert_called_once()
+        admin.message_user.assert_called_once()
