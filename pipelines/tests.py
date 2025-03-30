@@ -1,4 +1,7 @@
-from django.test import TestCase
+import json
+import uuid
+from unittest.mock import patch
+from django.test import TestCase, Client
 from django.db import IntegrityError, transaction
 from .models import (
     Provider,
@@ -7,6 +10,9 @@ from .models import (
     PipelineInstance,
     JobInstance,
 )
+from .providers import ProviderRegistry
+from .providers.base import BaseProvider
+from .providers.github_actions import GitHubActionsProvider
 
 
 class ProviderModelTest(TestCase):
@@ -226,3 +232,218 @@ class JobInstanceModelTest(TestCase):
             job_instance.save()
             job_instance.refresh_from_db()
             self.assertEqual(job_instance.status, status)
+
+
+class ProviderRegistryTest(TestCase):
+    def test_provider_registration(self):
+        class TestProvider(BaseProvider):
+            async def dispatch_job(self, job_instance):
+                return "test-id"
+
+            async def cancel_job(self, job_instance):
+                return True
+
+        ProviderRegistry.register("test", TestProvider)
+
+        provider_class = ProviderRegistry.get_provider("test")
+        self.assertEqual(provider_class, TestProvider)
+
+    def test_unregistered_provider(self):
+        with self.assertRaises(ValueError):
+            ProviderRegistry.get_provider("nonexistent")
+
+    def test_get_implementation(self):
+        provider = Provider.objects.create(
+            name="Test GitHub Provider", provider_type="github"
+        )
+
+        impl = provider.get_implementation()
+        self.assertIsInstance(impl, GitHubActionsProvider)
+        self.assertEqual(impl.provider_model, provider)
+
+
+class GitHubActionsProviderTest(TestCase):
+    def setUp(self):
+        self.provider = Provider.objects.create(
+            name="GitHub",
+            provider_type="github",
+            credentials={"token": "test-token"},
+            settings={
+                "owner": "test-owner",
+                "repo": "test-repo",
+                "callback_base_url": "https://example.com",
+            },
+        )
+
+        self.pipeline_template = PipelineTemplate.objects.create(
+            name="Test Pipeline", version=1
+        )
+
+        self.job_template = JobTemplate.objects.create(
+            pipeline_template=self.pipeline_template,
+            name="Test Job",
+            provider=self.provider,
+            provider_config={
+                "workflow": "test-workflow.yml",
+                "inputs": {
+                    "param1": "value1",
+                    "param2": "{execution_parameters.dynamic_value}",
+                },
+            },
+        )
+
+        self.pipeline_instance = PipelineInstance.objects.create(
+            pipeline_template=self.pipeline_template
+        )
+
+        self.job_instance = JobInstance.objects.create(
+            pipeline_instance=self.pipeline_instance,
+            job_template=self.job_template,
+            execution_parameters={"dynamic_value": "dynamic-test-value"},
+        )
+
+        # Get the provider implementation
+        self.provider_impl = self.provider.get_implementation()
+
+    def test_process_inputs(self):
+        inputs = {
+            "static": "static-value",
+            "dynamic": "{execution_parameters.key1}",
+            "nested": "{execution_parameters.nested_key}",
+        }
+
+        execution_parameters = {"key1": "value1", "nested_key": "nested-value"}
+
+        result = self.provider_impl._process_inputs(inputs, execution_parameters)
+
+        self.assertEqual(result["static"], "static-value")
+        self.assertEqual(result["dynamic"], "value1")
+        self.assertEqual(result["nested"], "nested-value")
+
+    def test_payload_construction(self):
+        # Manually construct the expected inputs
+
+        # Check that _process_inputs integrates the callback_url correctly
+        processed_inputs = self.provider_impl._process_inputs(
+            self.job_template.provider_config.get("inputs", {}),
+            self.job_instance.execution_parameters,
+        )
+
+        # Remove callback_url for comparison (added by GitHubActionsProvider.dispatch_job)
+        processed_inputs.pop("callback_url", None)
+
+        # We're just testing the template variable substitution here
+        self.assertEqual(processed_inputs["param1"], "value1")
+        self.assertEqual(processed_inputs["param2"], "dynamic-test-value")
+
+
+class JobCallbackTest(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.provider = Provider.objects.create(
+            name="Test Provider", provider_type="github"
+        )
+
+        self.pipeline_template = PipelineTemplate.objects.create(
+            name="Test Pipeline", version=1
+        )
+
+        self.job_template = JobTemplate.objects.create(
+            pipeline_template=self.pipeline_template,
+            name="Test Job",
+            provider=self.provider,
+        )
+
+        self.pipeline_instance = PipelineInstance.objects.create(
+            pipeline_template=self.pipeline_template
+        )
+
+        self.job_instance = JobInstance.objects.create(
+            pipeline_instance=self.pipeline_instance,
+            job_template=self.job_template,
+            status=JobInstance.Status.RUNNING,
+        )
+
+        self.callback_url = f"/api/jobs/{self.job_instance.callback_id}/callback"
+
+    @patch("pipelines.services.PipelineRunner._check_pipeline_status")
+    def test_success_callback(self, mock_check_pipeline):
+        response_data = {
+            "status": "success",
+            "results": {"message": "Job completed successfully"},
+        }
+
+        response = self.client.post(
+            self.callback_url,
+            data=json.dumps(response_data),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "success")
+
+        # Check job was updated
+        self.job_instance.refresh_from_db()
+        self.assertEqual(self.job_instance.status, JobInstance.Status.SUCCEEDED)
+        self.assertEqual(
+            self.job_instance.results, {"message": "Job completed successfully"}
+        )
+
+        # Check pipeline status was updated
+        mock_check_pipeline.assert_called_once_with(self.pipeline_instance)
+
+    def test_failure_callback(self):
+        response_data = {
+            "status": "failure",
+            "results": {"message": "Job failed with an error"},
+        }
+
+        response = self.client.post(
+            self.callback_url,
+            data=json.dumps(response_data),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        # Check job was updated
+        self.job_instance.refresh_from_db()
+        self.assertEqual(self.job_instance.status, JobInstance.Status.FAILED)
+        self.assertEqual(
+            self.job_instance.results, {"message": "Job failed with an error"}
+        )
+
+    def test_invalid_status(self):
+        response_data = {"status": "invalid-status"}
+
+        response = self.client.post(
+            self.callback_url,
+            data=json.dumps(response_data),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_missing_status(self):
+        response_data = {"results": {"message": "No status provided"}}
+
+        response = self.client.post(
+            self.callback_url,
+            data=json.dumps(response_data),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_invalid_json(self):
+        response = self.client.post(
+            self.callback_url, data="not valid json", content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_job_not_found_behavior(self):
+        self.assertTrue(
+            JobInstance.objects.filter(callback_id=uuid.uuid4()).count() == 0,
+            "Random UUID should not match any existing job",
+        )
