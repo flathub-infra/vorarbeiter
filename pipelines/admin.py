@@ -22,12 +22,13 @@ class ProviderAdmin(admin.ModelAdmin):
 
 @admin.register(PipelineTemplate)
 class PipelineTemplateAdmin(admin.ModelAdmin):
-    list_display = ('name', 'created_at', 'updated_at')
+    list_display = ('name', 'version', 'created_at', 'updated_at')
+    list_filter = ('name',)
     search_fields = ('name', 'description')
     readonly_fields = ('created_at', 'updated_at')
     fieldsets = (
         (None, {
-            'fields': ('name', 'description')
+            'fields': ('name', 'version', 'description')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
