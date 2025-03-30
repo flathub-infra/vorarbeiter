@@ -36,18 +36,20 @@ class Provider(models.Model):
 
 class PipelineTemplate(models.Model):
     """A reusable template defining a sequence of jobs and their dependencies."""
-    name = models.CharField(max_length=200, unique=True)
+    name = models.CharField(max_length=200)
+    version = models.PositiveIntegerField(default=1, help_text="Version number of this pipeline template")
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return self.name
+        return f"{self.name} (v{self.version})"
 
     class Meta:
         verbose_name = "Pipeline Template"
         verbose_name_plural = "Pipeline Templates"
-        ordering = ['name']
+        ordering = ['name', '-version']
+        unique_together = ('name', 'version')
 
 class JobTemplate(models.Model):
     """A reusable template for a single job within a PipelineTemplate."""
