@@ -35,6 +35,12 @@ class Provider(models.Model):
     def __str__(self):
         return self.name
 
+    def get_implementation(self):
+        from .providers import ProviderRegistry
+
+        provider_class = ProviderRegistry.get_provider(self.provider_type)
+        return provider_class(self)
+
     class Meta:
         verbose_name = "Provider"
         verbose_name_plural = "Providers"
