@@ -32,8 +32,12 @@ SECRET_KEY = os.environ.get(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DEBUG", "True").lower() in ("true", "t", "1", "yes", "y")
 
-# Set allowed hosts to allow any host
-ALLOWED_HOSTS = ["*"]
+# Read allowed hosts from environment variable or use default
+ALLOWED_HOSTS: list[str] = (
+    os.environ.get("ALLOWED_HOSTS", "").split(",")
+    if os.environ.get("ALLOWED_HOSTS")
+    else []
+)
 
 # CSRF trusted origins
 CSRF_TRUSTED_ORIGINS = ["https://flathub-vorarbeiter.apps.openshift.gnome.org"]
