@@ -32,12 +32,13 @@ SECRET_KEY = os.environ.get(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DEBUG", "True").lower() in ("true", "t", "1", "yes", "y")
 
-# Read allowed hosts from environment variable or use default
-ALLOWED_HOSTS: list[str] = (
-    os.environ.get("ALLOWED_HOSTS", "").split(",")
-    if os.environ.get("ALLOWED_HOSTS")
-    else []
-)
+# Set allowed hosts to allow any host
+ALLOWED_HOSTS = ["*"]
+
+# CSRF trusted origins
+CSRF_TRUSTED_ORIGINS = ["https://flathub-vorarbeiter.apps.openshift.gnome.org"]
+if os.environ.get("CSRF_TRUSTED_ORIGINS"):
+    CSRF_TRUSTED_ORIGINS.extend(os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(","))
 
 # GitHub webhook settings
 GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
