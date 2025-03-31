@@ -591,6 +591,7 @@ dependencies = [
     { name = "django" },
     { name = "gunicorn" },
     { name = "sentry-sdk", extra = ["django"] },
+    { name = "whitenoise" },
 ]
 
 [package.dev-dependencies]
@@ -610,6 +611,7 @@ requires-dist = [
     { name = "django", specifier = ">=5.1.7" },
     { name = "gunicorn", specifier = ">=21.2.0" },
     { name = "sentry-sdk", extras = ["django"], specifier = ">=2.22.0" },
+    { name = "whitenoise", specifier = ">=6.6.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -620,6 +622,15 @@ dev = [
     { name = "pre-commit", specifier = ">=3.7.0" },
     { name = "ruff", specifier = ">=0.9.10" },
     { name = "types-dj-database-url", specifier = ">=1.3.0.4" },
+]
+
+[[package]]
+name = "whitenoise"
+version = "6.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/cf/c15c2f21aee6b22a9f6fc9be3f7e477e2442ec22848273db7f4eb73d6162/whitenoise-6.9.0.tar.gz", hash = "sha256:8c4a7c9d384694990c26f3047e118c691557481d624f069b7f7752a2f735d609", size = 25920 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/b2/2ce9263149fbde9701d352bda24ea1362c154e196d2fda2201f18fc585d7/whitenoise-6.9.0-py3-none-any.whl", hash = "sha256:c8a489049b7ee9889617bb4c274a153f3d979e8f51d2efd0f5b403caf41c57df", size = 20161 },
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ dependencies = [
     "gunicorn>=21.2.0",
     "sentry-sdk[django]>=2.22.0",
     "aiohttp>=3.9.3",
+    "whitenoise>=6.6.0",
 ]
 
 [dependency-groups]
