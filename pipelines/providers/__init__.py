@@ -17,4 +17,5 @@ class ProviderRegistry:
         return cls._registry[provider_type]
 
 
+ProviderRegistry.register("github", GitHubActionsProvider)
 ProviderRegistry.register("github_actions", GitHubActionsProvider)
