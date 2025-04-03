@@ -18,11 +18,22 @@ class GitHubActionsProvider(BaseProvider):
                 "Missing required credentials or settings: token, owner, repo"
             )
 
-        workflow = job_instance.job_template.provider_config.get("workflow")
-        inputs = job_instance.job_template.provider_config.get("inputs", {})
+        # For code-defined pipelines, get workflow from execution_parameters
+        # For template-defined pipelines, get from provider_config
+        workflow = job_instance.execution_parameters.get(
+            "workflow"
+        ) or job_instance.job_template.provider_config.get("workflow")
+
+        # Get inputs from execution_parameters if it's a code-defined pipeline
+        # Otherwise from job_template provider_config
+        inputs = job_instance.execution_parameters.get(
+            "inputs", {}
+        ) or job_instance.job_template.provider_config.get("inputs", {})
 
         if not workflow:
-            raise ValueError("Missing required provider_config: workflow")
+            raise ValueError(
+                "Missing required workflow in execution_parameters or provider_config"
+            )
 
         processed_inputs = self._process_inputs(
             inputs, job_instance.execution_parameters

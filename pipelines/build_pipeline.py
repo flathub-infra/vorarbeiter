@@ -321,34 +321,34 @@ build_pipeline = BuildPipelineRegistry.register(
         jobs={
             "validate_manifest": Job(
                 name="Validate manifest",
-                workflow="validate_manifest.yml",
-                inputs={},
+                workflow="validate-manifest.yml",
+                inputs={"app_id": "{app_id}"},
                 depends_on=[],
             ),
-            "create_build": Job(
-                name="Create build",
-                workflow="create_build.yml",
-                inputs={},
+            "prepare_build": Job(
+                name="Prepare Build",
+                workflow="prepare-build.yml",
+                inputs={"token": "{token}"},
                 depends_on=["validate_manifest"],
             ),
             "build_x86_64": Job(
                 name="Build x86_64",
-                workflow="build_x86_64.yml",
-                inputs={},
-                depends_on=["create_build"],
+                workflow="build.yml",
+                inputs={"branch": "{branch}", "arch": "x86_64"},
+                depends_on=["prepare_build"],
             ),
             "build_aarch64": Job(
                 name="Build aarch64",
-                workflow="build_aarch64.yml",
-                inputs={},
-                depends_on=["create_build"],
+                workflow="build.yml",
+                inputs={"branch": "{branch}", "arch": "aarch64"},
+                depends_on=["prepare_build"],
             ),
             # The publish job will be triggered by the publish_ready_pipelines command
             # after the pipeline has been in SUCCEEDED status for 1 hour
             "publish": Job(
                 name="Publish",
                 workflow="publish.yml",
-                inputs={},
+                inputs={"build_id": "{build_id}", "token": "{token}"},
                 depends_on=["build_x86_64", "build_aarch64"],
             ),
         },

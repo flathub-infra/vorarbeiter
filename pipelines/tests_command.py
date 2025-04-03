@@ -149,12 +149,16 @@ class PublishReadyPipelinesCommandTest(TestCase):
                     "pipelines.management.commands.publish_ready_pipelines.Command._publish_db_pipeline"
                 ) as mock_db_publish:
                     # Just update the status without trying to create jobs
-                    def update_pipeline_status(pipeline, _):
+                    def update_code_pipeline_status(pipeline, pipeline_name):
                         pipeline.status = PipelineInstance.Status.PUBLISHED
                         pipeline.save()
 
-                    mock_code_publish.side_effect = update_pipeline_status
-                    mock_db_publish.side_effect = update_pipeline_status
+                    def update_db_pipeline_status(pipeline):
+                        pipeline.status = PipelineInstance.Status.PUBLISHED
+                        pipeline.save()
+
+                    mock_code_publish.side_effect = update_code_pipeline_status
+                    mock_db_publish.side_effect = update_db_pipeline_status
 
                     # Run the command with a small delay
                     out = StringIO()
