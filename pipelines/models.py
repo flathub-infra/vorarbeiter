@@ -112,6 +112,7 @@ class PipelineInstance(models.Model):
         SUCCEEDED = "SUCCEEDED", "Succeeded"
         FAILED = "FAILED", "Failed"
         CANCELLED = "CANCELLED", "Cancelled"
+        PUBLISHED = "PUBLISHED", "Published"
 
     pipeline_template = models.ForeignKey(
         PipelineTemplate, on_delete=models.PROTECT, related_name="instances"

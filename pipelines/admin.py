@@ -6,6 +6,7 @@ from .models import (
     PipelineInstance,
     JobInstance,
 )
+from .build_pipeline import BuildPipelineRunner
 
 
 @admin.register(Provider)
@@ -129,6 +130,40 @@ class JobTemplateAdmin(admin.ModelAdmin):
     )
 
 
+@admin.action(description="Run build pipeline")
+def run_build_pipeline(modeladmin, request, queryset=None):
+    import asyncio
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("Event loop is closed")
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    try:
+        pipeline_instance = loop.run_until_complete(
+            BuildPipelineRunner.create_and_run_pipeline(
+                "build",
+                {
+                    "triggered_by": "admin",
+                    "user": request.user.username,
+                },
+            )
+        )
+        modeladmin.message_user(
+            request,
+            f"Started build pipeline. Pipeline ID: {pipeline_instance.id}",
+        )
+    except Exception as e:
+        modeladmin.message_user(
+            request,
+            f"Error starting build pipeline: {str(e)}",
+            level="ERROR",
+        )
+
+
 @admin.register(PipelineInstance)
 class PipelineInstanceAdmin(admin.ModelAdmin):
     list_display = (
@@ -142,6 +177,7 @@ class PipelineInstanceAdmin(admin.ModelAdmin):
     list_filter = ("status", "pipeline_template")
     search_fields = ("pipeline_template__name",)
     readonly_fields = ("created_at", "started_at", "finished_at")
+    actions = [run_build_pipeline]
     fieldsets = (
         (None, {"fields": ("pipeline_template", "status")}),
         (
@@ -180,6 +216,7 @@ class JobInstanceAdmin(admin.ModelAdmin):
         "started_at",
         "finished_at",
     )
+    actions = [run_build_pipeline]
     fieldsets = (
         (
             None,
