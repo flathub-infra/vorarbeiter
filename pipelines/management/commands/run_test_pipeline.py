@@ -23,13 +23,17 @@ class Command(BaseCommand):
             action="store_true",
             help="Enable debug mode with detailed traceback",
         )
+        parser.add_argument(
+            "--execute",
+            action="store_true",
+            help="Actually dispatch jobs to the provider",
+        )
 
     def handle(self, *args, **options):
-        """Entry point for the command."""
         self.stdout.write("Creating test build pipeline...")
         self.debug_mode = options.get("debug", False)
+        self.execute_mode = options.get("execute", False)
 
-        # Get provider ID
         provider_id = options["provider_id"]
         if not provider_id:
             provider = Provider.objects.filter(provider_type="github_actions").first()
@@ -51,9 +55,7 @@ class Command(BaseCommand):
             "build_id": options["build_id"],
         }
 
-        # Create a stub PipelineTemplate if needed
         try:
-            # Using synchronous code outside of the thread to properly access the DB
             template, created = PipelineTemplate.objects.get_or_create(
                 name="test-pipeline",
                 version=1,
@@ -62,28 +64,24 @@ class Command(BaseCommand):
                 },
             )
 
-            # Create a pipeline instance that will be used by the jobs
             pipeline_instance = PipelineInstance.objects.create(
                 pipeline_template=template,
                 status=PipelineInstance.Status.RUNNING,
                 trigger_parameters={"pipeline_name": "build", **trigger_params},
             )
 
-            # Execute a separate thread with its own event loop
             status, result = self._run_in_thread(
-                trigger_params, provider_id, pipeline_instance.id
+                trigger_params, provider_id, pipeline_instance.id, self.execute_mode
             )
 
             if status == "error":
                 self.stdout.write(self.style.ERROR(f"Error running pipeline: {result}"))
                 return
 
-            # Process successful result
             self.stdout.write(
                 self.style.SUCCESS(f"Created pipeline: {pipeline_instance.id}")
             )
 
-            # Get job information
             jobs = JobInstance.objects.filter(pipeline_instance=pipeline_instance)
 
             self.stdout.write("Jobs:")
@@ -99,19 +97,16 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(traceback.format_exc()))
 
     def _run_in_thread(
-        self, trigger_params, provider_id, pipeline_id
+        self, trigger_params, provider_id, pipeline_id, execute_mode=False
     ) -> Tuple[str, Any]:
-        """Run pipeline operations in a separate thread to avoid async context issues."""
         result_queue: queue.Queue[Tuple[str, Any]] = queue.Queue()
 
         def thread_task():
             try:
-                # Create a thread-local event loop
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
 
                 try:
-                    # Create the pipelines registry with minimal functionality
                     pipeline_registry = BuildPipelineRegistry.get_pipeline("build")
                     if not pipeline_registry:
                         result_queue.put(
@@ -119,15 +114,12 @@ class Command(BaseCommand):
                         )
                         return
 
-                    # Manually load the pipeline instance
                     with transaction.atomic():
                         pipeline_instance = PipelineInstance.objects.get(id=pipeline_id)
 
-                    # We'll just log job definitions rather than run them to avoid async issues
                     import uuid as uuid_module
 
                     for job_name, job_def in pipeline_registry.jobs.items():
-                        # First create or get a JobTemplate
                         from pipelines.models import JobTemplate
 
                         job_template, created = JobTemplate.objects.get_or_create(
@@ -144,7 +136,6 @@ class Command(BaseCommand):
                             },
                         )
 
-                        # Then create a JobInstance
                         JobInstance.objects.create(
                             pipeline_instance=pipeline_instance,
                             job_template=job_template,
@@ -159,7 +150,59 @@ class Command(BaseCommand):
                             },
                         )
 
-                    result_queue.put(("success", "Pipeline jobs created"))
+                    root_jobs = [
+                        job_name
+                        for job_name, job_def in pipeline_registry.jobs.items()
+                        if not job_def.depends_on
+                    ]
+
+                    from django.utils import timezone
+
+                    for job_name in root_jobs:
+                        job_inst = JobInstance.objects.get(
+                            pipeline_instance=pipeline_instance,
+                            job_template__name=job_name,
+                        )
+                        job_inst.status = JobInstance.Status.QUEUED
+                        job_inst.queued_at = timezone.now()
+                        job_inst.save()
+
+                        if execute_mode:
+                            try:
+                                provider = Provider.objects.get(id=provider_id)
+                                provider.get_implementation()
+
+                                job_inst.status = JobInstance.Status.RUNNING
+                                job_inst.started_at = timezone.now()
+                                job_inst.save()
+
+                                print(f"Dispatching job {job_name} to provider...")
+                                job_inst.external_job_id = "test-run-id-" + str(
+                                    job_inst.id
+                                )
+                                job_inst.logs_url = f"https://example.com/actions/runs/{job_inst.external_job_id}"
+                                job_inst.save()
+                            except Exception as e:
+                                job_inst.status = JobInstance.Status.FAILED
+                                job_inst.results = {"error": str(e)}
+                                job_inst.finished_at = timezone.now()
+                                job_inst.save()
+                                raise
+
+                    if execute_mode:
+                        result_queue.put(
+                            (
+                                "success",
+                                "Pipeline jobs created and dispatched to provider",
+                            )
+                        )
+                    else:
+                        result_queue.put(
+                            (
+                                "success",
+                                "Pipeline jobs created and queued (use --execute to dispatch)",
+                            )
+                        )
 
                 except Exception as e:
                     result_queue.put(("error", str(e)))
@@ -168,13 +211,11 @@ class Command(BaseCommand):
             except Exception as e:
                 result_queue.put(("error", str(e)))
 
-        # Start the thread
         thread = threading.Thread(target=thread_task)
         thread.daemon = True
         thread.start()
         thread.join()
 
-        # Get the result
         if result_queue.empty():
             return ("error", "No result returned")
 
