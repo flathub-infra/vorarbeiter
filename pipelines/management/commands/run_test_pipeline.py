@@ -1,7 +1,9 @@
 from django.core.management.base import BaseCommand
 import asyncio
+from asgiref.sync import sync_to_async
+from django.db import transaction
 from pipelines.build_pipeline import BuildPipelineRunner
-from pipelines.models import JobInstance, Provider
+from pipelines.models import JobInstance, Provider, PipelineInstance
 
 
 class Command(BaseCommand):
@@ -17,7 +19,6 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         self.stdout.write("Creating test build pipeline...")
 
-        # Set up trigger parameters
         trigger_params = {
             "app_id": options["app_id"],
             "token": options["token"],
@@ -38,21 +39,30 @@ class Command(BaseCommand):
                     self.style.WARNING("No GitHub Actions provider found!")
                 )
 
-        # Run pipeline
-        try:
-            pipeline = asyncio.run(
-                BuildPipelineRunner.create_and_run_pipeline(
+        @sync_to_async
+        def create_pipeline():
+            with transaction.atomic():
+                return BuildPipelineRunner.create_and_run_pipeline(
                     "build", trigger_params, github_provider_id=provider_id
                 )
-            )
 
-            # Display results
+        @sync_to_async
+        def get_job_details(pipeline_id):
+            pipeline_obj = PipelineInstance.objects.get(id=pipeline_id)
+            jobs = JobInstance.objects.filter(pipeline_instance=pipeline_obj)
+            return pipeline_obj, [
+                (job, job.execution_parameters.get("job_name", "unknown"))
+                for job in jobs
+            ]
+
+        try:
+            pipeline_coroutine = asyncio.run(create_pipeline())
+            pipeline = asyncio.run(pipeline_coroutine)
+            pipeline_obj, jobs_with_names = asyncio.run(get_job_details(pipeline.id))
             self.stdout.write(self.style.SUCCESS(f"Created pipeline: {pipeline.id}"))
-            jobs = JobInstance.objects.filter(pipeline_instance=pipeline)
 
             self.stdout.write("Jobs:")
-            for job in jobs:
-                job_name = job.execution_parameters.get("job_name", "unknown")
+            for job, job_name in jobs_with_names:
                 self.stdout.write(f"- {job_name}: Status={job.status}")
                 if job.logs_url:
                     self.stdout.write(f"  Logs: {job.logs_url}")
