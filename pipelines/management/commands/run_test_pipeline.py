@@ -1,9 +1,11 @@
 from django.core.management.base import BaseCommand
 import asyncio
-from asgiref.sync import sync_to_async
+import threading
+import queue
+from typing import Tuple, Any
 from django.db import transaction
 from pipelines.build_pipeline import BuildPipelineRunner
-from pipelines.models import JobInstance, Provider, PipelineInstance
+from pipelines.models import JobInstance, Provider
 
 
 class Command(BaseCommand):
@@ -39,33 +41,52 @@ class Command(BaseCommand):
                     self.style.WARNING("No GitHub Actions provider found!")
                 )
 
-        @sync_to_async
-        def create_pipeline():
-            with transaction.atomic():
-                return BuildPipelineRunner.create_and_run_pipeline(
-                    "build", trigger_params, github_provider_id=provider_id
-                )
+        def run_pipeline() -> Tuple[str, Any]:
+            result_queue: queue.Queue[Tuple[str, Any]] = queue.Queue()
 
-        @sync_to_async
-        def get_job_details(pipeline_id):
-            pipeline_obj = PipelineInstance.objects.get(id=pipeline_id)
-            jobs = JobInstance.objects.filter(pipeline_instance=pipeline_obj)
-            return pipeline_obj, [
-                (job, job.execution_parameters.get("job_name", "unknown"))
-                for job in jobs
-            ]
+            def thread_task():
+                try:
+                    with transaction.atomic():
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            pipeline = loop.run_until_complete(
+                                BuildPipelineRunner.create_and_run_pipeline(
+                                    "build",
+                                    trigger_params,
+                                    github_provider_id=provider_id,
+                                )
+                            )
+                            result_queue.put(("success", pipeline))
+                        except Exception as e:
+                            result_queue.put(("error", str(e)))
+                        finally:
+                            loop.close()
+                except Exception as e:
+                    result_queue.put(("error", str(e)))
 
-        try:
-            pipeline_coroutine = asyncio.run(create_pipeline())
-            pipeline = asyncio.run(pipeline_coroutine)
-            pipeline_obj, jobs_with_names = asyncio.run(get_job_details(pipeline.id))
-            self.stdout.write(self.style.SUCCESS(f"Created pipeline: {pipeline.id}"))
+            thread = threading.Thread(target=thread_task)
+            thread.start()
+            thread.join()
 
-            self.stdout.write("Jobs:")
-            for job, job_name in jobs_with_names:
-                self.stdout.write(f"- {job_name}: Status={job.status}")
-                if job.logs_url:
-                    self.stdout.write(f"  Logs: {job.logs_url}")
+            if not result_queue.empty():
+                return result_queue.get()
+            return ("error", "No result returned")
 
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"Error running pipeline: {str(e)}"))
+        status, result = run_pipeline()
+
+        if status == "error":
+            self.stdout.write(self.style.ERROR(f"Error running pipeline: {result}"))
+            return
+
+        pipeline = result
+        self.stdout.write(self.style.SUCCESS(f"Created pipeline: {pipeline.id}"))
+
+        jobs = JobInstance.objects.filter(pipeline_instance=pipeline)
+
+        self.stdout.write("Jobs:")
+        for job in jobs:
+            job_name = job.execution_parameters.get("job_name", "unknown")
+            self.stdout.write(f"- {job_name}: Status={job.status}")
+            if job.logs_url:
+                self.stdout.write(f"  Logs: {job.logs_url}")
