@@ -104,6 +104,7 @@ class Command(BaseCommand):
     def _run_in_thread(
         self, trigger_params, provider_id, pipeline_id, execute_mode=False
     ) -> Tuple[str, Any]:
+        debug_mode = self.debug_mode
         result_queue: queue.Queue[Tuple[str, Any]] = queue.Queue()
 
         def thread_task():
@@ -211,14 +212,19 @@ class Command(BaseCommand):
                                 job_inst.save()
 
                                 print(f"Dispatching job {job_name} to provider...")
-                                job_inst.external_job_id = "test-run-id-" + str(
-                                    job_inst.id
-                                )
-                                job_inst.logs_url = f"https://example.com/actions/runs/{job_inst.external_job_id}"
-                                job_inst.save()
+
+                                provider_impl = provider.get_implementation()
+                                asyncio.run(provider_impl.dispatch_job(job_inst))
                             except Exception as e:
+                                error_message = (
+                                    f"Failed to dispatch job {job_name}: {str(e)}"
+                                )
+                                print(error_message)
+                                if debug_mode:
+                                    print(traceback.format_exc())
+
                                 job_inst.status = JobInstance.Status.FAILED
-                                job_inst.results = {"error": str(e)}
+                                job_inst.results = {"error": error_message}
                                 job_inst.finished_at = timezone.now()
                                 job_inst.save()
                                 raise
