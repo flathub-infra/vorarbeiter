@@ -1,18 +1,18 @@
-from django.test import TestCase
-from django.utils import timezone
-from django.core.management import call_command
 from datetime import timedelta
 from io import StringIO
 from unittest.mock import patch
 
+from django.core.management import call_command
+from django.test import TestCase
+from django.utils import timezone
+
 from .models import (
-    Provider,
-    PipelineTemplate,
-    PipelineInstance,
     JobInstance,
     JobTemplate,
+    PipelineInstance,
+    PipelineTemplate,
+    Provider,
 )
-from .build_pipeline import BuildPipelineRegistry, BuildPipeline, Job
 
 
 class PublishReadyPipelinesCommandTest(TestCase):
@@ -78,23 +78,6 @@ class PublishReadyPipelinesCommandTest(TestCase):
             job_template=self.job_template2,
             status=JobInstance.Status.SUCCEEDED,
         )
-
-        # Register a test build pipeline for code-defined pipelines
-        self.build_pipeline = BuildPipeline(
-            name="build",
-            description="Test Pipeline",
-            fail_fast=True,
-            jobs={
-                "job1": Job(name="Job 1", workflow="workflow1.yml", depends_on=[]),
-                "publish": Job(
-                    name="Publish",
-                    workflow="publish.yml",
-                    inputs={},
-                    depends_on=["job1"],
-                ),
-            },
-        )
-        BuildPipelineRegistry.register(self.build_pipeline)
 
         # Create a code-defined pipeline that finished 2 hours ago
         self.code_pipeline = PipelineInstance.objects.create(

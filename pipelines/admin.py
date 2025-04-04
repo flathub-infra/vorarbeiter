@@ -6,7 +6,6 @@ from .models import (
     PipelineInstance,
     JobInstance,
 )
-from .build_pipeline import BuildPipelineRunner
 
 
 @admin.register(Provider)
@@ -132,31 +131,43 @@ class JobTemplateAdmin(admin.ModelAdmin):
 
 @admin.action(description="Run build pipeline")
 def run_build_pipeline(modeladmin, request, queryset=None):
-    import asyncio
+    from django.core.management import call_command
+    from io import StringIO
+    import sys
+
+    output = StringIO()
+    sys.stdout = output
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("Event loop is closed")
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        call_command("run_test_pipeline")
 
-    try:
-        pipeline_instance = loop.run_until_complete(
-            BuildPipelineRunner.create_and_run_pipeline(
-                "build",
-                {
-                    "triggered_by": "admin",
-                    "user": request.user.username,
-                },
+        result = output.getvalue()
+
+        sys.stdout = sys.__stdout__
+
+        if "Created pipeline:" in result:
+            import re
+
+            match = re.search(r"Created pipeline: (\d+)", result)
+            if match:
+                pipeline_id = match.group(1)
+                modeladmin.message_user(
+                    request,
+                    f"Started build pipeline. Pipeline ID: {pipeline_id}",
+                )
+            else:
+                modeladmin.message_user(
+                    request,
+                    "Started build pipeline, but couldn't extract ID",
+                )
+        else:
+            modeladmin.message_user(
+                request,
+                "Started build pipeline",
             )
-        )
-        modeladmin.message_user(
-            request,
-            f"Started build pipeline. Pipeline ID: {pipeline_instance.id}",
-        )
     except Exception as e:
+        sys.stdout = sys.__stdout__
+
         modeladmin.message_user(
             request,
             f"Error starting build pipeline: {str(e)}",

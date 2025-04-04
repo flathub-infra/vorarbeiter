@@ -30,15 +30,12 @@ class Command(BaseCommand):
         delay_hours = options["delay_hours"]
         dry_run = options["dry_run"]
 
-        # Calculate the cutoff time (1 hour ago by default)
         cutoff_time = timezone.now() - timedelta(hours=delay_hours)
 
-        # Find pipelines that succeeded at least 1 hour ago
         ready_pipelines = PipelineInstance.objects.filter(
             status=PipelineInstance.Status.SUCCEEDED, finished_at__lt=cutoff_time
         )
 
-        # Count the pipelines we found
         count = ready_pipelines.count()
         self.stdout.write(f"Found {count} pipeline(s) ready for publishing")
 
@@ -46,14 +43,12 @@ class Command(BaseCommand):
             return
 
         if dry_run:
-            # Just list the pipelines
             for pipeline in ready_pipelines:
                 self.stdout.write(
                     f"Would publish: Pipeline #{pipeline.id}, finished at {pipeline.finished_at}"
                 )
             return
 
-        # Actually publish them
         for pipeline in ready_pipelines:
             self.publish_pipeline(pipeline)
 
@@ -65,35 +60,19 @@ class Command(BaseCommand):
         """Publish a pipeline by running the publish job"""
         self.stdout.write(f"Publishing pipeline #{pipeline.id}...")
 
-        # Check if this is a code-defined pipeline or DB-defined pipeline
         pipeline_name = pipeline.trigger_parameters.get("pipeline_name")
 
         if pipeline_name:
-            # This is a code-defined pipeline
             self._publish_code_pipeline(pipeline, pipeline_name)
         else:
-            # This is a database-defined pipeline
             self._publish_db_pipeline(pipeline)
 
     def _publish_code_pipeline(self, pipeline, pipeline_name):
         """Publish a code-defined pipeline"""
         from pipelines.models import Provider
-        from pipelines.build_pipeline import BuildPipelineRegistry
 
-        pipeline_def = BuildPipelineRegistry.get_pipeline(pipeline_name)
-        if not pipeline_def:
-            logger.error(f"Pipeline definition {pipeline_name} not found")
-            return
+        publish_job_config = {"workflow": "publish.yml", "ref": "main"}
 
-        # Ensure there's a publish job in this pipeline
-        if "publish" not in pipeline_def.jobs:
-            logger.error(f"No publish job found in pipeline {pipeline_name}")
-            return
-
-        # Get the publish job definition
-        publish_job_def = pipeline_def.jobs["publish"]
-
-        # Find a provider
         provider = Provider.objects.filter(provider_type="github_actions").first()
         if not provider:
             logger.error("No GitHub Actions provider found")
@@ -140,9 +119,9 @@ class Command(BaseCommand):
                         status=JobInstance.Status.PENDING,
                         execution_parameters={
                             "job_name": "publish",
-                            "workflow": publish_job_def.workflow,
-                            "ref": publish_job_def.ref,
-                            "inputs": publish_job_def.inputs,
+                            "workflow": publish_job_config["workflow"],
+                            "ref": publish_job_config["ref"],
+                            "inputs": {},
                         },
                     )
             except Exception as e:

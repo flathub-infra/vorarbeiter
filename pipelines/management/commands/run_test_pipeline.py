@@ -5,8 +5,13 @@ import queue
 import traceback
 from typing import Tuple, Any
 from django.db import transaction
-from pipelines.build_pipeline import BuildPipelineRegistry
-from pipelines.models import JobInstance, Provider, PipelineInstance, PipelineTemplate
+from pipelines.models import (
+    JobInstance,
+    Provider,
+    PipelineInstance,
+    PipelineTemplate,
+    JobTemplate,
+)
 
 
 class Command(BaseCommand):
@@ -107,29 +112,58 @@ class Command(BaseCommand):
                 asyncio.set_event_loop(loop)
 
                 try:
-                    pipeline_registry = BuildPipelineRegistry.get_pipeline("build")
-                    if not pipeline_registry:
-                        result_queue.put(
-                            ("error", "Pipeline 'build' not found in registry")
-                        )
-                        return
+                    pipeline_definition = {
+                        "validate_manifest": {
+                            "name": "Validate manifest",
+                            "workflow": "validate-manifest.yml",
+                            "ref": "main",
+                            "inputs": {"app_id": "{app_id}"},
+                            "depends_on": [],
+                        },
+                        "prepare_build": {
+                            "name": "Prepare Build",
+                            "workflow": "prepare-build.yml",
+                            "ref": "main",
+                            "inputs": {"token": "{token}"},
+                            "depends_on": ["validate_manifest"],
+                        },
+                        "build_x86_64": {
+                            "name": "Build x86_64",
+                            "workflow": "build.yml",
+                            "ref": "main",
+                            "inputs": {"branch": "{branch}", "arch": "x86_64"},
+                            "depends_on": ["prepare_build"],
+                        },
+                        "build_aarch64": {
+                            "name": "Build aarch64",
+                            "workflow": "build.yml",
+                            "ref": "main",
+                            "inputs": {"branch": "{branch}", "arch": "aarch64"},
+                            "depends_on": ["prepare_build"],
+                        },
+                        "publish": {
+                            "name": "Publish",
+                            "workflow": "publish.yml",
+                            "ref": "main",
+                            "inputs": {"build_id": "{build_id}", "token": "{token}"},
+                            "depends_on": ["build_x86_64", "build_aarch64"],
+                        },
+                    }
 
                     with transaction.atomic():
                         pipeline_instance = PipelineInstance.objects.get(id=pipeline_id)
 
                     import uuid as uuid_module
 
-                    for job_name, job_def in pipeline_registry.jobs.items():
-                        from pipelines.models import JobTemplate
-
+                    for job_name, job_def in pipeline_definition.items():
                         job_template, created = JobTemplate.objects.get_or_create(
                             pipeline_template=pipeline_instance.pipeline_template,
                             name=job_name,
                             defaults={
                                 "provider_id": provider_id,
                                 "provider_config": {
-                                    "workflow": job_def.workflow,
-                                    "ref": job_def.ref,
+                                    "workflow": job_def["workflow"],
+                                    "ref": job_def["ref"],
                                     "job_name": job_name,
                                 },
                                 "description": f"Auto-created job template for {job_name}",
@@ -143,17 +177,17 @@ class Command(BaseCommand):
                             callback_id=uuid_module.uuid4(),
                             execution_parameters={
                                 "job_name": job_name,
-                                "workflow": job_def.workflow,
-                                "ref": job_def.ref,
-                                "inputs": job_def.inputs,
+                                "workflow": job_def["workflow"],
+                                "ref": job_def["ref"],
+                                "inputs": job_def["inputs"],
                                 **trigger_params,
                             },
                         )
 
                     root_jobs = [
                         job_name
-                        for job_name, job_def in pipeline_registry.jobs.items()
-                        if not job_def.depends_on
+                        for job_name, job_def in pipeline_definition.items()
+                        if not job_def["depends_on"]
                     ]
 
                     from django.utils import timezone
