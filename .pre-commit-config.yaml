@@ -25,3 +25,10 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
+        
+      - id: tests
+        name: tests
+        entry: uv run python manage.py test
+        language: system
+        pass_filenames: false
+        files: '\.py$'
