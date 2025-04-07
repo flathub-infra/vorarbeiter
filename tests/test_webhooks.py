@@ -1,11 +1,15 @@
 import pytest
 import uuid
+import hmac
+import hashlib
+import json
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
 from app.models.webhook_event import WebhookEvent, WebhookSource
+from app.config import settings
 
 # Sample GitHub payload (simplified)
 SAMPLE_GITHUB_PAYLOAD = {
@@ -41,8 +45,17 @@ def mock_db(mock_db_session):
         yield mock_db_session
 
 
+@pytest.fixture
+def mock_settings():
+    """Patch settings for tests."""
+    original_github_webhook_secret = settings.github_webhook_secret
+    settings.github_webhook_secret = None
+    yield
+    settings.github_webhook_secret = original_github_webhook_secret
+
+
 @pytest.fixture(scope="function")
-def client(mock_db) -> TestClient:
+def client(mock_db, mock_settings) -> TestClient:
     return TestClient(app)
 
 
@@ -181,3 +194,73 @@ def test_receive_github_webhook_duplicate_event_id(client: TestClient, mock_db_s
     mock_db_session.add.assert_called_once()
     mock_db_session.commit.assert_called_once()
     mock_db_session.refresh.assert_not_called()
+
+
+def test_webhook_with_signature_verification_success():
+    """Test webhook with signature verification."""
+    # Setup the test
+    test_secret = "test_webhook_secret"
+    delivery_id = str(uuid.uuid4())
+
+    with patch("app.config.settings.github_webhook_secret", test_secret):
+        with patch("app.routes.webhooks.AsyncSessionLocal") as mock_session:
+            # Setup mock session
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with TestClient(app) as client:
+                # We need to directly send bytes with TestClient.post to ensure
+                # the signature matches exactly what we compute
+                payload_bytes = json.dumps(SAMPLE_GITHUB_PAYLOAD).encode()
+                signature = hmac.new(
+                    test_secret.encode(), payload_bytes, hashlib.sha256
+                ).hexdigest()
+
+                headers = {
+                    "X-GitHub-Delivery": delivery_id,
+                    "X-Hub-Signature-256": f"sha256={signature}",
+                    "Content-Type": "application/json",
+                }
+
+                # Make request with raw bytes instead of json parameter
+                response = client.post(
+                    "/api/webhooks/github", content=payload_bytes, headers=headers
+                )
+
+                assert response.status_code == 202
+                assert response.json()["message"] == "Webhook received"
+
+
+def test_webhook_with_missing_signature():
+    """Test webhook with missing signature when secret is configured."""
+    with patch("app.config.settings.github_webhook_secret", "test_webhook_secret"):
+        with patch("app.routes.webhooks.AsyncSessionLocal"):
+            with TestClient(app) as client:
+                delivery_id = str(uuid.uuid4())
+                headers = {"X-GitHub-Delivery": delivery_id}
+
+                response = client.post(
+                    "/api/webhooks/github", json=SAMPLE_GITHUB_PAYLOAD, headers=headers
+                )
+
+                assert response.status_code == 401
+                assert "Missing X-Hub-Signature-256 header" in response.text
+
+
+def test_webhook_with_invalid_signature():
+    """Test webhook with invalid signature."""
+    with patch("app.config.settings.github_webhook_secret", "test_webhook_secret"):
+        with patch("app.routes.webhooks.AsyncSessionLocal"):
+            with TestClient(app) as client:
+                delivery_id = str(uuid.uuid4())
+                headers = {
+                    "X-GitHub-Delivery": delivery_id,
+                    "X-Hub-Signature-256": "sha256=invalid_signature",
+                }
+
+                response = client.post(
+                    "/api/webhooks/github", json=SAMPLE_GITHUB_PAYLOAD, headers=headers
+                )
+
+                assert response.status_code == 401
+                assert "Invalid signature" in response.text
