@@ -161,8 +161,11 @@ def test_receive_github_webhook_duplicate_event_id(client: TestClient, mock_db_s
     """Test handling of duplicate event IDs."""
     # Configure the mock to raise an IntegrityError on commit (simulating duplicate key)
     from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm.exc import MultipleResultsFound
 
-    mock_db_session.commit.side_effect = IntegrityError("Duplicate key", None, None)
+    mock_db_session.commit.side_effect = IntegrityError(
+        "Duplicate key", {}, MultipleResultsFound()
+    )
 
     delivery_id = str(uuid.uuid4())
     headers = {"X-GitHub-Delivery": delivery_id}
