@@ -11,6 +11,38 @@ from app.models.webhook_event import WebhookEvent, WebhookSource
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
 
+def should_store_event(payload: dict) -> bool:
+    """
+    Determine if a webhook event should be stored based on event type.
+
+    Store events only when:
+    - A new PR is opened
+    - A PR is updated
+    - A new commit happens to master, beta or branch/*
+    - PR comment contains "bot, build"
+    """
+    ref = payload.get("ref", "")
+    comment = payload.get("comment", {}).get("body", "")
+
+    if "pull_request" in payload:
+        pr_action = payload.get("action", "")
+        if pr_action in ["opened", "synchronize", "reopened"]:
+            return True
+
+    if "commits" in payload and ref:
+        if (
+            ref.startswith("refs/heads/master")
+            or ref.startswith("refs/heads/beta")
+            or ref.startswith("refs/heads/branch/")
+        ):
+            return True
+
+    if "comment" in payload and "bot, build" in comment:
+        return True
+
+    return False
+
+
 @webhooks_router.post(
     "/github",
     status_code=status.HTTP_202_ACCEPTED,
@@ -78,16 +110,17 @@ async def receive_github_webhook(
         actor=actor_login,
     )
 
-    try:
-        async with AsyncSessionLocal() as db:
-            db.add(event)
-            await db.commit()
-            await db.refresh(event)
-    except Exception as e:
-        print(f"Database error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error occurred while saving webhook event.",
-        )
+    if should_store_event(payload):
+        try:
+            async with AsyncSessionLocal() as db:
+                db.add(event)
+                await db.commit()
+                await db.refresh(event)
+        except Exception as e:
+            print(f"Database error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error occurred while saving webhook event.",
+            )
 
     return {"message": "Webhook received", "event_id": event.id}

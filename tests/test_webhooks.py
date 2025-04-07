@@ -11,11 +11,35 @@ from app.main import app
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.config import settings
 
-# Sample GitHub payload (simplified)
+# Sample GitHub payloads (simplified)
 SAMPLE_GITHUB_PAYLOAD = {
     "repository": {"full_name": "test-owner/test-repo"},
     "sender": {"login": "test-actor"},
     "action": "opened",
+    "pull_request": {"number": 123},
+}
+
+# Sample payload for a push event to master
+SAMPLE_PUSH_PAYLOAD = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "ref": "refs/heads/master",
+    "commits": [{"id": "abc123"}],
+}
+
+# Sample payload for a comment with "bot, build"
+SAMPLE_COMMENT_PAYLOAD = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "created",
+    "comment": {"body": "please bot, build this"},
+}
+
+# Sample payload that should be ignored
+SAMPLE_IGNORED_PAYLOAD = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "closed",
 }
 
 
@@ -264,3 +288,89 @@ def test_webhook_with_invalid_signature():
 
                 assert response.status_code == 401
                 assert "Invalid signature" in response.text
+
+
+def test_should_store_event_pr_opened():
+    """Test should_store_event returns True for PR opened event."""
+    from app.routes.webhooks import should_store_event
+
+    payload = {
+        "action": "opened",
+        "pull_request": {"number": 123},
+    }
+
+    assert should_store_event(payload) is True
+
+
+def test_should_store_event_pr_synchronize():
+    """Test should_store_event returns True for PR synchronize event."""
+    from app.routes.webhooks import should_store_event
+
+    payload = {
+        "action": "synchronize",
+        "pull_request": {"number": 123},
+    }
+
+    assert should_store_event(payload) is True
+
+
+def test_should_store_event_push_to_master():
+    """Test should_store_event returns True for push to master."""
+    from app.routes.webhooks import should_store_event
+
+    assert should_store_event(SAMPLE_PUSH_PAYLOAD) is True
+
+
+def test_should_store_event_push_to_beta():
+    """Test should_store_event returns True for push to beta."""
+    from app.routes.webhooks import should_store_event
+
+    payload = dict(SAMPLE_PUSH_PAYLOAD)
+    payload["ref"] = "refs/heads/beta"
+
+    assert should_store_event(payload) is True
+
+
+def test_should_store_event_push_to_branch():
+    """Test should_store_event returns True for push to branch/*."""
+    from app.routes.webhooks import should_store_event
+
+    payload = dict(SAMPLE_PUSH_PAYLOAD)
+    payload["ref"] = "refs/heads/branch/feature-x"
+
+    assert should_store_event(payload) is True
+
+
+def test_should_store_event_comment_with_bot_build():
+    """Test should_store_event returns True for comment with 'bot, build'."""
+    from app.routes.webhooks import should_store_event
+
+    assert should_store_event(SAMPLE_COMMENT_PAYLOAD) is True
+
+
+def test_should_not_store_event():
+    """Test should_store_event returns False for other events."""
+    from app.routes.webhooks import should_store_event
+
+    assert should_store_event(SAMPLE_IGNORED_PAYLOAD) is False
+
+
+def test_receive_github_webhook_ignore_event(client: TestClient, mock_db_session):
+    """Test that events not matching criteria are received but not stored."""
+    delivery_id = str(uuid.uuid4())
+    headers = {"X-GitHub-Delivery": delivery_id}
+
+    # Use a payload that should not be stored
+    response = client.post(
+        "/api/webhooks/github", json=SAMPLE_IGNORED_PAYLOAD, headers=headers
+    )
+
+    # Should still return 202 Accepted
+    assert response.status_code == 202
+    response_data = response.json()
+    assert response_data["message"] == "Webhook received"
+    assert response_data["event_id"] == delivery_id
+
+    # Verify that db.add was NOT called (event not stored)
+    mock_db_session.add.assert_not_called()
+    mock_db_session.commit.assert_not_called()
