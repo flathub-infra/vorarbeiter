@@ -1,0 +1,10 @@
+*.egg-info
+*.py[oc]
+*.sqlite3
+.venv
+/vorarbeiter.db
+CLAUDE.md
+__pycache__/
+build/
+dist/
+wheels/

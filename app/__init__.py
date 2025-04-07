@@ -1,0 +1,1 @@
+"""Vorarbeiter app module."""
