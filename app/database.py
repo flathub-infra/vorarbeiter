@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Annotated
+from typing import AsyncGenerator
 
-from fastapi import Depends
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     AsyncSession,
@@ -25,19 +24,6 @@ AsyncSessionLocal = async_sessionmaker(
     autocommit=False,
     autoflush=False,
 )
-
-
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Dependency that provides an AsyncSession."""
-    async with AsyncSessionLocal() as session:
-        async with session.begin():
-            try:
-                yield session
-            except Exception:
-                raise
-
-
-SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 @asynccontextmanager

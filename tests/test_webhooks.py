@@ -3,6 +3,7 @@ import uuid
 import hmac
 import hashlib
 import json
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,16 +57,11 @@ def mock_db_session():
 def mock_db(mock_db_session):
     """Mock the database session factory."""
 
-    class MockAsyncSessionLocal:
-        async def __aenter__(self):
-            return mock_db_session
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db_session
 
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            pass
-
-    with patch(
-        "app.routes.webhooks.AsyncSessionLocal", return_value=MockAsyncSessionLocal()
-    ):
+    with patch("app.routes.webhooks.get_db", mock_get_db):
         yield mock_db_session
 
 
@@ -97,12 +93,9 @@ def test_receive_github_webhook_success(client: TestClient, mock_db_session):
     assert response_data["message"] == "Webhook received"
     assert response_data["event_id"] == delivery_id
 
-    # Verify that the event was stored correctly
     mock_db_session.add.assert_called_once()
-    mock_db_session.commit.assert_called_once()
     mock_db_session.refresh.assert_called_once()
 
-    # Get the WebhookEvent that was added to the session
     added_event = mock_db_session.add.call_args[0][0]
     assert isinstance(added_event, WebhookEvent)
     assert str(added_event.id) == delivery_id
@@ -110,7 +103,6 @@ def test_receive_github_webhook_success(client: TestClient, mock_db_session):
     assert added_event.repository == "test-owner/test-repo"
     assert added_event.actor == "test-actor"
     assert added_event.payload == SAMPLE_GITHUB_PAYLOAD
-    # The processed field default is False in the model, but it might be None in tests
     assert added_event.processed is False or added_event.processed is None
 
 
@@ -175,8 +167,7 @@ def test_receive_github_webhook_nested_key_error(client: TestClient):
 
 def test_receive_github_webhook_db_commit_error(client: TestClient, mock_db_session):
     """Test handling of database commit errors."""
-    # Configure the mock to raise an exception on commit
-    mock_db_session.commit.side_effect = Exception("Database commit error")
+    mock_db_session.add.side_effect = Exception("Database error")
 
     delivery_id = str(uuid.uuid4())
     headers = {"X-GitHub-Delivery": delivery_id}
@@ -188,19 +179,16 @@ def test_receive_github_webhook_db_commit_error(client: TestClient, mock_db_sess
     assert response.status_code == 500
     assert "Database error" in response.text
 
-    # Verify that add was called but commit failed
     mock_db_session.add.assert_called_once()
-    mock_db_session.commit.assert_called_once()
     mock_db_session.refresh.assert_not_called()
 
 
 def test_receive_github_webhook_duplicate_event_id(client: TestClient, mock_db_session):
     """Test handling of duplicate event IDs."""
-    # Configure the mock to raise an IntegrityError on commit (simulating duplicate key)
     from sqlalchemy.exc import IntegrityError
     from sqlalchemy.orm.exc import MultipleResultsFound
 
-    mock_db_session.commit.side_effect = IntegrityError(
+    mock_db_session.add.side_effect = IntegrityError(
         "Duplicate key", {}, MultipleResultsFound()
     )
 
@@ -214,9 +202,7 @@ def test_receive_github_webhook_duplicate_event_id(client: TestClient, mock_db_s
     assert response.status_code == 500
     assert "Database error" in response.text
 
-    # Verify that add was called but commit failed
     mock_db_session.add.assert_called_once()
-    mock_db_session.commit.assert_called_once()
     mock_db_session.refresh.assert_not_called()
 
 
@@ -227,11 +213,13 @@ def test_webhook_with_signature_verification_success():
     delivery_id = str(uuid.uuid4())
 
     with patch("app.config.settings.github_webhook_secret", test_secret):
-        with patch("app.routes.webhooks.AsyncSessionLocal") as mock_session:
-            # Setup mock session
-            mock_db = AsyncMock()
-            mock_session.return_value.__aenter__.return_value = mock_db
+        mock_db = AsyncMock()
 
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        with patch("app.routes.webhooks.get_db", mock_get_db):
             with TestClient(app) as client:
                 # We need to directly send bytes with TestClient.post to ensure
                 # the signature matches exactly what we compute
@@ -258,7 +246,13 @@ def test_webhook_with_signature_verification_success():
 def test_webhook_with_missing_signature():
     """Test webhook with missing signature when secret is configured."""
     with patch("app.config.settings.github_webhook_secret", "test_webhook_secret"):
-        with patch("app.routes.webhooks.AsyncSessionLocal"):
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        with patch("app.routes.webhooks.get_db", mock_get_db):
             with TestClient(app) as client:
                 delivery_id = str(uuid.uuid4())
                 headers = {"X-GitHub-Delivery": delivery_id}
@@ -274,7 +268,13 @@ def test_webhook_with_missing_signature():
 def test_webhook_with_invalid_signature():
     """Test webhook with invalid signature."""
     with patch("app.config.settings.github_webhook_secret", "test_webhook_secret"):
-        with patch("app.routes.webhooks.AsyncSessionLocal"):
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        with patch("app.routes.webhooks.get_db", mock_get_db):
             with TestClient(app) as client:
                 delivery_id = str(uuid.uuid4())
                 headers = {

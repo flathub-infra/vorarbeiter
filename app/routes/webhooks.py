@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from app.config import settings
-from app.database import AsyncSessionLocal
+from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
@@ -112,9 +112,8 @@ async def receive_github_webhook(
 
     if should_store_event(payload):
         try:
-            async with AsyncSessionLocal() as db:
+            async with get_db() as db:
                 db.add(event)
-                await db.commit()
                 await db.refresh(event)
         except Exception as e:
             print(f"Database error: {e}")
