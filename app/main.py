@@ -2,7 +2,7 @@ from fastapi import FastAPI
 import sentry_sdk
 
 from app.config import settings
-from app.routes.webhooks import webhooks_router
+from app.routes import webhooks_router, pipelines_router
 
 if settings.sentry_dsn:
     sentry_sdk.init(
@@ -20,3 +20,4 @@ async def read_root():
 
 
 app.include_router(webhooks_router)
+app.include_router(pipelines_router)
