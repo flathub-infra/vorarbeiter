@@ -208,21 +208,12 @@ def test_receive_github_webhook_duplicate_event_id(client: TestClient, mock_db_s
 
 def test_webhook_with_signature_verification_success():
     """Test webhook with signature verification."""
-    # Setup the test
     test_secret = "test_webhook_secret"
     delivery_id = str(uuid.uuid4())
 
-    with patch("app.config.settings.github_webhook_secret", test_secret):
-        mock_db = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_get_db():
-            yield mock_db
-
-        with patch("app.routes.webhooks.get_db", mock_get_db):
+    with patch("app.routes.webhooks.should_store_event", return_value=False):
+        with patch("app.config.settings.github_webhook_secret", test_secret):
             with TestClient(app) as client:
-                # We need to directly send bytes with TestClient.post to ensure
-                # the signature matches exactly what we compute
                 payload_bytes = json.dumps(SAMPLE_GITHUB_PAYLOAD).encode()
                 signature = hmac.new(
                     test_secret.encode(), payload_bytes, hashlib.sha256
@@ -234,7 +225,6 @@ def test_webhook_with_signature_verification_success():
                     "Content-Type": "application/json",
                 }
 
-                # Make request with raw bytes instead of json parameter
                 response = client.post(
                     "/api/webhooks/github", content=payload_bytes, headers=headers
                 )

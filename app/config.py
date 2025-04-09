@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     sentry_dsn: str | None = None
     github_webhook_secret: str | None = None
     github_token: str | None = None
+    api_token: str = "change-me-in-production"
 
 
 settings = Settings()
