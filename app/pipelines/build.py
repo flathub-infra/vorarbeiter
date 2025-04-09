@@ -12,6 +12,10 @@ from app.providers import ProviderType, JobProvider
 class BuildPipeline:
     def __init__(self, github_provider: JobProvider):
         self.github_provider = github_provider
+        self.job_sequence: Dict[str, Dict[str, Optional[str]]] = {
+            "validate_manifest": {"next": "build"},
+            "build": {"next": None},
+        }
 
     async def create_pipeline(
         self,
@@ -92,7 +96,7 @@ class BuildPipeline:
         await db.commit()
         return pipeline
 
-    async def prepare_build(self, db: AsyncSession, job_id: uuid.UUID) -> Job:
+    async def build(self, db: AsyncSession, job_id: uuid.UUID) -> Job:
         validate_job = await db.get(Job, job_id)
         if not validate_job:
             raise ValueError(f"Job {job_id} not found")
@@ -112,37 +116,8 @@ class BuildPipeline:
         db.add(build_job)
         await db.flush()
 
-        additional_params = {}
-        if validate_job.result and isinstance(validate_job.result, dict):
-            if "manifest_path" in validate_job.result:
-                additional_params["manifest_path"] = validate_job.result[
-                    "manifest_path"
-                ]
-
-        build_job.provider_data = {"additional_params": additional_params}
-        await db.commit()
-
-        return build_job
-
-    async def start_build(
-        self,
-        db: AsyncSession,
-        build_job_id: uuid.UUID,
-    ) -> Job:
-        build_job = await db.get(Job, build_job_id)
-        if not build_job:
-            raise ValueError(f"Build job {build_job_id} not found")
-
-        pipeline = await db.get(Pipeline, build_job.pipeline_id)
-        if not pipeline:
-            raise ValueError(f"Pipeline {build_job.pipeline_id} not found")
-
         build_job.status = JobStatus.RUNNING
         build_job.started_at = datetime.now()
-
-        additional_params = {}
-        if build_job.provider_data and "additional_params" in build_job.provider_data:
-            additional_params = build_job.provider_data["additional_params"]
 
         job_data = {
             "app_id": pipeline.app_id,
@@ -154,7 +129,6 @@ class BuildPipeline:
                 "ref": "main",
                 "inputs": {
                     **pipeline.params,
-                    **additional_params,
                     "callback_url": f"/api/pipelines/{pipeline.id}/jobs/{build_job.id}/callback",
                 },
             },
@@ -164,10 +138,7 @@ class BuildPipeline:
             str(build_job.id), str(pipeline.id), job_data
         )
 
-        build_job.provider_data = {
-            **provider_result,
-            "additional_params": additional_params,
-        }
+        build_job.provider_data = provider_result
 
         await db.commit()
         return build_job
@@ -201,23 +172,30 @@ class BuildPipeline:
 
         if status.lower() == "success":
             job.status = JobStatus.COMPLETE
+            job.finished_at = datetime.now()
+            job.result = result
+
+            job_type = job.job_type
+            if job_type in self.job_sequence and self.job_sequence[job_type]["next"]:
+                next_job_type = self.job_sequence[job_type]["next"]
+                if job_type == "validate_manifest" and next_job_type == "build":
+                    await self.build(db, job.id)
+
         elif status.lower() == "failure":
             job.status = JobStatus.FAILED
+            job.finished_at = datetime.now()
+            job.result = result
+            pipeline.status = PipelineStatus.FAILED
+            pipeline.finished_at = datetime.now()
         elif status.lower() == "cancelled":
             job.status = JobStatus.CANCELLED
+            job.finished_at = datetime.now()
+            job.result = result
+            pipeline.status = PipelineStatus.CANCELLED
+            pipeline.finished_at = datetime.now()
         else:
             job.status = JobStatus.PENDING
-
-        job.finished_at = datetime.now()
-        job.result = result
-
-        if job.status in [JobStatus.FAILED, JobStatus.CANCELLED]:
-            pipeline.status = (
-                PipelineStatus.FAILED
-                if job.status == JobStatus.FAILED
-                else PipelineStatus.CANCELLED
-            )
-            pipeline.finished_at = datetime.now()
+            job.result = result
 
         await db.commit()
         return job

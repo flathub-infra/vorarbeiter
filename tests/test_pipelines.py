@@ -133,7 +133,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_prepare_build(
+async def test_build(
     build_pipeline, mock_db, sample_pipeline, validate_job, monkeypatch
 ):
     mock_db.get.side_effect = [validate_job, sample_pipeline]
@@ -148,36 +148,19 @@ async def test_prepare_build(
 
     mock_db.add.side_effect = mock_add
 
-    result = await build_pipeline.prepare_build(mock_db, validate_job.id)
-
-    assert result.job_type == "build"
-    assert result.pipeline_id == sample_pipeline.id
-    assert result.status == JobStatus.PENDING
-    assert result.provider == ProviderType.GITHUB.value
-    assert result.position == 1
-    assert "manifest_path" in result.provider_data.get("additional_params", {})
-    assert mock_db.commit.called
-
-
-@pytest.mark.asyncio
-async def test_start_build(build_pipeline, mock_db, sample_pipeline, build_job):
-    mock_db.get.side_effect = [build_job, sample_pipeline]
-    mock_db.commit = AsyncMock()
-
     build_pipeline.github_provider.dispatch = AsyncMock(
         return_value={"status": "dispatched"}
     )
 
-    build_job.provider_data = {
-        "additional_params": {"manifest_path": "/path/to/manifest.yml"}
-    }
+    result = await build_pipeline.build(mock_db, validate_job.id)
 
-    result = await build_pipeline.start_build(mock_db, build_job.id)
-
+    assert result.job_type == "build"
+    assert result.pipeline_id == sample_pipeline.id
     assert result.status == JobStatus.RUNNING
     assert result.started_at is not None
+    assert result.provider == ProviderType.GITHUB.value
+    assert result.position == 1
     assert "status" in result.provider_data
-    assert "additional_params" in result.provider_data
     assert mock_db.commit.called
     assert build_pipeline.github_provider.dispatch.called
 
@@ -202,6 +185,9 @@ async def test_handle_job_callback_success(
     mock_db.get.side_effect = [validate_job, sample_pipeline]
     mock_db.commit = AsyncMock()
 
+    build_pipeline.build = AsyncMock()
+
+    validate_job.job_type = "validate_manifest"
     status = "success"
     result = {"output": "Validation successful"}
 
@@ -213,6 +199,8 @@ async def test_handle_job_callback_success(
     assert job.finished_at is not None
     assert job.result == result
     assert mock_db.commit.called
+    assert build_pipeline.build.called
+    assert build_pipeline.build.call_args[0][1] == validate_job.id
 
 
 @pytest.mark.asyncio

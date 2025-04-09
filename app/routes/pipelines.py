@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, status, Header, Depends
 
 from app.database import get_db
-from app.models import Job, JobStatus, Pipeline, PipelineStatus, PipelineTrigger
+from app.models import Job, Pipeline, PipelineTrigger
 from app.pipelines.build import BuildPipeline
 from app.providers.factory import ProviderFactory
 from app.providers.base import ProviderType
@@ -64,24 +64,6 @@ class PipelineResponse(BaseModel):
     finished_at: Optional[datetime] = None
     published_at: Optional[datetime] = None
     jobs: List[JobResponse] = []
-
-
-async def process_job_status(pipeline_id: uuid.UUID, job_id: uuid.UUID):
-    async with get_db() as db:
-        job = await db.get(Job, job_id)
-        if not job:
-            return
-
-        pipeline = await db.get(Pipeline, pipeline_id)
-        if not pipeline:
-            return
-
-        if job.status == JobStatus.FAILED:
-            pipeline.status = PipelineStatus.FAILED
-            pipeline.finished_at = datetime.now()
-        elif job.status == JobStatus.CANCELLED:
-            pipeline.status = PipelineStatus.CANCELLED
-            pipeline.finished_at = datetime.now()
 
 
 @pipelines_router.post(
@@ -305,22 +287,12 @@ async def job_callback(
         job_status = data.get("status", "failure").lower()
         job_result = data.get("result", {})
 
-        match job_status:
-            case "success":
-                job.status = JobStatus.COMPLETE
-                job.finished_at = datetime.now()
-            case "failure":
-                job.status = JobStatus.FAILED
-                job.finished_at = datetime.now()
-            case "cancelled":
-                job.status = JobStatus.CANCELLED
-                job.finished_at = datetime.now()
-            case _:
-                job.status = JobStatus.PENDING
+        github_provider = await ProviderFactory.create_provider(ProviderType.GITHUB, {})
+        pipeline_service = BuildPipeline(github_provider)
 
-        job.result = job_result
-
-        await process_job_status(pipeline.id, job.id)
+        await pipeline_service.handle_job_callback(
+            db=db, job_id=job_id, status=job_status, result=job_result
+        )
 
     return {
         "status": "ok",
