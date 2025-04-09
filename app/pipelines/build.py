@@ -77,9 +77,8 @@ class BuildPipeline:
                 "workflow_id": "validate-manifest.yml",
                 "ref": "main",
                 "inputs": {
-                    "flatpak_id": pipeline.app_id,
                     **pipeline.params,
-                    "callback_url": f"/api/jobs/{validate_job.id}/callback",
+                    "callback_url": f"/api/pipelines/{pipeline.id}/jobs/{validate_job.id}/callback",
                 },
             },
         }
@@ -154,10 +153,9 @@ class BuildPipeline:
                 "workflow_id": "build.yml",
                 "ref": "main",
                 "inputs": {
-                    "flatpak_id": pipeline.app_id,
                     **pipeline.params,
                     **additional_params,
-                    "callback_url": f"/api/jobs/{build_job.id}/callback",
+                    "callback_url": f"/api/pipelines/{pipeline.id}/jobs/{build_job.id}/callback",
                 },
             },
         }

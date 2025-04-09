@@ -318,7 +318,6 @@ def test_trigger_pipeline_endpoint(
     pipeline_instance.start_pipeline.assert_called_once()
 
     assert mock_get_db.flush.called
-    assert mock_get_db.commit.called
 
 
 def test_trigger_pipeline_unauthorized(

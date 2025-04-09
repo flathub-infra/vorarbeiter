@@ -3,8 +3,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from sqlalchemy import String, Integer, JSON, func, ForeignKey
-from sqlalchemy.orm import mapped_column, Mapped, relationship
+from sqlalchemy import JSON, ForeignKey, Integer, String, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.webhook_event import Base
 

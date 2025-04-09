@@ -112,8 +112,6 @@ async def trigger_pipeline(
             pipeline_id=pipeline.id,
         )
 
-        await db.commit()
-
         return {
             "status": "created",
             "pipeline_id": str(pipeline.id),
