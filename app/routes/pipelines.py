@@ -1,12 +1,13 @@
 import uuid
+import secrets
 from typing import Any, Dict, List, Optional
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from fastapi import APIRouter, HTTPException, status, Header, Depends
 
 from app.database import get_db
-from app.models import Pipeline, PipelineTrigger
+from app.models import Pipeline, PipelineTrigger, PipelineStatus
 from app.pipelines.build import BuildPipeline
 from app.providers.factory import ProviderFactory
 from app.providers.base import ProviderType
@@ -49,10 +50,27 @@ class PipelineResponse(BaseModel):
     triggered_by: str
     provider: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
+    log_url: Optional[str] = None
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     published_at: Optional[datetime] = None
+
+
+class PipelineStatusCallback(BaseModel):
+    status: str
+    result: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("status")
+    @classmethod
+    def status_must_be_valid(cls, v):
+        if v not in ["success", "failure"]:
+            raise ValueError("status must be 'success' or 'failure'")
+        return v
+
+
+class PipelineLogUrlCallback(BaseModel):
+    log_url: str
 
 
 @pipelines_router.post(
@@ -141,6 +159,7 @@ async def get_pipeline(
             triggered_by=pipeline.triggered_by.value,
             provider=pipeline.provider,
             result=pipeline.result,
+            log_url=pipeline.log_url,
             created_at=pipeline.created_at,
             started_at=pipeline.started_at,
             finished_at=pipeline.finished_at,
@@ -155,6 +174,7 @@ async def get_pipeline(
 async def pipeline_callback(
     pipeline_id: uuid.UUID,
     data: Dict[str, Any],
+    x_callback_token: str = Header(..., alias="X-Callback-Token"),
 ):
     async with get_db() as db:
         pipeline = await db.get(Pipeline, pipeline_id)
@@ -164,18 +184,62 @@ async def pipeline_callback(
                 detail=f"Pipeline {pipeline_id} not found",
             )
 
-        status_value = data.get("status", "failure").lower()
-        result = data.get("result", {})
+        if not secrets.compare_digest(x_callback_token, pipeline.callback_token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid callback token",
+            )
 
-        github_provider = await ProviderFactory.create_provider(ProviderType.GITHUB, {})
-        pipeline_service = BuildPipeline(github_provider)
+        if "status" in data:
+            if pipeline.status in [
+                PipelineStatus.COMPLETE,
+                PipelineStatus.FAILED,
+                PipelineStatus.CANCELLED,
+                PipelineStatus.PUBLISHED,
+            ]:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Pipeline status already finalized",
+                )
 
-        await pipeline_service.handle_callback(
-            db=db, pipeline_id=pipeline_id, status=status_value, result=result
-        )
+            status_callback = PipelineStatusCallback(**data)
+            status_value = status_callback.status.lower()
+            result = status_callback.result
 
-    return {
-        "status": "ok",
-        "pipeline_id": str(pipeline_id),
-        "pipeline_status": status_value,
-    }
+            github_provider = await ProviderFactory.create_provider(
+                ProviderType.GITHUB, {}
+            )
+            pipeline_service = BuildPipeline(github_provider)
+
+            await pipeline_service.handle_callback(
+                db=db, pipeline_id=pipeline_id, status=status_value, result=result
+            )
+
+            return {
+                "status": "ok",
+                "pipeline_id": str(pipeline_id),
+                "pipeline_status": status_value,
+            }
+
+        elif "log_url" in data:
+            if pipeline.log_url:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Log URL already set",
+                )
+
+            log_url_callback = PipelineLogUrlCallback(**data)
+            pipeline.log_url = log_url_callback.log_url
+            await db.flush()
+
+            return {
+                "status": "ok",
+                "pipeline_id": str(pipeline_id),
+                "log_url": pipeline.log_url,
+            }
+
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Request must contain either 'status' or 'log_url' field",
+            )

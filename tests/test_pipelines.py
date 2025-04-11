@@ -41,6 +41,7 @@ def sample_pipeline():
         triggered_by=PipelineTrigger.MANUAL,
         provider=ProviderType.GITHUB.value,
         provider_data={},
+        callback_token="test_token_12345",
     )
 
 
@@ -301,7 +302,7 @@ def test_get_pipeline_not_found(mock_get_db):
     assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
 
 
-def test_pipeline_callback_endpoint(mock_get_db, sample_pipeline):
+def test_pipeline_callback_status_endpoint(mock_get_db, sample_pipeline):
     test_client = TestClient(app)
 
     pipeline_id = sample_pipeline.id
@@ -309,12 +310,75 @@ def test_pipeline_callback_endpoint(mock_get_db, sample_pipeline):
     mock_get_db.get.return_value = sample_pipeline
 
     data = {"status": "success", "result": {"output": "Build successful"}}
+    headers = {"X-Callback-Token": "test_token_12345"}
 
-    response = test_client.post(f"/api/pipelines/{pipeline_id}/callback", json=data)
+    response = test_client.post(
+        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+    )
 
     assert response.status_code == 200
     assert response.json()["pipeline_id"] == str(pipeline_id)
     assert response.json()["pipeline_status"] == "success"
+
+
+def test_pipeline_callback_log_url_endpoint(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db.get.return_value = sample_pipeline
+
+    data = {"log_url": "https://example.com/logs/12345"}
+    headers = {"X-Callback-Token": "test_token_12345"}
+
+    response = test_client.post(
+        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response.json()["log_url"] == "https://example.com/logs/12345"
+    assert sample_pipeline.log_url == "https://example.com/logs/12345"
+
+
+def test_pipeline_callback_invalid_data(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db.get.return_value = sample_pipeline
+
+    data = {"some_key": "some_value"}
+    headers = {"X-Callback-Token": "test_token_12345"}
+
+    response = test_client.post(
+        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+    )
+
+    assert response.status_code == 400
+    assert (
+        "Request must contain either 'status' or 'log_url' field"
+        in response.json()["detail"]
+    )
+
+
+def test_pipeline_callback_invalid_status(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db.get.return_value = sample_pipeline
+
+    data = {"status": "invalid_status"}
+    headers = {"X-Callback-Token": "test_token_12345"}
+
+    try:
+        test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
+        assert False
+    except Exception:
+        pass
 
 
 def test_pipeline_callback_not_found(mock_get_db):
@@ -325,8 +389,69 @@ def test_pipeline_callback_not_found(mock_get_db):
     mock_get_db.get.return_value = None
 
     data = {"status": "success", "result": {"output": "Build successful"}}
+    headers = {"X-Callback-Token": "test_token_12345"}
 
-    response = test_client.post(f"/api/pipelines/{pipeline_id}/callback", json=data)
+    response = test_client.post(
+        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+    )
 
     assert response.status_code == 404
     assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
+
+
+def test_pipeline_callback_invalid_token(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db.get.return_value = sample_pipeline
+
+    data = {"status": "success", "result": {"output": "Build successful"}}
+    headers = {"X-Callback-Token": "wrong_token"}
+
+    response = test_client.post(
+        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+    )
+
+    assert response.status_code == 401
+    assert "Invalid callback token" in response.json()["detail"]
+
+
+def test_pipeline_callback_status_immutable(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    sample_pipeline.status = PipelineStatus.COMPLETE
+
+    mock_get_db.get.return_value = sample_pipeline
+
+    data = {"status": "success", "result": {"output": "Build successful"}}
+    headers = {"X-Callback-Token": "test_token_12345"}
+
+    response = test_client.post(
+        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert "Pipeline status already finalized" in response.json()["detail"]
+
+
+def test_pipeline_callback_log_url_immutable(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    sample_pipeline.log_url = "https://example.com/logs/existing"
+
+    mock_get_db.get.return_value = sample_pipeline
+
+    data = {"log_url": "https://example.com/logs/new"}
+    headers = {"X-Callback-Token": "test_token_12345"}
+
+    response = test_client.post(
+        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert "Log URL already set" in response.json()["detail"]

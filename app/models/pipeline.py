@@ -1,9 +1,10 @@
 import uuid
+import secrets
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from sqlalchemy import String, JSON, func, ForeignKey
+from sqlalchemy import String, JSON, Text, func, ForeignKey
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
 from app.models.webhook_event import Base
@@ -51,6 +52,11 @@ class Pipeline(Base):
         ForeignKey("webhookevent.id"), nullable=True, index=True
     )
     webhook_event = relationship("WebhookEvent", backref="pipelines")
+
+    log_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    callback_token: Mapped[str] = mapped_column(
+        String(32), default=lambda: secrets.token_hex(16)
+    )
 
     def __repr__(self):
         return f"<Pipeline(id={self.id}, status='{self.status.name}', app_id='{self.app_id}')>"

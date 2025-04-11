@@ -61,6 +61,7 @@ class BuildPipeline:
                     "runners": '["ubuntu-24.04","ubuntu-24.04-arm"]',
                     "repo_token": "dummy-token",
                     "callback_url": f"/api/pipelines/{pipeline.id}/callback",
+                    "callback_token": pipeline.callback_token,
                 },
             },
         }
