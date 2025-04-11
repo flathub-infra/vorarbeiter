@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
 from app.providers import ProviderType, JobProvider
+from app.config import settings
 
 
 class BuildPipeline:
@@ -60,7 +61,7 @@ class BuildPipeline:
                     "build_url": str(pipeline.id),
                     "runners": '["ubuntu-24.04","ubuntu-24.04-arm"]',
                     "repo_token": "dummy-token",
-                    "callback_url": f"/api/pipelines/{pipeline.id}/callback",
+                    "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
                     "callback_token": pipeline.callback_token,
                 },
             },
