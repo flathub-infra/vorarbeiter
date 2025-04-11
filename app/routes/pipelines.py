@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 from fastapi import APIRouter, HTTPException, status, Header, Depends, Response
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.database import get_db
 from app.models import Pipeline, PipelineTrigger, PipelineStatus
@@ -13,6 +14,7 @@ from app.config import settings
 from sqlalchemy.future import select
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
+security = HTTPBearer()
 
 
 async def verify_token(x_api_token: str = Header(...)):
@@ -172,7 +174,7 @@ async def get_pipeline(
 async def pipeline_callback(
     pipeline_id: uuid.UUID,
     data: Dict[str, Any],
-    x_callback_token: str = Header(..., alias="X-Callback-Token"),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     async with get_db() as db:
         pipeline = await db.get(Pipeline, pipeline_id)
@@ -182,7 +184,7 @@ async def pipeline_callback(
                 detail=f"Pipeline {pipeline_id} not found",
             )
 
-        if not secrets.compare_digest(x_callback_token, pipeline.callback_token):
+        if not secrets.compare_digest(credentials.credentials, pipeline.callback_token):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid callback token",

@@ -298,7 +298,7 @@ def test_pipeline_callback_status_endpoint(mock_get_db, sample_pipeline):
     mock_get_db.get.return_value = sample_pipeline
 
     data = {"status": "success", "result": {"output": "Build successful"}}
-    headers = {"X-Callback-Token": "test_token_12345"}
+    headers = {"Authorization": "Bearer test_token_12345"}
 
     response = test_client.post(
         f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
@@ -317,7 +317,7 @@ def test_pipeline_callback_log_url_endpoint(mock_get_db, sample_pipeline):
     mock_get_db.get.return_value = sample_pipeline
 
     data = {"log_url": "https://example.com/logs/12345"}
-    headers = {"X-Callback-Token": "test_token_12345"}
+    headers = {"Authorization": "Bearer test_token_12345"}
 
     response = test_client.post(
         f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
@@ -337,7 +337,7 @@ def test_pipeline_callback_invalid_data(mock_get_db, sample_pipeline):
     mock_get_db.get.return_value = sample_pipeline
 
     data = {"some_key": "some_value"}
-    headers = {"X-Callback-Token": "test_token_12345"}
+    headers = {"Authorization": "Bearer test_token_12345"}
 
     response = test_client.post(
         f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
@@ -358,7 +358,7 @@ def test_pipeline_callback_invalid_status(mock_get_db, sample_pipeline):
     mock_get_db.get.return_value = sample_pipeline
 
     data = {"status": "invalid_status"}
-    headers = {"X-Callback-Token": "test_token_12345"}
+    headers = {"Authorization": "Bearer test_token_12345"}
 
     try:
         test_client.post(
@@ -377,7 +377,7 @@ def test_pipeline_callback_not_found(mock_get_db):
     mock_get_db.get.return_value = None
 
     data = {"status": "success", "result": {"output": "Build successful"}}
-    headers = {"X-Callback-Token": "test_token_12345"}
+    headers = {"Authorization": "Bearer test_token_12345"}
 
     response = test_client.post(
         f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
@@ -395,7 +395,7 @@ def test_pipeline_callback_invalid_token(mock_get_db, sample_pipeline):
     mock_get_db.get.return_value = sample_pipeline
 
     data = {"status": "success", "result": {"output": "Build successful"}}
-    headers = {"X-Callback-Token": "wrong_token"}
+    headers = {"Authorization": "Bearer wrong_token"}
 
     response = test_client.post(
         f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
@@ -415,7 +415,7 @@ def test_pipeline_callback_status_immutable(mock_get_db, sample_pipeline):
     mock_get_db.get.return_value = sample_pipeline
 
     data = {"status": "success", "result": {"output": "Build successful"}}
-    headers = {"X-Callback-Token": "test_token_12345"}
+    headers = {"Authorization": "Bearer test_token_12345"}
 
     response = test_client.post(
         f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
@@ -435,7 +435,7 @@ def test_pipeline_callback_log_url_immutable(mock_get_db, sample_pipeline):
     mock_get_db.get.return_value = sample_pipeline
 
     data = {"log_url": "https://example.com/logs/new"}
-    headers = {"X-Callback-Token": "test_token_12345"}
+    headers = {"Authorization": "Bearer test_token_12345"}
 
     response = test_client.post(
         f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
