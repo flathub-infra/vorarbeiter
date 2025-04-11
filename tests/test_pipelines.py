@@ -177,7 +177,7 @@ def test_trigger_pipeline_endpoint(mock_get_db, mock_build_pipeline):
         "params": {"repo": "test", "branch": "main"},
     }
 
-    headers = {"X-API-Token": settings.api_token}
+    headers = {"Authorization": f"Bearer {settings.api_token}"}
 
     response = test_client.post("/api/pipelines", json=request_data, headers=headers)
 
@@ -210,10 +210,10 @@ def test_trigger_pipeline_unauthorized(mock_get_db, mock_build_pipeline):
 
     # Test with no token
     response = test_client.post("/api/pipelines", json=request_data)
-    assert response.status_code == 422  # Missing required header
+    assert response.status_code == 403  # Missing Authorization header
 
     # Test with invalid token
-    headers = {"X-API-Token": "invalid-token"}
+    headers = {"Authorization": "Bearer invalid-token"}
     response = test_client.post("/api/pipelines", json=request_data, headers=headers)
     assert response.status_code == 401
     assert "Invalid API token" in response.json()["detail"]

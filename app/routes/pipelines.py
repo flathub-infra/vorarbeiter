@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
-from fastapi import APIRouter, HTTPException, status, Header, Depends, Response
+from fastapi import APIRouter, HTTPException, status, Depends, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.database import get_db
@@ -15,15 +15,18 @@ from sqlalchemy.future import select
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
+api_security = HTTPBearer()
 
 
-async def verify_token(x_api_token: str = Header(...)):
-    if x_api_token != settings.api_token:
+async def verify_token(
+    credentials: HTTPAuthorizationCredentials = Depends(api_security),
+):
+    if credentials.credentials != settings.api_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API token",
         )
-    return x_api_token
+    return credentials.credentials
 
 
 class PipelineTriggerRequest(BaseModel):
