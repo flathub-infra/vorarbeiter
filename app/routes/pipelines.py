@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
-from fastapi import APIRouter, HTTPException, status, Header, Depends
+from fastapi import APIRouter, HTTPException, status, Header, Depends, Response
 
 from app.database import get_db
 from app.models import Pipeline, PipelineTrigger, PipelineStatus
@@ -239,3 +239,28 @@ async def pipeline_callback(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Request must contain either 'status' or 'log_url' field",
             )
+
+
+@pipelines_router.get(
+    "/pipelines/{pipeline_id}/log_url",
+)
+async def redirect_to_log_url(
+    pipeline_id: uuid.UUID,
+    response: Response,
+):
+    async with get_db() as db:
+        pipeline = await db.get(Pipeline, pipeline_id)
+        if not pipeline:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Pipeline {pipeline_id} not found",
+            )
+
+        if not pipeline.log_url:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = "10"
+            return {"detail": "Log URL not available yet"}
+
+        response.status_code = status.HTTP_307_TEMPORARY_REDIRECT
+        response.headers["Location"] = pipeline.log_url
+        return {}

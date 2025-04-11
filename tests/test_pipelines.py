@@ -443,3 +443,49 @@ def test_pipeline_callback_log_url_immutable(mock_get_db, sample_pipeline):
 
     assert response.status_code == 409
     assert "Log URL already set" in response.json()["detail"]
+
+
+def test_redirect_to_log_url(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    sample_pipeline.log_url = "https://example.com/logs/12345"
+
+    mock_get_db.get.return_value = sample_pipeline
+
+    response = test_client.get(
+        f"/api/pipelines/{pipeline_id}/log_url", follow_redirects=False
+    )
+
+    assert response.status_code == 307
+    assert response.headers["Location"] == "https://example.com/logs/12345"
+
+
+def test_redirect_to_log_url_not_available(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    sample_pipeline.log_url = None
+
+    mock_get_db.get.return_value = sample_pipeline
+
+    response = test_client.get(f"/api/pipelines/{pipeline_id}/log_url")
+
+    assert response.status_code == 202
+    assert "Retry-After" in response.headers
+    assert "Log URL not available yet" in response.json()["detail"]
+
+
+def test_redirect_to_log_url_not_found(mock_get_db):
+    test_client = TestClient(app)
+
+    pipeline_id = uuid.uuid4()
+
+    mock_get_db.get.return_value = None
+
+    response = test_client.get(f"/api/pipelines/{pipeline_id}/log_url")
+
+    assert response.status_code == 404
+    assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
