@@ -59,7 +59,7 @@ class BuildPipeline:
                     "branch": pipeline.params.get("branch", "stable"),
                     "git_ref": pipeline.params.get("ref", "master"),
                     "build_url": str(pipeline.id),
-                    "runners": '["ubuntu-24.04","ubuntu-24.04-arm"]',
+                    "arches": "x86_64,aarch64",
                     "repo_token": "dummy-token",
                     "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
                     "callback_token": pipeline.callback_token,
