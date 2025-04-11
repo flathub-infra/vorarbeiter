@@ -88,28 +88,33 @@ async def trigger_pipeline(
     await ensure_providers_initialized()
     pipeline_service = BuildPipeline()
 
+    pipeline = await pipeline_service.create_pipeline(
+        app_id=data.app_id,
+        params=data.params,
+        webhook_event_id=None,
+    )
+
     async with get_db() as db:
-        pipeline = await pipeline_service.create_pipeline(
-            db=db,
-            app_id=data.app_id,
-            params=data.params,
-            webhook_event_id=None,
-        )
-
-        pipeline.triggered_by = PipelineTrigger.MANUAL
+        db_pipeline = await db.get(Pipeline, pipeline.id)
+        if db_pipeline is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Pipeline {pipeline.id} not found",
+            )
+        db_pipeline.triggered_by = PipelineTrigger.MANUAL
         await db.flush()
+        pipeline = db_pipeline
 
-        pipeline = await pipeline_service.start_pipeline(
-            db=db,
-            pipeline_id=pipeline.id,
-        )
+    pipeline = await pipeline_service.start_pipeline(
+        pipeline_id=pipeline.id,
+    )
 
-        return {
-            "status": "created",
-            "pipeline_id": str(pipeline.id),
-            "app_id": pipeline.app_id,
-            "pipeline_status": pipeline.status.value,
-        }
+    return {
+        "status": "created",
+        "pipeline_id": str(pipeline.id),
+        "app_id": pipeline.app_id,
+        "pipeline_status": pipeline.status.value,
+    }
 
 
 @pipelines_router.get(
@@ -213,7 +218,7 @@ async def pipeline_callback(
             pipeline_service = BuildPipeline()
 
             await pipeline_service.handle_callback(
-                db=db, pipeline_id=pipeline_id, status=status_value, result=result
+                pipeline_id=pipeline_id, status=status_value, result=result
             )
 
             return {

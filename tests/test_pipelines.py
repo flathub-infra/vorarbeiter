@@ -60,8 +60,13 @@ async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
     test_pipeline.params = params
     test_pipeline.status = PipelineStatus.PENDING
 
-    with patch("app.pipelines.build.Pipeline", return_value=test_pipeline):
-        result = await build_pipeline.create_pipeline(mock_db, app_id, params)
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch("app.pipelines.build.Pipeline", return_value=test_pipeline):
+            result = await build_pipeline.create_pipeline(app_id, params)
 
     assert mock_db.add.called
     assert mock_db.flush.called
@@ -87,10 +92,15 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
     mock_db.get = AsyncMock(side_effect=mock_get)
 
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
     dispatch_result = {"status": "dispatched"}
     build_pipeline.github_provider.dispatch = AsyncMock(return_value=dispatch_result)
 
-    result = await build_pipeline.start_pipeline(mock_db, pipeline_id)
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        result = await build_pipeline.start_pipeline(pipeline_id)
 
     assert result.status == PipelineStatus.RUNNING
     assert build_pipeline.github_provider.dispatch.called
@@ -100,12 +110,17 @@ async def test_start_pipeline(build_pipeline, mock_db):
 async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline):
     mock_db.get.return_value = sample_pipeline
 
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
     status = "success"
     result = {"output": "Build successful"}
 
-    pipeline = await build_pipeline.handle_callback(
-        mock_db, sample_pipeline.id, status, result
-    )
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        pipeline = await build_pipeline.handle_callback(
+            sample_pipeline.id, status, result
+        )
 
     assert pipeline.status == PipelineStatus.SUCCEEDED
     assert pipeline.finished_at is not None
@@ -116,12 +131,17 @@ async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline)
 async def test_handle_callback_failure(build_pipeline, mock_db, sample_pipeline):
     mock_db.get.return_value = sample_pipeline
 
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
     status = "failure"
     result = {"error": "Build failed"}
 
-    pipeline = await build_pipeline.handle_callback(
-        mock_db, sample_pipeline.id, status, result
-    )
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        pipeline = await build_pipeline.handle_callback(
+            sample_pipeline.id, status, result
+        )
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at is not None
@@ -294,14 +314,22 @@ def test_pipeline_callback_status_endpoint(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    mock_get_db.get.return_value = sample_pipeline
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    data = {"status": "success", "result": {"output": "Build successful"}}
-    headers = {"Authorization": "Bearer test_token_12345"}
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
 
-    response = test_client.post(
-        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-    )
+        data = {"status": "success", "result": {"output": "Build successful"}}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
 
     assert response.status_code == 200
     assert response.json()["pipeline_id"] == str(pipeline_id)
@@ -313,14 +341,22 @@ def test_pipeline_callback_log_url_endpoint(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    mock_get_db.get.return_value = sample_pipeline
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    data = {"log_url": "https://example.com/logs/12345"}
-    headers = {"Authorization": "Bearer test_token_12345"}
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
 
-    response = test_client.post(
-        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-    )
+        data = {"log_url": "https://example.com/logs/12345"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
 
     assert response.status_code == 200
     assert response.json()["pipeline_id"] == str(pipeline_id)
@@ -333,14 +369,22 @@ def test_pipeline_callback_invalid_data(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    mock_get_db.get.return_value = sample_pipeline
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    data = {"some_key": "some_value"}
-    headers = {"Authorization": "Bearer test_token_12345"}
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
 
-    response = test_client.post(
-        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-    )
+        data = {"some_key": "some_value"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
 
     assert response.status_code == 400
     assert (
@@ -354,18 +398,26 @@ def test_pipeline_callback_invalid_status(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    mock_get_db.get.return_value = sample_pipeline
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    data = {"status": "invalid_status"}
-    headers = {"Authorization": "Bearer test_token_12345"}
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
 
-    try:
-        test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-        assert False
-    except Exception:
-        pass
+        data = {"status": "invalid_status"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        try:
+            test_client.post(
+                f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+            )
+            assert False
+        except Exception:
+            pass
 
 
 def test_pipeline_callback_not_found(mock_get_db):
@@ -373,14 +425,22 @@ def test_pipeline_callback_not_found(mock_get_db):
 
     pipeline_id = uuid.uuid4()
 
-    mock_get_db.get.return_value = None
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    data = {"status": "success", "result": {"output": "Build successful"}}
-    headers = {"Authorization": "Bearer test_token_12345"}
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = None
 
-    response = test_client.post(
-        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-    )
+        data = {"status": "success", "result": {"output": "Build successful"}}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
 
     assert response.status_code == 404
     assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
@@ -391,14 +451,22 @@ def test_pipeline_callback_invalid_token(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    mock_get_db.get.return_value = sample_pipeline
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    data = {"status": "success", "result": {"output": "Build successful"}}
-    headers = {"Authorization": "Bearer wrong_token"}
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
 
-    response = test_client.post(
-        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-    )
+        data = {"status": "success", "result": {"output": "Build successful"}}
+        headers = {"Authorization": "Bearer wrong_token"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
 
     assert response.status_code == 401
     assert "Invalid callback token" in response.json()["detail"]
@@ -411,14 +479,22 @@ def test_pipeline_callback_status_immutable(mock_get_db, sample_pipeline):
 
     sample_pipeline.status = PipelineStatus.SUCCEEDED
 
-    mock_get_db.get.return_value = sample_pipeline
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    data = {"status": "success", "result": {"output": "Build successful"}}
-    headers = {"Authorization": "Bearer test_token_12345"}
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
 
-    response = test_client.post(
-        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-    )
+        data = {"status": "success", "result": {"output": "Build successful"}}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
 
     assert response.status_code == 409
     assert "Pipeline status already finalized" in response.json()["detail"]
@@ -431,14 +507,22 @@ def test_pipeline_callback_log_url_immutable(mock_get_db, sample_pipeline):
 
     sample_pipeline.log_url = "https://example.com/logs/existing"
 
-    mock_get_db.get.return_value = sample_pipeline
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    data = {"log_url": "https://example.com/logs/new"}
-    headers = {"Authorization": "Bearer test_token_12345"}
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
 
-    response = test_client.post(
-        f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-    )
+        data = {"log_url": "https://example.com/logs/new"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
 
     assert response.status_code == 409
     assert "Log URL already set" in response.json()["detail"]
@@ -451,11 +535,16 @@ def test_redirect_to_log_url(mock_get_db, sample_pipeline):
 
     sample_pipeline.log_url = "https://example.com/logs/12345"
 
-    mock_get_db.get.return_value = sample_pipeline
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    response = test_client.get(
-        f"/api/pipelines/{pipeline_id}/log_url", follow_redirects=False
-    )
+    with patch("app.routes.pipelines.get_db", mock_get_db_session):
+        mock_get_db.get.return_value = sample_pipeline
+
+        response = test_client.get(
+            f"/api/pipelines/{pipeline_id}/log_url", follow_redirects=False
+        )
 
     assert response.status_code == 307
     assert response.headers["Location"] == "https://example.com/logs/12345"
@@ -468,9 +557,14 @@ def test_redirect_to_log_url_not_available(mock_get_db, sample_pipeline):
 
     sample_pipeline.log_url = None
 
-    mock_get_db.get.return_value = sample_pipeline
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    response = test_client.get(f"/api/pipelines/{pipeline_id}/log_url")
+    with patch("app.routes.pipelines.get_db", mock_get_db_session):
+        mock_get_db.get.return_value = sample_pipeline
+
+        response = test_client.get(f"/api/pipelines/{pipeline_id}/log_url")
 
     assert response.status_code == 202
     assert "Retry-After" in response.headers
@@ -482,9 +576,14 @@ def test_redirect_to_log_url_not_found(mock_get_db):
 
     pipeline_id = uuid.uuid4()
 
-    mock_get_db.get.return_value = None
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
 
-    response = test_client.get(f"/api/pipelines/{pipeline_id}/log_url")
+    with patch("app.routes.pipelines.get_db", mock_get_db_session):
+        mock_get_db.get.return_value = None
+
+        response = test_client.get(f"/api/pipelines/{pipeline_id}/log_url")
 
     assert response.status_code == 404
     assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
