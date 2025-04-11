@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, status, Header, Depends
 
 from app.database import get_db
-from app.models import Job, Pipeline, PipelineTrigger
+from app.models import Pipeline, PipelineTrigger
 from app.pipelines.build import BuildPipeline
 from app.providers.factory import ProviderFactory
 from app.providers.base import ProviderType
@@ -30,18 +30,6 @@ class PipelineTriggerRequest(BaseModel):
     params: Dict[str, Any]
 
 
-class JobResponse(BaseModel):
-    id: str
-    job_type: str
-    status: str
-    position: int
-    provider: str
-    created_at: datetime
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
-    result: Optional[Dict[str, Any]] = None
-
-
 class PipelineSummary(BaseModel):
     id: str
     app_id: str
@@ -59,11 +47,12 @@ class PipelineResponse(BaseModel):
     status: str
     params: Dict[str, Any]
     triggered_by: str
+    provider: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     published_at: Optional[datetime] = None
-    jobs: List[JobResponse] = []
 
 
 @pipelines_router.post(
@@ -144,123 +133,27 @@ async def get_pipeline(
                 detail=f"Pipeline {pipeline_id} not found",
             )
 
-        stmt = select(Job).where(Job.pipeline_id == pipeline_id).order_by(Job.position)
-        result = await db.execute(stmt)
-        jobs = list(result.scalars().all())
-
         return PipelineResponse(
             id=str(pipeline.id),
             app_id=pipeline.app_id,
             status=pipeline.status.value,
             params=pipeline.params,
             triggered_by=pipeline.triggered_by.value,
+            provider=pipeline.provider,
+            result=pipeline.result,
             created_at=pipeline.created_at,
             started_at=pipeline.started_at,
             finished_at=pipeline.finished_at,
             published_at=pipeline.published_at,
-            jobs=[
-                JobResponse(
-                    id=str(job.id),
-                    job_type=job.job_type,
-                    status=job.status.value,
-                    position=job.position,
-                    provider=job.provider,
-                    created_at=job.created_at,
-                    started_at=job.started_at,
-                    finished_at=job.finished_at,
-                    result=job.result,
-                )
-                for job in jobs
-            ],
         )
-
-
-@pipelines_router.get(
-    "/pipelines/{pipeline_id}/jobs/{job_id}",
-    response_model=JobResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def get_job(
-    pipeline_id: uuid.UUID,
-    job_id: uuid.UUID,
-):
-    async with get_db() as db:
-        pipeline = await db.get(Pipeline, pipeline_id)
-        if not pipeline:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Pipeline {pipeline_id} not found",
-            )
-
-        job = await db.get(Job, job_id)
-        if not job:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Job {job_id} not found",
-            )
-
-        if job.pipeline_id != pipeline.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Job {job_id} does not belong to pipeline {pipeline_id}",
-            )
-
-        return JobResponse(
-            id=str(job.id),
-            job_type=job.job_type,
-            status=job.status.value,
-            position=job.position,
-            provider=job.provider,
-            created_at=job.created_at,
-            started_at=job.started_at,
-            finished_at=job.finished_at,
-            result=job.result,
-        )
-
-
-@pipelines_router.get(
-    "/pipelines/{pipeline_id}/jobs",
-    response_model=List[JobResponse],
-    status_code=status.HTTP_200_OK,
-)
-async def list_pipeline_jobs(
-    pipeline_id: uuid.UUID,
-):
-    async with get_db() as db:
-        pipeline = await db.get(Pipeline, pipeline_id)
-        if not pipeline:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Pipeline {pipeline_id} not found",
-            )
-
-        stmt = select(Job).where(Job.pipeline_id == pipeline_id).order_by(Job.position)
-        result = await db.execute(stmt)
-        jobs = list(result.scalars().all())
-
-        return [
-            JobResponse(
-                id=str(job.id),
-                job_type=job.job_type,
-                status=job.status.value,
-                position=job.position,
-                provider=job.provider,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                finished_at=job.finished_at,
-                result=job.result,
-            )
-            for job in jobs
-        ]
 
 
 @pipelines_router.post(
-    "/pipelines/{pipeline_id}/jobs/{job_id}/callback",
+    "/pipelines/{pipeline_id}/callback",
     status_code=status.HTTP_200_OK,
 )
-async def job_callback(
+async def pipeline_callback(
     pipeline_id: uuid.UUID,
-    job_id: uuid.UUID,
     data: Dict[str, Any],
 ):
     async with get_db() as db:
@@ -271,32 +164,18 @@ async def job_callback(
                 detail=f"Pipeline {pipeline_id} not found",
             )
 
-        job = await db.get(Job, job_id)
-        if not job:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Job {job_id} not found",
-            )
-
-        if job.pipeline_id != pipeline.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Job {job_id} does not belong to pipeline {pipeline_id}",
-            )
-
-        job_status = data.get("status", "failure").lower()
-        job_result = data.get("result", {})
+        status_value = data.get("status", "failure").lower()
+        result = data.get("result", {})
 
         github_provider = await ProviderFactory.create_provider(ProviderType.GITHUB, {})
         pipeline_service = BuildPipeline(github_provider)
 
-        await pipeline_service.handle_job_callback(
-            db=db, job_id=job_id, status=job_status, result=job_result
+        await pipeline_service.handle_callback(
+            db=db, pipeline_id=pipeline_id, status=status_value, result=result
         )
 
     return {
         "status": "ok",
-        "job_id": str(job_id),
         "pipeline_id": str(pipeline_id),
-        "job_status": job_status,
+        "pipeline_status": status_value,
     }

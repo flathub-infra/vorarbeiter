@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import Pipeline, PipelineStatus, Job, JobStatus, PipelineTrigger
+from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.providers import JobProvider, ProviderType
 from app.pipelines.build import BuildPipeline
 
@@ -39,34 +39,8 @@ def sample_pipeline():
         params={"repo": "test", "branch": "main"},
         created_at=datetime.now(),
         triggered_by=PipelineTrigger.MANUAL,
-    )
-
-
-@pytest.fixture
-def validate_job(sample_pipeline):
-    return Job(
-        id=uuid.uuid4(),
-        pipeline_id=sample_pipeline.id,
-        job_type="validate_manifest",
-        status=JobStatus.PENDING,
         provider=ProviderType.GITHUB.value,
         provider_data={},
-        position=0,
-        created_at=datetime.now(),
-    )
-
-
-@pytest.fixture
-def build_job(sample_pipeline):
-    return Job(
-        id=uuid.uuid4(),
-        pipeline_id=sample_pipeline.id,
-        job_type="build",
-        status=JobStatus.PENDING,
-        provider=ProviderType.GITHUB.value,
-        provider_data={},
-        position=1,
-        created_at=datetime.now(),
     )
 
 
@@ -76,7 +50,6 @@ async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
     params = {"repo": "test", "branch": "main"}
 
     mock_db.flush = AsyncMock()
-    mock_db.commit = AsyncMock()
 
     test_pipeline = MagicMock(spec=Pipeline)
     test_pipeline.id = uuid.uuid4()
@@ -85,8 +58,7 @@ async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
     test_pipeline.status = PipelineStatus.PENDING
 
     with patch("app.pipelines.build.Pipeline", return_value=test_pipeline):
-        with patch("app.pipelines.build.Job"):
-            result = await build_pipeline.create_pipeline(mock_db, app_id, params)
+        result = await build_pipeline.create_pipeline(mock_db, app_id, params)
 
     assert mock_db.add.called
     assert mock_db.flush.called
@@ -102,12 +74,8 @@ async def test_start_pipeline(build_pipeline, mock_db):
     mock_pipeline = MagicMock(spec=Pipeline)
     mock_pipeline.id = pipeline_id
     mock_pipeline.status = PipelineStatus.PENDING
-
-    validate_job = MagicMock(spec=Job)
-    validate_job.id = uuid.uuid4()
-    validate_job.pipeline_id = pipeline_id
-    validate_job.job_type = "validate_manifest"
-    validate_job.status = JobStatus.PENDING
+    mock_pipeline.app_id = "org.flathub.Test"
+    mock_pipeline.params = {"repo": "test", "branch": "main"}
 
     async def mock_get(model_class, model_id):
         if model_class is Pipeline and model_id == pipeline_id:
@@ -116,113 +84,46 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
     mock_db.get = AsyncMock(side_effect=mock_get)
 
-    mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = validate_job
-    mock_db.execute = AsyncMock(return_value=mock_result)
-
-    mock_db.commit = AsyncMock()
-
     dispatch_result = {"status": "dispatched"}
     build_pipeline.github_provider.dispatch = AsyncMock(return_value=dispatch_result)
 
     result = await build_pipeline.start_pipeline(mock_db, pipeline_id)
 
     assert result.status == PipelineStatus.RUNNING
-    assert mock_db.commit.called
     assert build_pipeline.github_provider.dispatch.called
 
 
 @pytest.mark.asyncio
-async def test_build(
-    build_pipeline, mock_db, sample_pipeline, validate_job, monkeypatch
-):
-    mock_db.get.side_effect = [validate_job, sample_pipeline]
-    mock_db.flush = AsyncMock()
-    mock_db.commit = AsyncMock()
+async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline):
+    mock_db.get.return_value = sample_pipeline
 
-    validate_job.result = {"manifest_path": "/path/to/manifest.yml"}
-
-    def mock_add(obj):
-        if isinstance(obj, Job):
-            monkeypatch.setattr(obj, "id", uuid.uuid4())
-
-    mock_db.add.side_effect = mock_add
-
-    build_pipeline.github_provider.dispatch = AsyncMock(
-        return_value={"status": "dispatched"}
-    )
-
-    result = await build_pipeline.build(mock_db, validate_job.id)
-
-    assert result.job_type == "build"
-    assert result.pipeline_id == sample_pipeline.id
-    assert result.status == JobStatus.RUNNING
-    assert result.started_at is not None
-    assert result.provider == ProviderType.GITHUB.value
-    assert result.position == 1
-    assert "status" in result.provider_data
-    assert mock_db.commit.called
-    assert build_pipeline.github_provider.dispatch.called
-
-
-@pytest.mark.asyncio
-async def test_publish(build_pipeline, mock_db, sample_pipeline, build_job):
-    mock_db.get.side_effect = [build_job, sample_pipeline]
-    mock_db.commit = AsyncMock()
-
-    result = await build_pipeline.publish(mock_db, build_job.id)
-
-    assert result.status == PipelineStatus.PUBLISHED
-    assert result.published_at is not None
-    assert result.finished_at is not None
-    assert mock_db.commit.called
-
-
-@pytest.mark.asyncio
-async def test_handle_job_callback_success(
-    build_pipeline, mock_db, sample_pipeline, validate_job
-):
-    mock_db.get.side_effect = [validate_job, sample_pipeline]
-    mock_db.commit = AsyncMock()
-
-    build_pipeline.build = AsyncMock()
-
-    validate_job.job_type = "validate_manifest"
     status = "success"
-    result = {"output": "Validation successful"}
+    result = {"output": "Build successful"}
 
-    job = await build_pipeline.handle_job_callback(
-        mock_db, validate_job.id, status, result
+    pipeline = await build_pipeline.handle_callback(
+        mock_db, sample_pipeline.id, status, result
     )
 
-    assert job.status == JobStatus.COMPLETE
-    assert job.finished_at is not None
-    assert job.result == result
-    assert mock_db.commit.called
-    assert build_pipeline.build.called
-    assert build_pipeline.build.call_args[0][1] == validate_job.id
+    assert pipeline.status == PipelineStatus.PUBLISHED
+    assert pipeline.published_at is not None
+    assert pipeline.finished_at is not None
+    assert pipeline.result == result
 
 
 @pytest.mark.asyncio
-async def test_handle_job_callback_failure(
-    build_pipeline, mock_db, sample_pipeline, validate_job
-):
-    mock_db.get.side_effect = [validate_job, sample_pipeline]
-    mock_db.commit = AsyncMock()
+async def test_handle_callback_failure(build_pipeline, mock_db, sample_pipeline):
+    mock_db.get.return_value = sample_pipeline
 
     status = "failure"
-    result = {"error": "Validation failed"}
+    result = {"error": "Build failed"}
 
-    job = await build_pipeline.handle_job_callback(
-        mock_db, validate_job.id, status, result
+    pipeline = await build_pipeline.handle_callback(
+        mock_db, sample_pipeline.id, status, result
     )
 
-    assert job.status == JobStatus.FAILED
-    assert job.finished_at is not None
-    assert job.result == result
-    assert sample_pipeline.status == PipelineStatus.FAILED
-    assert sample_pipeline.finished_at is not None
-    assert mock_db.commit.called
+    assert pipeline.status == PipelineStatus.FAILED
+    assert pipeline.finished_at is not None
+    assert pipeline.result == result
 
 
 @pytest.fixture
@@ -371,44 +272,12 @@ def test_list_pipelines_endpoint(mock_get_db):
     assert response.json()[1]["triggered_by"] == "webhook"
 
 
-@pytest.fixture
-def mock_jobs():
-    return [
-        MagicMock(
-            id=uuid.uuid4(),
-            job_type="validate_manifest",
-            status=JobStatus.RUNNING,
-            position=0,
-            provider="github",
-            created_at=datetime.now(),
-            started_at=datetime.now(),
-            finished_at=None,
-            result=None,
-        ),
-        MagicMock(
-            id=uuid.uuid4(),
-            job_type="build",
-            status=JobStatus.PENDING,
-            position=1,
-            provider="github",
-            created_at=datetime.now(),
-            started_at=None,
-            finished_at=None,
-            result=None,
-        ),
-    ]
-
-
-def test_get_pipeline_endpoint(mock_get_db, sample_pipeline, mock_jobs):
+def test_get_pipeline_endpoint(mock_get_db, sample_pipeline):
     test_client = TestClient(app)
 
     pipeline_id = sample_pipeline.id
 
     mock_get_db.get.return_value = sample_pipeline
-
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = mock_jobs
-    mock_get_db.execute.return_value = mock_result
 
     response = test_client.get(f"/api/pipelines/{pipeline_id}")
 
@@ -416,12 +285,7 @@ def test_get_pipeline_endpoint(mock_get_db, sample_pipeline, mock_jobs):
     assert response.json()["id"] == str(pipeline_id)
     assert response.json()["app_id"] == sample_pipeline.app_id
     assert response.json()["status"] == sample_pipeline.status.value
-    assert len(response.json()["jobs"]) == 2
-
-    assert response.json()["jobs"][0]["job_type"] == "validate_manifest"
-    assert response.json()["jobs"][0]["position"] == 0
-    assert response.json()["jobs"][1]["job_type"] == "build"
-    assert response.json()["jobs"][1]["position"] == 1
+    assert response.json()["provider"] == sample_pipeline.provider
 
 
 def test_get_pipeline_not_found(mock_get_db):
@@ -437,107 +301,32 @@ def test_get_pipeline_not_found(mock_get_db):
     assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
 
 
-def test_get_job_endpoint(mock_get_db, sample_pipeline, mock_jobs):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-    job = mock_jobs[0]
-    job_id = job.id
-
-    # Set the pipeline_id on the mock job to match the sample pipeline
-    job.pipeline_id = pipeline_id
-
-    mock_get_db.get.side_effect = [sample_pipeline, job]
-
-    response = test_client.get(f"/api/pipelines/{pipeline_id}/jobs/{job_id}")
-
-    assert response.status_code == 200
-    assert response.json()["id"] == str(job_id)
-    assert response.json()["job_type"] == job.job_type
-    assert response.json()["status"] == job.status.value
-    assert response.json()["position"] == job.position
-
-
-def test_get_job_pipeline_not_found(mock_get_db):
-    test_client = TestClient(app)
-
-    pipeline_id = uuid.uuid4()
-    job_id = uuid.uuid4()
-
-    mock_get_db.get.return_value = None
-
-    response = test_client.get(f"/api/pipelines/{pipeline_id}/jobs/{job_id}")
-
-    assert response.status_code == 404
-    assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
-
-
-def test_get_job_not_found(mock_get_db, sample_pipeline):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-    job_id = uuid.uuid4()
-
-    mock_get_db.get.side_effect = [sample_pipeline, None]
-
-    response = test_client.get(f"/api/pipelines/{pipeline_id}/jobs/{job_id}")
-
-    assert response.status_code == 404
-    assert f"Job {job_id} not found" in response.json()["detail"]
-
-
-def test_get_job_wrong_pipeline(mock_get_db, sample_pipeline, mock_jobs):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-    job = mock_jobs[0]
-
-    wrong_pipeline_id = uuid.uuid4()
-    job.pipeline_id = wrong_pipeline_id
-
-    mock_get_db.get.side_effect = [sample_pipeline, job]
-
-    response = test_client.get(f"/api/pipelines/{pipeline_id}/jobs/{job.id}")
-
-    assert response.status_code == 400
-    assert (
-        f"Job {job.id} does not belong to pipeline {pipeline_id}"
-        in response.json()["detail"]
-    )
-
-
-def test_list_pipeline_jobs_endpoint(mock_get_db, sample_pipeline, mock_jobs):
+def test_pipeline_callback_endpoint(mock_get_db, sample_pipeline):
     test_client = TestClient(app)
 
     pipeline_id = sample_pipeline.id
 
     mock_get_db.get.return_value = sample_pipeline
 
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = mock_jobs
-    mock_get_db.execute.return_value = mock_result
+    data = {"status": "success", "result": {"output": "Build successful"}}
 
-    for job in mock_jobs:
-        job.pipeline_id = pipeline_id
-
-    response = test_client.get(f"/api/pipelines/{pipeline_id}/jobs")
+    response = test_client.post(f"/api/pipelines/{pipeline_id}/callback", json=data)
 
     assert response.status_code == 200
-    assert len(response.json()) == 2
-    assert response.json()[0]["job_type"] == "validate_manifest"
-    assert response.json()[0]["position"] == 0
-    assert response.json()[1]["job_type"] == "build"
-    assert response.json()[1]["position"] == 1
+    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response.json()["pipeline_status"] == "success"
 
 
-def test_list_pipeline_jobs_pipeline_not_found(mock_get_db):
+def test_pipeline_callback_not_found(mock_get_db):
     test_client = TestClient(app)
 
     pipeline_id = uuid.uuid4()
 
     mock_get_db.get.return_value = None
 
-    response = test_client.get(f"/api/pipelines/{pipeline_id}/jobs")
+    data = {"status": "success", "result": {"output": "Build successful"}}
+
+    response = test_client.post(f"/api/pipelines/{pipeline_id}/callback", json=data)
 
     assert response.status_code == 404
     assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]

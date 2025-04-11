@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from app.models import Pipeline, PipelineStatus, PipelineTrigger, Job, JobStatus
+from app.models import Pipeline, PipelineStatus, PipelineTrigger
 
 
 def test_pipeline_model_creation():
@@ -62,56 +62,21 @@ def test_pipeline_model_with_full_parameters():
     assert pipeline.published_at is None
 
 
-def test_job_model_creation():
-    pipeline_id = uuid.uuid4()
+def test_pipeline_model_with_provider_fields():
+    """Test Pipeline model with provider fields."""
     now = datetime.now()
 
-    job = Job(
-        pipeline_id=pipeline_id,
-        job_type="build",
+    pipeline = Pipeline(
+        app_id="org.flathub.Test",
+        params={"commit": "abc123"},
+        status=PipelineStatus.RUNNING,
         provider="github",
-        provider_data={},
-        position=1,
-        status=JobStatus.PENDING,
-        created_at=now,
-    )
-
-    assert job.pipeline_id == pipeline_id
-    assert job.job_type == "build"
-    assert job.provider == "github"
-    assert job.provider_data == {}
-    assert job.position == 1
-    assert job.status == JobStatus.PENDING
-    assert job.result is None
-    assert job.created_at is not None
-    assert job.started_at is None
-    assert job.finished_at is None
-
-
-def test_job_model_with_full_parameters():
-    """Test Job model creation with all parameters."""
-    pipeline_id = uuid.uuid4()
-    now = datetime.now()
-
-    job = Job(
-        pipeline_id=pipeline_id,
-        job_type="test",
-        provider="github",
-        provider_data={"workflow_id": "test.yml"},
-        position=2,
-        status=JobStatus.RUNNING,
+        provider_data={"workflow_id": "build.yml"},
         result={"status": "in-progress"},
         created_at=now,
         started_at=now,
     )
 
-    assert job.pipeline_id == pipeline_id
-    assert job.job_type == "test"
-    assert job.provider == "github"
-    assert job.provider_data == {"workflow_id": "test.yml"}
-    assert job.position == 2
-    assert job.status == JobStatus.RUNNING
-    assert job.result == {"status": "in-progress"}
-    assert job.created_at == now
-    assert job.started_at == now
-    assert job.finished_at is None
+    assert pipeline.provider == "github"
+    assert pipeline.provider_data == {"workflow_id": "build.yml"}
+    assert pipeline.result == {"status": "in-progress"}
