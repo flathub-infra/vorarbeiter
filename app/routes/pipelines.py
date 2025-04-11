@@ -21,7 +21,7 @@ api_security = HTTPBearer()
 async def verify_token(
     credentials: HTTPAuthorizationCredentials = Depends(api_security),
 ):
-    if credentials.credentials != settings.api_token:
+    if credentials.credentials != settings.admin_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API token",

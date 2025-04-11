@@ -177,7 +177,7 @@ def test_trigger_pipeline_endpoint(mock_get_db, mock_build_pipeline):
         "params": {"repo": "test", "branch": "main"},
     }
 
-    headers = {"Authorization": f"Bearer {settings.api_token}"}
+    headers = {"Authorization": f"Bearer {settings.admin_token}"}
 
     response = test_client.post("/api/pipelines", json=request_data, headers=headers)
 

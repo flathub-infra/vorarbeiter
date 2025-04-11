@@ -1,6 +1,7 @@
 *.egg-info
 *.py[oc]
 *.sqlite3
+.env
 .venv
 /vorarbeiter.db
 CLAUDE.md
