@@ -94,8 +94,6 @@ def test_receive_github_webhook_success(client: TestClient, mock_db_session):
     assert response_data["event_id"] == delivery_id
 
     mock_db_session.add.assert_called_once()
-    mock_db_session.refresh.assert_called_once()
-
     added_event = mock_db_session.add.call_args[0][0]
     assert isinstance(added_event, WebhookEvent)
     assert str(added_event.id) == delivery_id

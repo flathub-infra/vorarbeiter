@@ -114,12 +114,11 @@ async def receive_github_webhook(
         try:
             async with get_db() as db:
                 db.add(event)
-                await db.refresh(event)
         except Exception as e:
             print(f"Database error: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Database error occurred while saving webhook event.",
+                detail=f"Database error occurred while saving webhook event: {e}",
             )
 
     return {"message": "Webhook received", "event_id": event.id}
