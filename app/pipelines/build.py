@@ -4,9 +4,9 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Pipeline, PipelineStatus
-from app.providers import get_provider, ProviderType
 from app.config import settings
+from app.models import Pipeline, PipelineStatus
+from app.providers import ProviderType, get_provider
 
 
 class BuildPipeline:
@@ -86,22 +86,23 @@ class BuildPipeline:
         if not pipeline:
             raise ValueError(f"Pipeline {pipeline_id} not found")
 
-        if status.lower() == "success":
-            pipeline.status = PipelineStatus.PUBLISHED
-            pipeline.published_at = datetime.now()
-            pipeline.finished_at = datetime.now()
-            pipeline.result = result
-        elif status.lower() == "failure":
-            pipeline.status = PipelineStatus.FAILED
-            pipeline.finished_at = datetime.now()
-            pipeline.result = result
-        elif status.lower() == "cancelled":
-            pipeline.status = PipelineStatus.CANCELLED
-            pipeline.finished_at = datetime.now()
-            pipeline.result = result
-        else:
-            pipeline.status = PipelineStatus.PENDING
-            pipeline.result = result
+        match status.lower():
+            case "success":
+                pipeline.status = PipelineStatus.PUBLISHED
+                pipeline.published_at = datetime.now()
+                pipeline.finished_at = datetime.now()
+                pipeline.result = result
+            case "failure":
+                pipeline.status = PipelineStatus.FAILED
+                pipeline.finished_at = datetime.now()
+                pipeline.result = result
+            case "cancelled":
+                pipeline.status = PipelineStatus.CANCELLED
+                pipeline.finished_at = datetime.now()
+                pipeline.result = result
+            case _:
+                pipeline.status = PipelineStatus.PENDING
+                pipeline.result = result
 
         return pipeline
 
