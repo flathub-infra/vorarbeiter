@@ -13,10 +13,10 @@ from app.models.webhook_event import Base
 class PipelineStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
-    COMPLETE = "complete"
     FAILED = "failed"
     CANCELLED = "cancelled"
     PUBLISHED = "published"
+    SUCCEEDED = "succeeded"
 
 
 class PipelineTrigger(Enum):

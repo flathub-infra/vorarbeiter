@@ -107,8 +107,7 @@ async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline)
         mock_db, sample_pipeline.id, status, result
     )
 
-    assert pipeline.status == PipelineStatus.PUBLISHED
-    assert pipeline.published_at is not None
+    assert pipeline.status == PipelineStatus.SUCCEEDED
     assert pipeline.finished_at is not None
     assert pipeline.result == result
 
@@ -236,7 +235,7 @@ def test_list_pipelines_endpoint(mock_get_db):
         MagicMock(
             id=uuid.uuid4(),
             app_id="org.flathub.Test2",
-            status=PipelineStatus.COMPLETE,
+            status=PipelineStatus.SUCCEEDED,
             triggered_by=PipelineTrigger.WEBHOOK,
             created_at=datetime.now(),
             started_at=datetime.now(),
@@ -257,7 +256,7 @@ def test_list_pipelines_endpoint(mock_get_db):
     assert response.json()[0]["status"] == "running"
     assert response.json()[0]["triggered_by"] == "manual"
     assert response.json()[1]["app_id"] == "org.flathub.Test2"
-    assert response.json()[1]["status"] == "complete"
+    assert response.json()[1]["status"] == "succeeded"
     assert response.json()[1]["triggered_by"] == "webhook"
 
 
@@ -410,7 +409,7 @@ def test_pipeline_callback_status_immutable(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    sample_pipeline.status = PipelineStatus.COMPLETE
+    sample_pipeline.status = PipelineStatus.SUCCEEDED
 
     mock_get_db.get.return_value = sample_pipeline
 

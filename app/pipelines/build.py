@@ -88,8 +88,7 @@ class BuildPipeline:
 
         match status.lower():
             case "success":
-                pipeline.status = PipelineStatus.PUBLISHED
-                pipeline.published_at = datetime.now()
+                pipeline.status = PipelineStatus.SUCCEEDED
                 pipeline.finished_at = datetime.now()
                 pipeline.result = result
             case "failure":
