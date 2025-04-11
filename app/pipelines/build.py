@@ -5,13 +5,13 @@ from typing import Any, Dict, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
-from app.providers import ProviderType, JobProvider
+from app.providers import get_provider, ProviderType
 from app.config import settings
 
 
 class BuildPipeline:
-    def __init__(self, github_provider: JobProvider):
-        self.github_provider = github_provider
+    def __init__(self):
+        self.github_provider = get_provider(ProviderType.GITHUB)
 
     async def create_pipeline(
         self,

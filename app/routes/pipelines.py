@@ -8,9 +8,7 @@ from fastapi import APIRouter, HTTPException, status, Header, Depends
 
 from app.database import get_db
 from app.models import Pipeline, PipelineTrigger, PipelineStatus
-from app.pipelines.build import BuildPipeline
-from app.providers.factory import ProviderFactory
-from app.providers.base import ProviderType
+from app.pipelines import BuildPipeline, ensure_providers_initialized
 from app.config import settings
 from sqlalchemy.future import select
 
@@ -82,8 +80,8 @@ async def trigger_pipeline(
     data: PipelineTriggerRequest,
     token: str = Depends(verify_token),
 ):
-    github_provider = await ProviderFactory.create_provider(ProviderType.GITHUB, {})
-    pipeline_service = BuildPipeline(github_provider)
+    await ensure_providers_initialized()
+    pipeline_service = BuildPipeline()
 
     async with get_db() as db:
         pipeline = await pipeline_service.create_pipeline(
@@ -206,10 +204,8 @@ async def pipeline_callback(
             status_value = status_callback.status.lower()
             result = status_callback.result
 
-            github_provider = await ProviderFactory.create_provider(
-                ProviderType.GITHUB, {}
-            )
-            pipeline_service = BuildPipeline(github_provider)
+            await ensure_providers_initialized()
+            pipeline_service = BuildPipeline()
 
             await pipeline_service.handle_callback(
                 db=db, pipeline_id=pipeline_id, status=status_value, result=result

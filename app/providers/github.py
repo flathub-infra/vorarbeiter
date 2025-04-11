@@ -12,13 +12,11 @@ class GitHubJobProvider(JobProvider):
 
     def __init__(self) -> None:
         self.token = settings.github_token
-        self.base_url = ""
         self.client: httpx.AsyncClient | None = None
 
-    async def initialize(self, config: Dict[str, Any]) -> None:
-        self.base_url = config.get("base_url", "https://api.github.com")
+    async def initialize(self) -> None:
         self.client = httpx.AsyncClient(
-            base_url=self.base_url,
+            base_url="https://api.github.com",
             headers={
                 "Authorization": f"token {self.token}",
                 "Accept": "application/vnd.github.v3+json",

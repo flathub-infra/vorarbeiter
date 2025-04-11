@@ -2,12 +2,17 @@ import pytest
 import uuid
 from unittest.mock import patch, AsyncMock, MagicMock
 
-from app.providers import ProviderType, GitHubJobProvider, ProviderFactory
+from app.providers import (
+    ProviderType,
+    GitHubJobProvider,
+    initialize_providers,
+    get_provider,
+)
 
 
 @pytest.fixture
-def github_config():
-    return {"token": "test-token", "base_url": "https://api.github.com"}
+def github_token():
+    return "test-token"
 
 
 @pytest.fixture
@@ -21,9 +26,10 @@ def mock_httpx_post():
 
 
 @pytest.mark.asyncio
-async def test_github_provider_dispatch(github_config, mock_httpx_post):
+async def test_github_provider_dispatch(github_token, mock_httpx_post):
     provider = GitHubJobProvider()
-    await provider.initialize(github_config)
+    provider.token = github_token
+    await provider.initialize()
 
     job_id = str(uuid.uuid4())
     pipeline_id = str(uuid.uuid4())
@@ -55,9 +61,10 @@ async def test_github_provider_dispatch(github_config, mock_httpx_post):
 
 
 @pytest.mark.asyncio
-async def test_github_provider_cancel(github_config, mock_httpx_post):
+async def test_github_provider_cancel(github_token, mock_httpx_post):
     provider = GitHubJobProvider()
-    await provider.initialize(github_config)
+    provider.token = github_token
+    await provider.initialize()
 
     job_id = str(uuid.uuid4())
     provider_data = {"owner": "flathub", "repo": "actions", "run_id": 12345}
@@ -74,9 +81,10 @@ async def test_github_provider_cancel(github_config, mock_httpx_post):
 
 
 @pytest.mark.asyncio
-async def test_github_provider_cancel_missing_run_id(github_config, mock_httpx_post):
+async def test_github_provider_cancel_missing_run_id(github_token, mock_httpx_post):
     provider = GitHubJobProvider()
-    await provider.initialize(github_config)
+    provider.token = github_token
+    await provider.initialize()
 
     job_id = str(uuid.uuid4())
     provider_data = {"owner": "flathub", "repo": "actions"}
@@ -88,27 +96,29 @@ async def test_github_provider_cancel_missing_run_id(github_config, mock_httpx_p
 
 
 @pytest.mark.asyncio
-async def test_provider_factory_create():
-    mock_provider_class = MagicMock()
+async def test_initialize_providers():
     mock_provider = AsyncMock(spec=GitHubJobProvider)
-    mock_provider_class.return_value = mock_provider
 
-    with patch.dict(
-        ProviderFactory._providers, {ProviderType.GITHUB: mock_provider_class}
-    ):
-        config = {"token": "test-token"}
-        provider = await ProviderFactory.create_provider(ProviderType.GITHUB, config)
-
-        assert provider is mock_provider
-        mock_provider.initialize.assert_awaited_once_with(config)
+    with patch("app.providers._providers", {ProviderType.GITHUB: mock_provider}):
+        await initialize_providers()
+        mock_provider.initialize.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_provider_factory_unsupported_provider():
+async def test_get_provider():
+    mock_provider = MagicMock(spec=GitHubJobProvider)
+
+    with patch("app.providers._providers", {ProviderType.GITHUB: mock_provider}):
+        provider = get_provider(ProviderType.GITHUB)
+        assert provider is mock_provider
+
+
+@pytest.mark.asyncio
+async def test_get_provider_unsupported():
     with pytest.raises(ValueError) as excinfo:
         invalid_provider_type = MagicMock()
         invalid_provider_type.__str__.return_value = "invalid"
 
-        await ProviderFactory.create_provider(invalid_provider_type, {})
+        get_provider(invalid_provider_type)
 
     assert "Unsupported provider type" in str(excinfo.value)

@@ -11,7 +11,7 @@ class JobProvider(ABC):
     provider_type: ProviderType
 
     @abstractmethod
-    async def initialize(self, config: Dict[str, Any]) -> None:
+    async def initialize(self) -> None:
         pass
 
     @abstractmethod

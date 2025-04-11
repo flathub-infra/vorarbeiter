@@ -27,7 +27,9 @@ def mock_provider():
 
 @pytest.fixture
 def build_pipeline(mock_provider):
-    return BuildPipeline(mock_provider)
+    with patch("app.providers.get_provider", return_value=mock_provider):
+        pipeline = BuildPipeline()
+        return pipeline
 
 
 @pytest.fixture
@@ -146,14 +148,6 @@ def mock_get_db(mock_db_session):
 
 
 @pytest.fixture
-def mock_provider_factory():
-    with patch("app.routes.pipelines.ProviderFactory") as factory_mock:
-        provider_mock = AsyncMock(spec=JobProvider)
-        factory_mock.create_provider = AsyncMock(return_value=provider_mock)
-        yield factory_mock
-
-
-@pytest.fixture
 def mock_build_pipeline():
     with patch("app.routes.pipelines.BuildPipeline") as pipeline_class_mock:
         pipeline_mock = AsyncMock()
@@ -173,9 +167,7 @@ def mock_build_pipeline():
         yield pipeline_class_mock
 
 
-def test_trigger_pipeline_endpoint(
-    mock_get_db, mock_provider_factory, mock_build_pipeline
-):
+def test_trigger_pipeline_endpoint(mock_get_db, mock_build_pipeline):
     from app.config import settings
 
     test_client = TestClient(app)
@@ -195,8 +187,6 @@ def test_trigger_pipeline_endpoint(
     assert response.json()["status"] == "created"
     assert response.json()["pipeline_status"] == "running"
 
-    mock_provider_factory.create_provider.assert_called_once()
-
     pipeline_instance = mock_build_pipeline.return_value
 
     pipeline_instance.create_pipeline.assert_called_once()
@@ -210,9 +200,7 @@ def test_trigger_pipeline_endpoint(
     assert mock_get_db.flush.called
 
 
-def test_trigger_pipeline_unauthorized(
-    mock_get_db, mock_provider_factory, mock_build_pipeline
-):
+def test_trigger_pipeline_unauthorized(mock_get_db, mock_build_pipeline):
     test_client = TestClient(app)
 
     request_data = {
