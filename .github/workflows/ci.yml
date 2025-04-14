@@ -32,4 +32,6 @@ jobs:
         run: uv run mypy .
 
       - name: Run tests
-        run: uv run pytest -v
+        run: |
+          uv run alembic upgrade head
+          uv run pytest -v
