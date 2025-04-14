@@ -108,33 +108,26 @@ jobs:
     runs-on: ${{ matrix.runner }}
     needs: [validate-manifest, setup-matrix]
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include: ${{ fromJSON(needs.setup-matrix.outputs.matrix).include }}
     steps:
-      - name: Process inputs
-        id: process_inputs
+      - name: Mask repo token
         run: |
-          INP_TOKEN=$(jq -r '.inputs.token_subset' $GITHUB_EVENT_PATH)
-          echo "Architecture: ${{ inputs.arch }}"
-          echo "Branch: ${{ inputs.branch }}"
-          echo "Build ID: ${{ inputs.build_id }}"
-          echo "Before masking: $INP_TOKEN"
-          echo "::add-mask::$INP_TOKEN"
-          echo "After masking: $INP_TOKEN"
-          echo "TOKEN_SUBSET=$INP_TOKEN" >> $GITHUB_ENV
-          echo "token_subset=$INP_TOKEN" >> $GITHUB_OUTPUT
-
-      - name: Verify masking
-        run: |
-          echo "From env: $TOKEN_SUBSET"
-          echo "From previous step output: ${{ steps.process_inputs.outputs.token_subset }}"
+          REPO_TOKEN="$(jq -r '.inputs.repo_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$REPO_TOKEN"
+          echo "REPO_TOKEN=$REPO_TOKEN" >> $GITHUB_ENV
           
   callback:
     runs-on: ubuntu-latest
     needs: [check-event-type, update-log-url, validate-manifest, setup-matrix, build]
     if: ${{ always() }}
     steps:
+      - name: Mask callback token
+        run: |
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
+
       - name: Report job status
         run: |
           if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
@@ -145,6 +138,6 @@ jobs:
           
           curl -X POST \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ inputs.callback_token }}" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "{\"status\": \"${status}\"}" \
             "${{ inputs.callback_url }}"
