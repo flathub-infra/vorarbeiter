@@ -1,8 +1,11 @@
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
 import sentry_sdk
+from fastapi import FastAPI
 
 from app.config import settings
-from app.routes import webhooks_router, pipelines_router
+from app.providers import initialize_providers
+from app.routes import pipelines_router, webhooks_router
 
 if settings.sentry_dsn:
     sentry_sdk.init(
@@ -11,7 +14,14 @@ if settings.sentry_dsn:
         profiles_sample_rate=0.1,
     )
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await initialize_providers()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/", tags=["health"])

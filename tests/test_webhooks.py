@@ -106,7 +106,7 @@ def test_receive_github_webhook_success(client: TestClient, mock_db_session):
                 assert response_data["event_id"] == delivery_id
 
                 assert mock_db_session.add.called
-                assert mock_db_session.flush.called
+                assert mock_db_session.commit.called
 
 
 def test_receive_github_webhook_missing_header(client: TestClient):
@@ -536,4 +536,4 @@ async def test_receive_webhook_creates_pipeline(client, mock_db_session):
                 assert response_data["pipeline_id"] == str(pipeline_id)
 
                 assert mock_db_session.add.called
-                assert mock_db_session.flush.called
+                assert mock_db_session.commit.called

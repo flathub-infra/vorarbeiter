@@ -28,6 +28,7 @@ class BuildPipeline:
             )
             db.add(pipeline)
             await db.flush()
+            await db.commit()
             return pipeline
 
     async def start_pipeline(
@@ -72,6 +73,7 @@ class BuildPipeline:
 
             pipeline.provider_data = provider_result
 
+            await db.commit()
             return pipeline
 
     async def handle_callback(
@@ -102,6 +104,7 @@ class BuildPipeline:
                     pipeline.status = PipelineStatus.PENDING
                     pipeline.result = result
 
+            await db.commit()
             return pipeline
 
     async def get_pipeline(self, pipeline_id: uuid.UUID) -> Optional[Pipeline]:

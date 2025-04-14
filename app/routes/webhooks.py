@@ -116,8 +116,9 @@ async def receive_github_webhook(
         try:
             async with get_db() as db:
                 db.add(event)
-                await db.flush()
-                pipeline_id = await create_pipeline(event)
+                await db.commit()
+
+            pipeline_id = await create_pipeline(event)
 
         except Exception as e:
             print(f"Database error: {e}")
