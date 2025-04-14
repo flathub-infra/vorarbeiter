@@ -449,12 +449,12 @@ async def test_create_pipeline_comment():
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
 
-    # Add PR URL to the comment payload
     comment_payload = dict(SAMPLE_COMMENT_PAYLOAD)
     comment_payload["issue"] = {
+        "number": 42,
         "pull_request": {
             "url": "https://api.github.com/repos/test-owner/test-repo/pulls/42"
-        }
+        },
     }
     comment_payload["comment"]["id"] = 12345
     comment_payload["comment"]["user"] = {"login": "test-user"}
@@ -498,12 +498,10 @@ async def test_create_pipeline_comment():
 
                 assert result == pipeline_id
 
-                # Verify the parameters passed to create_pipeline
                 args, kwargs = mock_pipeline_service.create_pipeline.call_args
                 assert "params" in kwargs
-                assert kwargs["params"].get("comment_id") == "12345"
-                assert kwargs["params"].get("requested_by") == "test-user"
-                assert kwargs["params"].get("triggered_by_comment") == "true"
+                assert kwargs["params"].get("pr_number") == "42"
+                assert kwargs["params"].get("ref") == "refs/pull/42/head"
 
 
 @pytest.mark.asyncio

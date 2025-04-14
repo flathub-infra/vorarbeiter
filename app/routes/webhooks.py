@@ -170,18 +170,19 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     elif "comment" in payload and "bot, build" in payload.get("comment", {}).get(
         "body", ""
     ):
-        pr_url = payload.get("issue", {}).get("pull_request", {}).get("url", "")
-        if not pr_url:
-            return None  # Not a PR comment
+        issue = payload.get("issue", {})
+        pr_url = issue.get("pull_request", {}).get("url", "")
+        pr_number = issue.get("number")
+
+        if not pr_url or pr_number is None:
+            return None
+
+        pr_ref = f"refs/pull/{pr_number}/head"
 
         params.update(
             {
-                "comment_id": str(payload.get("comment", {}).get("id", "")),
-                "requested_by": str(
-                    payload.get("comment", {}).get("user", {}).get("login", "")
-                ),
-                "comment_url": str(payload.get("comment", {}).get("html_url", "")),
-                "triggered_by_comment": "true",
+                "pr_number": str(pr_number),
+                "ref": pr_ref,
             }
         )
 
