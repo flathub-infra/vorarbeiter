@@ -36,13 +36,10 @@ target_metadata = Base.metadata
 
 # Function to get synchronous URL for Alembic
 def get_sync_database_url() -> str:
-    # Replace async driver prefix with sync equivalent if necessary
+    # Replace async driver prefix with sync equivalent
     db_url = settings.database_url
-    if db_url.startswith("sqlite+aiosqlite"):
-        return db_url.replace("sqlite+aiosqlite", "sqlite")
-    if db_url.startswith("postgresql+asyncpg"):
-        return db_url.replace("postgresql+asyncpg", "postgresql")
-    # Add other driver replacements if needed
+    if db_url.startswith("postgresql+psycopg"):
+        return db_url.replace("postgresql+psycopg", "postgresql")
     return db_url
 
 

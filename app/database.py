@@ -19,15 +19,6 @@ def get_engine_args() -> Dict[str, Any]:
         "pool_recycle": 300,
     }
 
-    if settings.database_url.startswith("sqlite"):
-        args["pool_size"] = 1
-        args["max_overflow"] = 0
-        args["connect_args"] = {
-            "timeout": 60,
-            "check_same_thread": False,
-            "isolation_level": "IMMEDIATE",
-        }
-
     return args
 
 

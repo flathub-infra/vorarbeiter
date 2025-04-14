@@ -199,7 +199,12 @@ def test_webhook_with_signature_verification_success(
             "Content-Type": "application/json",
         }
 
-        with patch("app.routes.webhooks.create_pipeline", return_value=None):
+        mock_db_context = AsyncMock()
+        mock_db_context.__aenter__.return_value = mock_db_session
+        with (
+            patch("app.routes.webhooks.get_db", return_value=mock_db_context),
+            patch("app.routes.webhooks.create_pipeline", return_value=None),
+        ):
             response = client.post(
                 "/api/webhooks/github", content=payload, headers=headers
             )
