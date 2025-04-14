@@ -1,11 +1,11 @@
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Dict, Any
+from typing import Any, AsyncGenerator, Dict
 
 from sqlalchemy.ext.asyncio import (
-    create_async_engine,
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
-    AsyncEngine,
+    create_async_engine,
 )
 
 from app.config import settings
@@ -20,8 +20,10 @@ def get_engine_args() -> Dict[str, Any]:
     }
 
     if settings.database_url.startswith("sqlite"):
+        args["pool_size"] = 1
+        args["max_overflow"] = 0
         args["connect_args"] = {
-            "timeout": 30,
+            "timeout": 60,
             "check_same_thread": False,
             "isolation_level": "IMMEDIATE",
         }
@@ -51,5 +53,5 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         async with session.begin():
             try:
                 yield session
-            except Exception:
-                raise
+            finally:
+                await session.close()
