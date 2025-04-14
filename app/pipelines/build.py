@@ -64,7 +64,7 @@ class BuildPipeline:
                 "job_type": "build",
                 "params": {
                     "owner": "flathub-infra",
-                    "repo": "vorarbeiter-stubs",
+                    "repo": "vorarbeiter",
                     "workflow_id": "build.yml",
                     "ref": "main",
                     "inputs": {
