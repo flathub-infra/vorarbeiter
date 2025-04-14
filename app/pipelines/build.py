@@ -46,6 +46,19 @@ class BuildPipeline:
             pipeline.status = PipelineStatus.RUNNING
             pipeline.started_at = datetime.now()
 
+            source_branch = pipeline.params.get("branch")
+            match source_branch:
+                case "master":
+                    branch = "stable"
+                case "beta":
+                    branch = "beta"
+                case source_branch if isinstance(
+                    source_branch, str
+                ) and source_branch.startswith("branch/"):
+                    branch = source_branch.removeprefix("branch/")
+                case _:
+                    branch = "test"
+
             job_data = {
                 "app_id": pipeline.app_id,
                 "job_type": "build",
@@ -56,7 +69,7 @@ class BuildPipeline:
                     "ref": "main",
                     "inputs": {
                         "app_id": pipeline.app_id,
-                        "branch": pipeline.params.get("branch", "stable"),
+                        "branch": branch,
                         "git_ref": pipeline.params.get("ref", "master"),
                         "build_url": str(pipeline.id),
                         "arches": "x86_64,aarch64",

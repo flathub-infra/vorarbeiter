@@ -107,6 +107,68 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
 
 @pytest.mark.asyncio
+@patch("app.pipelines.build.get_db")
+@patch("app.pipelines.build.get_provider")
+@pytest.mark.parametrize(
+    "source_branch, expected_target_branch",
+    [
+        ("master", "stable"),
+        ("beta", "beta"),
+        ("feature/new-thing", "test"),
+        (None, "test"),
+        ("branch/my-feature", "my-feature"),
+    ],
+)
+async def test_start_pipeline_branch_mapping(
+    mock_get_provider,
+    mock_get_db,
+    source_branch,
+    expected_target_branch,
+):
+    """
+    Verify that start_pipeline correctly maps the source branch (from params)
+    to the target branch used in the GitHub dispatch inputs.
+    """
+    pipeline_id = uuid.uuid4()
+    app_id = "test.app"
+    params = {"branch": source_branch} if source_branch else {}
+
+    mock_db_session = AsyncMock()
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id=app_id,
+        params=params,
+        status=PipelineStatus.PENDING,
+        provider=ProviderType.GITHUB.value,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+    mock_db_session.get.return_value = mock_pipeline
+    mock_get_db.return_value.__aenter__.return_value = mock_db_session
+
+    mock_github_provider = AsyncMock()
+    mock_get_provider.return_value = mock_github_provider
+    mock_github_provider.dispatch.return_value = {"dispatch_result": "ok"}
+
+    build_pipeline = BuildPipeline()
+    build_pipeline.github_provider = mock_github_provider
+
+    await build_pipeline.start_pipeline(pipeline_id)
+
+    mock_db_session.get.assert_called_once_with(Pipeline, pipeline_id)
+    assert mock_pipeline.status == PipelineStatus.RUNNING
+    assert mock_pipeline.started_at is not None
+
+    mock_github_provider.dispatch.assert_called_once()
+    call_args, call_kwargs = mock_github_provider.dispatch.call_args
+    dispatched_job_data = call_args[2]
+    assert dispatched_job_data["params"]["inputs"]["branch"] == expected_target_branch
+    assert mock_pipeline.provider_data == {"dispatch_result": "ok"}
+
+    mock_db_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline):
     mock_db.get.return_value = sample_pipeline
 
