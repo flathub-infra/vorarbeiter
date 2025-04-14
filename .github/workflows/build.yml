@@ -274,6 +274,8 @@ jobs:
 
           if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
             status="failure"
+          elif [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            status="cancelled"
           else
             status="success"
           fi
