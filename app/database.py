@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Dict, Any
 
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
@@ -10,12 +10,30 @@ from sqlalchemy.ext.asyncio import (
 
 from app.config import settings
 
+
+def get_engine_args() -> Dict[str, Any]:
+    args: Dict[str, Any] = {
+        "echo": settings.debug,
+        "future": True,
+        "pool_pre_ping": True,
+        "pool_recycle": 300,
+    }
+
+    if settings.database_url.startswith("sqlite"):
+        args["connect_args"] = {
+            "timeout": 30,
+            "check_same_thread": False,
+            "isolation_level": "IMMEDIATE",
+        }
+
+    return args
+
+
 engine: AsyncEngine = create_async_engine(
     settings.database_url,
-    echo=settings.debug,
-    future=True,
-    pool_pre_ping=True,
+    **get_engine_args(),
 )
+
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,

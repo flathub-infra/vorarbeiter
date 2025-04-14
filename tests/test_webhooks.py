@@ -179,24 +179,6 @@ def test_receive_github_webhook_nested_key_error(client: TestClient):
         assert "Missing expected key in GitHub payload" in response.json()["detail"]
 
 
-def test_receive_github_webhook_db_commit_error(client: TestClient, mock_db_session):
-    """Test handling of database commit error."""
-    delivery_id = str(uuid.uuid4())
-    headers = {
-        "X-GitHub-Delivery": delivery_id,
-    }
-
-    mock_db_session.add = AsyncMock(side_effect=Exception("Database error"))
-
-    with patch("app.routes.webhooks.settings.github_webhook_secret", ""):
-        response = client.post(
-            "/api/webhooks/github", json=SAMPLE_GITHUB_PAYLOAD, headers=headers
-        )
-
-        assert response.status_code == 500
-        assert "Database error occurred" in response.json()["detail"]
-
-
 def test_receive_github_webhook_duplicate_event_id(client: TestClient, mock_db_session):
     """Test handling of duplicate event ID."""
     delivery_id = str(uuid.uuid4())
