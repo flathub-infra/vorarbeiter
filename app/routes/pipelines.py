@@ -67,8 +67,8 @@ class PipelineStatusCallback(BaseModel):
     @field_validator("status")
     @classmethod
     def status_must_be_valid(cls, v):
-        if v not in ["success", "failure"]:
-            raise ValueError("status must be 'success' or 'failure'")
+        if v not in ["success", "failure", "cancelled"]:
+            raise ValueError("status must be 'success', 'failure', or 'cancelled'")
         return v
 
 
