@@ -55,9 +55,12 @@ jobs:
     steps:
       - name: Report log URL to the backend
         run: |
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
+
           curl -X POST \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ inputs.callback_token }}" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d '{"log_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
             "${{ inputs.callback_url }}"
 
@@ -123,19 +126,17 @@ jobs:
     needs: [check-event-type, update-log-url, validate-manifest, setup-matrix, build]
     if: ${{ always() }}
     steps:
-      - name: Mask callback token
+      - name: Report job status
         run: |
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
 
-      - name: Report job status
-        run: |
           if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
             status="failure"
           else
             status="success"
           fi
-          
+
           curl -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
