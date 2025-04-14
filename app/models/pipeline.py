@@ -4,6 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
+import sqlalchemy
 from sqlalchemy import String, JSON, Text, func, ForeignKey
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
@@ -31,12 +32,20 @@ class Pipeline(Base):
         primary_key=True, default=uuid.uuid4, index=True
     )
     status: Mapped[PipelineStatus] = mapped_column(
-        index=True, default=PipelineStatus.PENDING
+        index=True,
+        default=PipelineStatus.PENDING,
+        type_=sqlalchemy.Enum(
+            PipelineStatus, values_callable=lambda x: [e.value for e in x]
+        ),
     )
     app_id: Mapped[str] = mapped_column(String(255), index=True)
     params: Mapped[dict[str, Any]] = mapped_column(JSON)
     triggered_by: Mapped[PipelineTrigger] = mapped_column(
-        index=True, default=PipelineTrigger.WEBHOOK
+        index=True,
+        default=PipelineTrigger.WEBHOOK,
+        type_=sqlalchemy.Enum(
+            PipelineTrigger, values_callable=lambda x: [e.value for e in x]
+        ),
     )
 
     provider: Mapped[str] = mapped_column(String(255), index=True, nullable=True)
