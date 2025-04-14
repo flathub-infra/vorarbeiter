@@ -34,15 +34,6 @@ target_metadata = Base.metadata
 # ... etc.
 
 
-# Function to get synchronous URL for Alembic
-def get_sync_database_url() -> str:
-    # Replace async driver prefix with sync equivalent
-    db_url = settings.database_url
-    if db_url.startswith("postgresql+psycopg"):
-        return db_url.replace("postgresql+psycopg", "postgresql")
-    return db_url
-
-
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -55,8 +46,8 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    # Use the URL from settings, adjusted for sync driver
-    url = get_sync_database_url()
+    # Use the URL from settings
+    url = settings.database_url
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -85,7 +76,7 @@ def run_migrations_online() -> None:
     if connectable is None:
         # create engine only if needed
         connectable = engine_from_config(
-            {"sqlalchemy.url": get_sync_database_url()},
+            {"sqlalchemy.url": settings.database_url},
             prefix="sqlalchemy.",
             poolclass=pool.NullPool,
         )

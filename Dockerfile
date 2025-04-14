@@ -10,10 +10,6 @@ ENV PATH="/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PORT=8000
 
-RUN apt-get update && apt-get install -y \
-    libpq5 \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY --from=builder /.venv /.venv
 COPY --from=builder /python /python
 COPY . /app
