@@ -1,0 +1,150 @@
+name: Build pipeline
+run-name: build ${{ inputs.app_id }}/${{ inputs.branch }} from ${{ inputs.git_ref }}
+
+concurrency:
+  group: build-${{ inputs.app_id }}-${{ inputs.branch }}-${{ inputs.git_ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_id:
+        description: 'Application ID'
+        required: true
+        default: org.vim.Vim
+      branch:
+        description: 'Build branch (stable/beta/test)'
+        required: true
+        default: stable
+      git_ref:
+        description: 'Git reference'
+        required: true
+        default: master
+      build_url:
+        description: 'Build ID'
+        required: true
+        default: "0"
+      arches:
+        description: 'Comma-separated list of architectures'
+        required: true
+        default: 'x86_64,aarch64'
+      repo_token:
+        description: 'Repository token'
+        required: true
+      callback_url:
+        description: 'Callback URL'
+        required: true
+      callback_token:
+        description: 'Callback token'
+        required: true
+
+jobs:
+  check-event-type:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check event type
+        run: |
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            echo "This workflow only supports workflow_dispatch events"
+            exit 1
+          fi
+
+  update-log-url:
+    runs-on: ubuntu-latest
+    needs: check-event-type
+    steps:
+      - name: Report log URL to the backend
+        run: |
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ inputs.callback_token }}" \
+            -d '{"log_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+            "${{ inputs.callback_url }}"
+
+  validate-manifest:
+    runs-on: ubuntu-latest
+    needs: [check-event-type, update-log-url]
+    steps:
+      - name: Validate manifest
+        run: exit 0
+        
+  setup-matrix:
+    runs-on: ubuntu-latest
+    needs: [check-event-type, update-log-url]
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          python3 -c "
+          import json
+          import os
+          
+          arches = '${{ inputs.arches }}'
+          
+          matrix = {'include': []}
+          for arch in arches.split(','):
+              arch = arch.strip()
+              match arch:
+                  case 'x86_64':
+                      runner = 'ubuntu-24.04'
+                  case 'aarch64':
+                      runner = 'ubuntu-24.04-arm'
+                  case _:
+                      print(f'Error: Unsupported architecture: {arch}')
+                      exit(1)
+                      
+              matrix['include'].append({
+                  'arch': arch,
+                  'runner': runner
+              })
+          
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'matrix={json.dumps(matrix)}\\n')
+          "
+
+  build:
+    name: build-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    needs: [validate-manifest, setup-matrix]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup-matrix.outputs.matrix).include }}
+    steps:
+      - name: Process inputs
+        id: process_inputs
+        run: |
+          INP_TOKEN=$(jq -r '.inputs.token_subset' $GITHUB_EVENT_PATH)
+          echo "Architecture: ${{ inputs.arch }}"
+          echo "Branch: ${{ inputs.branch }}"
+          echo "Build ID: ${{ inputs.build_id }}"
+          echo "Before masking: $INP_TOKEN"
+          echo "::add-mask::$INP_TOKEN"
+          echo "After masking: $INP_TOKEN"
+          echo "TOKEN_SUBSET=$INP_TOKEN" >> $GITHUB_ENV
+          echo "token_subset=$INP_TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Verify masking
+        run: |
+          echo "From env: $TOKEN_SUBSET"
+          echo "From previous step output: ${{ steps.process_inputs.outputs.token_subset }}"
+          
+  callback:
+    runs-on: ubuntu-latest
+    needs: [check-event-type, update-log-url, validate-manifest, setup-matrix, build]
+    if: ${{ always() }}
+    steps:
+      - name: Report job status
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            status="failure"
+          else
+            status="success"
+          fi
+          
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ inputs.callback_token }}" \
+            -d "{\"status\": \"${status}\"}" \
+            "${{ inputs.callback_url }}"
