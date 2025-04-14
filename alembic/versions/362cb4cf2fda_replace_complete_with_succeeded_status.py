@@ -20,37 +20,27 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    dialect = op.get_bind().dialect.name
+    op.execute(
+        "CREATE TYPE pipelinestatus_new AS ENUM ('pending', 'running', 'failed', 'cancelled', 'published', 'succeeded')"
+    )
 
-    if dialect == "postgresql":
-        op.execute(
-            "CREATE TYPE pipelinestatus_new AS ENUM ('pending', 'running', 'failed', 'cancelled', 'published', 'succeeded')"
-        )
+    op.execute(
+        "ALTER TABLE pipeline ALTER COLUMN status TYPE pipelinestatus_new USING CASE WHEN status::text = 'complete' THEN 'succeeded'::pipelinestatus_new ELSE status::text::pipelinestatus_new END"
+    )
 
-        op.execute(
-            "ALTER TABLE pipeline ALTER COLUMN status TYPE pipelinestatus_new USING CASE WHEN status::text = 'complete' THEN 'succeeded'::pipelinestatus_new ELSE status::text::pipelinestatus_new END"
-        )
-
-        op.execute("DROP TYPE pipelinestatus")
-        op.execute("ALTER TYPE pipelinestatus_new RENAME TO pipelinestatus")
-    else:
-        op.execute("UPDATE pipeline SET status = 'succeeded' WHERE status = 'complete'")
+    op.execute("DROP TYPE pipelinestatus")
+    op.execute("ALTER TYPE pipelinestatus_new RENAME TO pipelinestatus")
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    dialect = op.get_bind().dialect.name
+    op.execute(
+        "CREATE TYPE pipelinestatus_old AS ENUM ('pending', 'running', 'complete', 'failed', 'cancelled', 'published')"
+    )
 
-    if dialect == "postgresql":
-        op.execute(
-            "CREATE TYPE pipelinestatus_old AS ENUM ('pending', 'running', 'complete', 'failed', 'cancelled', 'published')"
-        )
+    op.execute(
+        "ALTER TABLE pipeline ALTER COLUMN status TYPE pipelinestatus_old USING CASE WHEN status::text = 'succeeded' THEN 'complete'::pipelinestatus_old ELSE status::text::pipelinestatus_old END"
+    )
 
-        op.execute(
-            "ALTER TABLE pipeline ALTER COLUMN status TYPE pipelinestatus_old USING CASE WHEN status::text = 'succeeded' THEN 'complete'::pipelinestatus_old ELSE status::text::pipelinestatus_old END"
-        )
-
-        op.execute("DROP TYPE pipelinestatus")
-        op.execute("ALTER TYPE pipelinestatus_old RENAME TO pipelinestatus")
-    else:
-        op.execute("UPDATE pipeline SET status = 'complete' WHERE status = 'succeeded'")
+    op.execute("DROP TYPE pipelinestatus")
+    op.execute("ALTER TYPE pipelinestatus_old RENAME TO pipelinestatus")

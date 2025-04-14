@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     admin_token: str = "raeVenga1eez3Geeca"
     base_url: str = "http://localhost:8000"
-    database_url: str = "sqlite+aiosqlite:///./vorarbeiter.db"
+    database_url: str = "postgresql+psycopg://postgres:postgres@db:5432/test_db"
     debug: bool = False
     github_token: str = "test_github_token"
     github_webhook_secret: str = "test_webhook_secret"

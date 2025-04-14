@@ -32,6 +32,7 @@ jobs:
         run: uv run mypy .
 
       - name: Run tests
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
         run: |
-          uv run alembic upgrade head
           uv run pytest -v
