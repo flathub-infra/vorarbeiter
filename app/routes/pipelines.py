@@ -268,7 +268,7 @@ async def pipeline_callback(
                             elif status_value == "failure":
                                 comment = f"🚧 [Test build]({log_url}) failed."
                             elif status_value == "cancelled":
-                                comment = "🚧 [Test build]({log_url}) was cancelled."
+                                comment = f"🚧 [Test build]({log_url}) was cancelled."
 
                             if comment:
                                 await create_pr_comment(
@@ -323,7 +323,7 @@ async def pipeline_callback(
                 if pr_number_str and pipeline.log_url:
                     try:
                         pr_number = int(pr_number_str)
-                        comment = f"Started [test build]({pipeline.log_url})."
+                        comment = f"🚧 Started [test build]({pipeline.log_url})."
                         await create_pr_comment(
                             repo=repo,
                             pr_number=pr_number,
