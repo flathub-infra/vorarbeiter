@@ -245,9 +245,6 @@ async def pipeline_callback(
                             github_state = "failure"
 
                     target_url = updated_pipeline.log_url
-                    print(
-                        f"[DEBUG] pipeline_callback status - updated_pipeline.log_url: {target_url}"
-                    )
                     if not target_url:
                         logging.warning(
                             f"Pipeline {pipeline_id}: log_url is unexpectedly None when setting final commit status."
@@ -325,14 +322,8 @@ async def pipeline_callback(
                     )
 
                 log_url_callback = PipelineLogUrlCallback(**data)
-                print(
-                    f"[DEBUG] log_url_callback - Setting log_url to: {log_url_callback.log_url}"
-                )
                 pipeline.log_url = log_url_callback.log_url
                 await db.commit()
-                print(
-                    f"[DEBUG] log_url_callback - After commit, pipeline.log_url: {pipeline.log_url}"
-                )
 
                 saved_log_url = pipeline.log_url
                 repo = pipeline.params.get("repo")
