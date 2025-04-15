@@ -228,8 +228,19 @@ async def pipeline_callback(
                 sha = pipeline.params.get("sha")
 
                 if repo and sha:
-                    github_state = "success" if status_value == "success" else "failure"
-                    description = f"Build {status_value}."
+                    match status_value:
+                        case "success":
+                            description = "Build succeeded."
+                            github_state = "success"
+                        case "failure":
+                            description = "Build failed."
+                            github_state = "failure"
+                        case "cancelled":
+                            description = "Build cancelled."
+                            github_state = "failure"
+                        case _:
+                            description = f"Build status: {status_value}."
+                            github_state = "failure"
 
                     target_url = pipeline.log_url
                     if not target_url:
