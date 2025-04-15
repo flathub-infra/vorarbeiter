@@ -1,6 +1,8 @@
-import httpx
-from app.config import settings
 import logging
+
+import httpx
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +13,7 @@ async def update_commit_status(
     state: str,
     target_url: str | None = None,
     description: str | None = None,
-    context: str = "Build",
+    context: str = "builds/x86_64",
 ) -> None:
     if not settings.github_status_token:
         logger.warning("GITHUB_STATUS_TOKEN is not set. Skipping status update.")
