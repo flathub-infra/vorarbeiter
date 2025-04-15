@@ -12,7 +12,8 @@ from app.models import Pipeline, PipelineTrigger, PipelineStatus
 from app.pipelines import BuildPipeline, ensure_providers_initialized
 from app.config import settings
 from sqlalchemy.future import select
-from app.utils.github import update_commit_status
+from app.utils.github import update_commit_status, create_pr_comment
+import logging
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
@@ -243,6 +244,36 @@ async def pipeline_callback(
                         target_url=target_url,
                     )
 
+                    pr_number_str = updated_pipeline.params.get("pr_number")
+                    if pr_number_str:
+                        try:
+                            pr_number = int(pr_number_str)
+                            log_url = updated_pipeline.log_url
+                            comment = ""
+                            if status_value == "success":
+                                comment = "🚧 Test build succeeded."
+                            elif status_value == "failure":
+                                comment = f"🚧 [Test build failed]({log_url})."
+                            elif status_value == "cancelled":
+                                comment = (
+                                    f"🚧 [Test build has been cancelled]({log_url})."
+                                )
+
+                            if comment:
+                                await create_pr_comment(
+                                    repo=repo,
+                                    pr_number=pr_number,
+                                    comment=comment,
+                                )
+                        except ValueError:
+                            logging.error(
+                                f"Invalid pr_number '{pr_number_str}' for pipeline {pipeline_id}. Skipping final PR comment."
+                            )
+                        except Exception as e:
+                            logging.error(
+                                f"Error creating final PR comment for pipeline {pipeline_id}: {e}"
+                            )
+
             return {
                 "status": "ok",
                 "pipeline_id": str(pipeline_id),
@@ -262,13 +293,14 @@ async def pipeline_callback(
 
             repo = pipeline.params.get("repo")
             sha = pipeline.params.get("sha")
-            if repo and sha:
-                log_url = pipeline.log_url
-                if log_url:
-                    target_url = log_url
-                else:
-                    target_url = f"{settings.base_url}/api/pipelines/{pipeline_id}"
+            pr_number_str = pipeline.params.get("pr_number")
 
+            if repo and sha:
+                target_url = (
+                    pipeline.log_url
+                    if pipeline.log_url
+                    else f"{settings.base_url}/api/pipelines/{pipeline_id}"
+                )
                 await update_commit_status(
                     repo=repo,
                     sha=sha,
@@ -276,6 +308,24 @@ async def pipeline_callback(
                     description="Build in progress",
                     target_url=target_url,
                 )
+
+                if pr_number_str and pipeline.log_url:
+                    try:
+                        pr_number = int(pr_number_str)
+                        comment = f"Started [test build]({pipeline.log_url})."
+                        await create_pr_comment(
+                            repo=repo,
+                            pr_number=pr_number,
+                            comment=comment,
+                        )
+                    except ValueError:
+                        logging.error(
+                            f"Invalid pr_number '{pr_number_str}' for pipeline {pipeline_id}. Skipping PR comment."
+                        )
+                    except Exception as e:
+                        logging.error(
+                            f"Error creating 'Started' PR comment for pipeline {pipeline_id}: {e}"
+                        )
 
             return {
                 "status": "ok",

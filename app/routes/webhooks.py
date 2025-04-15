@@ -9,7 +9,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline
-from app.utils.github import update_commit_status
+from app.utils.github import update_commit_status, create_pr_comment
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
@@ -231,5 +231,21 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         )
 
     pipeline = await pipeline_service.start_pipeline(pipeline_id=pipeline.id)
+
+    pr_number_str = pipeline.params.get("pr_number")
+    if pr_number_str:
+        try:
+            pr_number = int(pr_number_str)
+            await create_pr_comment(
+                repo=event.repository,
+                pr_number=pr_number,
+                comment="🚧 Test build enqueued.",
+            )
+        except ValueError:
+            print(
+                f"Invalid pr_number '{pr_number_str}' for pipeline {pipeline.id}. Skipping PR comment."
+            )
+        except Exception as e:
+            print(f"Error creating initial PR comment for pipeline {pipeline.id}: {e}")
 
     return pipeline.id
