@@ -81,6 +81,23 @@ class BuildPipeline:
                     build_id = build_data.get("id")
                     build_url = f"{settings.flat_manager_url}/api/v1/build/{build_id}"
                     pipeline.build_url = build_url
+
+                    upload_token_response = await client.post(
+                        f"{settings.flat_manager_url}/api/v1/token_subset",
+                        json={
+                            "name": "upload",
+                            "sub": f"build/{build_id}",
+                            "scope": "upload",
+                            "prefix": pipeline.app_id,
+                            "duration": 6 * 60 * 60,
+                        },
+                        headers={
+                            "Authorization": f"Bearer {settings.flat_manager_token}"
+                        },
+                        timeout=30.0,
+                    )
+                    upload_token_response.raise_for_status()
+                    upload_token = upload_token_response.json().get("token")
             except Exception as e:
                 raise ValueError(f"Failed to create build in flat-manager: {str(e)}")
 
@@ -97,7 +114,7 @@ class BuildPipeline:
                         "git_ref": pipeline.params.get("ref", "master"),
                         "build_url": build_url,
                         "flat_manager_repo": flat_manager_repo,
-                        "flat_manager_token": settings.flat_manager_token,
+                        "flat_manager_token": upload_token,
                         "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
                         "callback_token": pipeline.callback_token,
                     },

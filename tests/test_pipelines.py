@@ -112,7 +112,13 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
     assert result.status == PipelineStatus.RUNNING
     assert build_pipeline.github_provider.dispatch.called
-    assert mock_httpx_client.__aenter__.return_value.post.called
+    assert mock_httpx_client.__aenter__.return_value.post.call_count == 2
+
+    dispatch_call_args = build_pipeline.github_provider.dispatch.call_args[0]
+    job_data = dispatch_call_args[2]
+    assert job_data["params"]["inputs"][
+        "flat_manager_token"
+    ] == mock_httpx_response.json.return_value.get("token")
 
 
 @pytest.mark.asyncio
@@ -179,12 +185,20 @@ async def test_start_pipeline_branch_mapping(
     assert mock_pipeline.status == PipelineStatus.RUNNING
     assert mock_pipeline.started_at is not None
 
-    mock_httpx_instance.post.assert_called_once()
-    call_args, call_kwargs = mock_httpx_instance.post.call_args
-    post_url = call_args[0]
-    post_data = call_kwargs["json"]
+    assert mock_httpx_instance.post.call_count == 2
+    first_call_args = mock_httpx_instance.post.call_args_list[0]
+    post_url = first_call_args[0][0]
+    post_data = first_call_args[1]["json"]
     assert "hub.flathub.org/api/v1/build" in post_url
     assert post_data["repo"] == expected_flat_manager_repo
+
+    second_call_args = mock_httpx_instance.post.call_args_list[1]
+    token_url = second_call_args[0][0]
+    token_data = second_call_args[1]["json"]
+    assert "hub.flathub.org/api/v1/token_subset" in token_url
+    assert token_data["name"] == "upload"
+    assert token_data["scope"] == "upload"
+    assert token_data["prefix"] == app_id
 
     mock_github_provider.dispatch.assert_called_once()
     call_args, call_kwargs = mock_github_provider.dispatch.call_args
