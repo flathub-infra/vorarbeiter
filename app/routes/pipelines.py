@@ -219,20 +219,19 @@ async def pipeline_callback(
             await ensure_providers_initialized()
             pipeline_service = BuildPipeline()
 
-            await pipeline_service.handle_callback(
-                pipeline_id=pipeline_id, status=status_value, result=result
+            await pipeline_service.update_pipeline_status(
+                pipeline=pipeline, status=status_value, result=result
             )
 
-            updated_pipeline = await db.get(Pipeline, pipeline_id)
-            if updated_pipeline:
-                repo = updated_pipeline.params.get("repo")
-                sha = updated_pipeline.params.get("sha")
+            if pipeline:
+                repo = pipeline.params.get("repo")
+                sha = pipeline.params.get("sha")
 
                 if repo and sha:
                     github_state = "success" if status_value == "success" else "failure"
                     description = f"Build {status_value}."
 
-                    target_url = updated_pipeline.log_url
+                    target_url = pipeline.log_url
                     if not target_url:
                         logging.warning(
                             f"Pipeline {pipeline_id}: log_url is unexpectedly None when setting final commit status."
@@ -247,11 +246,11 @@ async def pipeline_callback(
                         target_url=target_url,
                     )
 
-                    pr_number_str = updated_pipeline.params.get("pr_number")
+                    pr_number_str = pipeline.params.get("pr_number")
                     if pr_number_str:
                         try:
                             pr_number = int(pr_number_str)
-                            log_url = updated_pipeline.log_url
+                            log_url = pipeline.log_url
                             comment = ""
                             if status_value == "success":
                                 comment = f"🚧 [Test build]({log_url}) succeeded."

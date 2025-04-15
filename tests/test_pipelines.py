@@ -170,44 +170,30 @@ async def test_start_pipeline_branch_mapping(
 
 @pytest.mark.asyncio
 async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline):
-    mock_db.get.return_value = sample_pipeline
-
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db
-
     status = "success"
     result = {"output": "Build successful"}
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        pipeline = await build_pipeline.handle_callback(
-            sample_pipeline.id, status, result
-        )
+    await build_pipeline.update_pipeline_status(
+        pipeline=sample_pipeline, status=status, result=result
+    )
 
-    assert pipeline.status == PipelineStatus.SUCCEEDED
-    assert pipeline.finished_at is not None
-    assert pipeline.result == result
+    assert sample_pipeline.status == PipelineStatus.SUCCEEDED
+    assert sample_pipeline.finished_at is not None
+    assert sample_pipeline.result == result
 
 
 @pytest.mark.asyncio
 async def test_handle_callback_failure(build_pipeline, mock_db, sample_pipeline):
-    mock_db.get.return_value = sample_pipeline
-
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db
-
     status = "failure"
     result = {"error": "Build failed"}
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        pipeline = await build_pipeline.handle_callback(
-            sample_pipeline.id, status, result
-        )
+    await build_pipeline.update_pipeline_status(
+        pipeline=sample_pipeline, status=status, result=result
+    )
 
-    assert pipeline.status == PipelineStatus.FAILED
-    assert pipeline.finished_at is not None
-    assert pipeline.result == result
+    assert sample_pipeline.status == PipelineStatus.FAILED
+    assert sample_pipeline.finished_at is not None
+    assert sample_pipeline.result == result
 
 
 @pytest.fixture

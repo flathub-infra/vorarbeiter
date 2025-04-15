@@ -88,36 +88,31 @@ class BuildPipeline:
             await db.commit()
             return pipeline
 
-    async def handle_callback(
+    async def update_pipeline_status(
         self,
-        pipeline_id: uuid.UUID,
+        pipeline: Pipeline,
         status: str,
         result: Dict[str, Any],
-    ) -> Pipeline:
-        async with get_db() as db:
-            pipeline = await db.get(Pipeline, pipeline_id)
-            if not pipeline:
-                raise ValueError(f"Pipeline {pipeline_id} not found")
+    ) -> None:
+        if not pipeline:
+            raise ValueError("Pipeline object cannot be None")
 
-            match status.lower():
-                case "success":
-                    pipeline.status = PipelineStatus.SUCCEEDED
-                    pipeline.finished_at = datetime.now()
-                    pipeline.result = result
-                case "failure":
-                    pipeline.status = PipelineStatus.FAILED
-                    pipeline.finished_at = datetime.now()
-                    pipeline.result = result
-                case "cancelled":
-                    pipeline.status = PipelineStatus.CANCELLED
-                    pipeline.finished_at = datetime.now()
-                    pipeline.result = result
-                case _:
-                    pipeline.status = PipelineStatus.PENDING
-                    pipeline.result = result
-
-            await db.commit()
-            return pipeline
+        match status.lower():
+            case "success":
+                pipeline.status = PipelineStatus.SUCCEEDED
+                pipeline.finished_at = datetime.now()
+                pipeline.result = result
+            case "failure":
+                pipeline.status = PipelineStatus.FAILED
+                pipeline.finished_at = datetime.now()
+                pipeline.result = result
+            case "cancelled":
+                pipeline.status = PipelineStatus.CANCELLED
+                pipeline.finished_at = datetime.now()
+                pipeline.result = result
+            case _:
+                pipeline.status = PipelineStatus.PENDING
+                pipeline.result = result
 
     async def get_pipeline(self, pipeline_id: uuid.UUID) -> Optional[Pipeline]:
         async with get_db() as db:
