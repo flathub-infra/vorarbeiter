@@ -1,8 +1,8 @@
 name: Build pipeline
-run-name: build ${{ inputs.app_id }}/${{ inputs.branch }} from ${{ inputs.git_ref }}
+run-name: build ${{ inputs.app_id }}/${{ inputs.flat_manager_repo }} from ${{ inputs.git_ref }}
 
 concurrency:
-  group: build-${{ inputs.app_id }}-${{ inputs.branch }}-${{ inputs.git_ref }}
+  group: build-${{ inputs.app_id }}-${{ inputs.flat_manager_repo }}-${{ inputs.git_ref }}
   cancel-in-progress: true
 
 on:
@@ -63,7 +63,7 @@ jobs:
       - name: Set variables
         run: |
           echo "APP_ID=${{ inputs.app_id }}" >> $GITHUB_ENV
-          echo "BRANCH=${{ inputs.branch }}" >> $GITHUB_ENV
+          echo "BRANCH=${{ inputs.flat_manager_repo }}" >> $GITHUB_ENV
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
           echo "BUILD_URL=https://hub.flathub.org/api/v1/build/${{ inputs.build_url }}" >> $GITHUB_ENV
@@ -179,7 +179,7 @@ jobs:
       - name: Set variables
         run: |
           echo "APP_ID=${{ inputs.app_id }}" >> $GITHUB_ENV
-          echo "BRANCH=${{ inputs.branch }}" >> $GITHUB_ENV
+          echo "BRANCH=${{ inputs.flat_manager_repo }}" >> $GITHUB_ENV
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
           echo "BUILD_URL=https://hub.flathub.org/api/v1/build/${{ inputs.build_url }}" >> $GITHUB_ENV
@@ -281,6 +281,15 @@ jobs:
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
             just generate-deltas
+
+      - name: Upload build
+        run: |
+          docker run --rm --privileged \
+            --entrypoint="" \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -w /work \
+            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            just upload $BUILD_URL
 
   callback:
     runs-on: ubuntu-latest
