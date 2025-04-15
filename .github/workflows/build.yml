@@ -11,21 +11,17 @@ on:
       app_id:
         description: 'Application ID'
         required: true
-        default: org.vim.Vim
-      branch:
-        description: 'Build branch (stable/beta/test)'
-        required: true
-        default: stable
       git_ref:
         description: 'Git reference'
         required: true
-        default: master
-      build_url:
-        description: 'Build ID'
+      flat_manager_repo:
+        description: 'Flat-manager repository'
         required: true
-        default: "0"
       flat_manager_token:
         description: 'Repository token'
+        required: true
+      build_url:
+        description: 'Build ID'
         required: true
       callback_url:
         description: 'Callback URL'
