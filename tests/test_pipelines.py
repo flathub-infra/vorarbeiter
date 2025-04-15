@@ -197,8 +197,8 @@ async def test_start_pipeline_branch_mapping(
     token_data = second_call_args[1]["json"]
     assert "hub.flathub.org/api/v1/token_subset" in token_url
     assert token_data["name"] == "upload"
-    assert token_data["scope"] == "upload"
-    assert token_data["prefix"] == app_id
+    assert token_data["scope"] == ["upload"]
+    assert token_data["prefix"] == [app_id]
 
     mock_github_provider.dispatch.assert_called_once()
     call_args, call_kwargs = mock_github_provider.dispatch.call_args

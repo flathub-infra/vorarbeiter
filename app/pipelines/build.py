@@ -87,8 +87,8 @@ class BuildPipeline:
                         json={
                             "name": "upload",
                             "sub": f"build/{build_id}",
-                            "scope": "upload",
-                            "prefix": pipeline.app_id,
+                            "scope": ["upload"],
+                            "prefix": [pipeline.app_id],
                             "duration": 6 * 60 * 60,
                         },
                         headers={
