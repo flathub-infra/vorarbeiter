@@ -141,6 +141,9 @@ class BuildPipeline:
             if not pipeline:
                 raise ValueError(f"Pipeline {pipeline_id} not found")
 
+            log_url = pipeline.log_url
+            build_url = pipeline.build_url
+
             match status.lower():
                 case "success":
                     pipeline.status = PipelineStatus.SUCCEEDED
@@ -157,6 +160,11 @@ class BuildPipeline:
                 case _:
                     pipeline.status = PipelineStatus.PENDING
                     pipeline.result = result
+
+            if log_url and not pipeline.log_url:
+                pipeline.log_url = log_url
+            if build_url and not pipeline.build_url:
+                pipeline.build_url = build_url
 
             await db.commit()
             return pipeline

@@ -221,11 +221,10 @@ async def pipeline_callback(
             await ensure_providers_initialized()
             pipeline_service = BuildPipeline()
 
-            await pipeline_service.handle_callback(
+            updated_pipeline = await pipeline_service.handle_callback(
                 pipeline_id=pipeline_id, status=status_value, result=result
             )
 
-            updated_pipeline = await db.get(Pipeline, pipeline_id)
             if updated_pipeline:
                 repo = updated_pipeline.params.get("repo")
                 sha = updated_pipeline.params.get("sha")
