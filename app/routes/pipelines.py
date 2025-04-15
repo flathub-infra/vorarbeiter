@@ -266,7 +266,11 @@ async def pipeline_callback(
                             log_url = updated_pipeline.log_url
                             comment = ""
                             if status_value == "success":
-                                comment = f"🚧 [Test build]({log_url}) succeeded."
+                                if build_url := updated_pipeline.build_url:
+                                    build_id = build_url.split("/")[-1]
+                                    comment = f"🚧 [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user https://dl.flathub.org/build-repo/{build_id}/{updated_pipeline.app_id}.flatpakref\n```"
+                                else:
+                                    comment = f"🚧 [Test build succeeded]({log_url})."
                             elif status_value == "failure":
                                 comment = f"🚧 [Test build]({log_url}) failed."
                             elif status_value == "cancelled":
