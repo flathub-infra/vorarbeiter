@@ -17,7 +17,11 @@ from app.database import get_db
 def override_settings():
     """Override settings for testing."""
     with patch.object(settings, "database_url", "sqlite+aiosqlite:///:memory:"):
-        yield
+        with patch.object(settings, "flat_manager_url", "https://hub.flathub.org"):
+            with patch.object(
+                settings, "flat_manager_token", "test_flat_manager_token"
+            ):
+                yield
 
 
 @pytest.fixture

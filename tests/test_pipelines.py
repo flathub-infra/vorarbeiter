@@ -99,31 +99,43 @@ async def test_start_pipeline(build_pipeline, mock_db):
     dispatch_result = {"status": "dispatched"}
     build_pipeline.github_provider.dispatch = AsyncMock(return_value=dispatch_result)
 
+    mock_httpx_response = MagicMock()
+    mock_httpx_response.raise_for_status = MagicMock()
+    mock_httpx_response.json.return_value = {"id": 12345}
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value.post.return_value = mock_httpx_response
+
     with patch("app.pipelines.build.get_db", mock_get_db):
-        result = await build_pipeline.start_pipeline(pipeline_id)
+        with patch("httpx.AsyncClient", return_value=mock_httpx_client):
+            result = await build_pipeline.start_pipeline(pipeline_id)
 
     assert result.status == PipelineStatus.RUNNING
     assert build_pipeline.github_provider.dispatch.called
+    assert mock_httpx_client.__aenter__.return_value.post.called
 
 
 @pytest.mark.asyncio
 @patch("app.pipelines.build.get_db")
 @patch("app.pipelines.build.get_provider")
+@patch("httpx.AsyncClient")
 @pytest.mark.parametrize(
-    "source_branch, expected_target_branch",
+    "source_branch, expected_branch, expected_flat_manager_repo",
     [
-        ("master", "stable"),
-        ("beta", "beta"),
-        ("feature/new-thing", "test"),
-        (None, "test"),
-        ("branch/my-feature", "my-feature"),
+        ("master", "stable", "stable"),
+        ("beta", "beta", "beta"),
+        ("feature/new-thing", "test", "test"),
+        (None, "test", "test"),
+        ("branch/my-feature", "my-feature", "stable"),
     ],
 )
 async def test_start_pipeline_branch_mapping(
+    mock_httpx_client,
     mock_get_provider,
     mock_get_db,
     source_branch,
-    expected_target_branch,
+    expected_branch,
+    expected_flat_manager_repo,
 ):
     """
     Verify that start_pipeline correctly maps the source branch (from params)
@@ -150,6 +162,14 @@ async def test_start_pipeline_branch_mapping(
     mock_get_provider.return_value = mock_github_provider
     mock_github_provider.dispatch.return_value = {"dispatch_result": "ok"}
 
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 12345}
+
+    mock_httpx_instance = MagicMock()
+    mock_httpx_instance.post = AsyncMock(return_value=mock_response)
+    mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+
     build_pipeline = BuildPipeline()
     build_pipeline.github_provider = mock_github_provider
 
@@ -159,10 +179,20 @@ async def test_start_pipeline_branch_mapping(
     assert mock_pipeline.status == PipelineStatus.RUNNING
     assert mock_pipeline.started_at is not None
 
+    mock_httpx_instance.post.assert_called_once()
+    call_args, call_kwargs = mock_httpx_instance.post.call_args
+    post_url = call_args[0]
+    post_data = call_kwargs["json"]
+    assert "hub.flathub.org/api/v1/build" in post_url
+    assert post_data["repo"] == expected_flat_manager_repo
+
     mock_github_provider.dispatch.assert_called_once()
     call_args, call_kwargs = mock_github_provider.dispatch.call_args
     dispatched_job_data = call_args[2]
-    assert dispatched_job_data["params"]["inputs"]["branch"] == expected_target_branch
+    assert (
+        dispatched_job_data["params"]["inputs"]["flat_manager_repo"]
+        == expected_flat_manager_repo
+    )
     assert mock_pipeline.provider_data == {"dispatch_result": "ok"}
 
     mock_db_session.commit.assert_called_once()

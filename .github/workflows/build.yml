@@ -24,7 +24,7 @@ on:
         description: 'Build ID'
         required: true
         default: "0"
-      repo_token:
+      flat_manager_token:
         description: 'Repository token'
         required: true
       callback_url:
@@ -188,9 +188,9 @@ jobs:
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
           echo "BUILD_URL=https://hub.flathub.org/api/v1/build/${{ inputs.build_url }}" >> $GITHUB_ENV
 
-          REPO_TOKEN="$(jq -r '.inputs.repo_token' $GITHUB_EVENT_PATH)"
-          echo "::add-mask::$REPO_TOKEN"
-          echo "REPO_TOKEN=$REPO_TOKEN" >> $GITHUB_ENV
+          FLAT_MANAGER_TOKEN="$(jq -r '.inputs.flat_manager_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$FLAT_MANAGER_TOKEN"
+          echo "FLAT_MANAGER_TOKEN=$FLAT_MANAGER_TOKEN" >> $GITHUB_ENV
 
       - name: Create work directory
         run: |

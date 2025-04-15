@@ -2,6 +2,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+import httpx
+
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
@@ -49,15 +51,38 @@ class BuildPipeline:
             source_branch = pipeline.params.get("branch")
             match source_branch:
                 case "master":
-                    branch = "stable"
+                    flat_manager_repo = "stable"
                 case "beta":
-                    branch = "beta"
+                    flat_manager_repo = "beta"
                 case source_branch if isinstance(
                     source_branch, str
                 ) and source_branch.startswith("branch/"):
-                    branch = source_branch.removeprefix("branch/")
+                    flat_manager_repo = "stable"
                 case _:
-                    branch = "test"
+                    flat_manager_repo = "test"
+
+            build_log_url = f"{settings.base_url}/api/pipelines/{pipeline.id}/log_url"
+
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{settings.flat_manager_url}/api/v1/build",
+                        json={
+                            "repo": flat_manager_repo,
+                            "build-log-url": build_log_url,
+                        },
+                        headers={
+                            "Authorization": f"Bearer {settings.flat_manager_token}"
+                        },
+                        timeout=30.0,
+                    )
+                    response.raise_for_status()
+                    build_data = response.json()
+                    build_id = build_data.get("id")
+                    build_url = f"{settings.flat_manager_url}/api/v1/build/{build_id}"
+                    pipeline.build_url = build_url
+            except Exception as e:
+                raise ValueError(f"Failed to create build in flat-manager: {str(e)}")
 
             job_data = {
                 "app_id": pipeline.app_id,
@@ -69,10 +94,10 @@ class BuildPipeline:
                     "ref": "main",
                     "inputs": {
                         "app_id": pipeline.app_id,
-                        "branch": branch,
                         "git_ref": pipeline.params.get("ref", "master"),
-                        "build_url": str(pipeline.id),
-                        "repo_token": settings.repo_token,
+                        "build_url": build_url,
+                        "flat_manager_repo": flat_manager_repo,
+                        "flat_manager_token": settings.flat_manager_token,
                         "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
                         "callback_token": pipeline.callback_token,
                     },

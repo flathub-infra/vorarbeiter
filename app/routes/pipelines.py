@@ -56,6 +56,7 @@ class PipelineResponse(BaseModel):
     provider: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
     log_url: Optional[str] = None
+    build_url: Optional[str] = None
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
@@ -170,6 +171,7 @@ async def get_pipeline(
             provider=pipeline.provider,
             result=pipeline.result,
             log_url=pipeline.log_url,
+            build_url=pipeline.build_url,
             created_at=pipeline.created_at,
             started_at=pipeline.started_at,
             finished_at=pipeline.finished_at,

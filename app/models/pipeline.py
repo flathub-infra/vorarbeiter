@@ -63,6 +63,7 @@ class Pipeline(Base):
     webhook_event = relationship("WebhookEvent", backref="pipelines")
 
     log_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    build_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     callback_token: Mapped[str] = mapped_column(
         String(32), default=lambda: secrets.token_hex(16)
     )
