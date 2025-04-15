@@ -134,6 +134,7 @@ jobs:
           repository: flathub/${{ inputs.app_id }}
           fetch-depth: 1
           path: repo
+          ref: ${{ inputs.git_ref }}
 
       - id: set-matrix
         shell: python
