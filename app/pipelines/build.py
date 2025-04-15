@@ -142,6 +142,7 @@ class BuildPipeline:
                 raise ValueError(f"Pipeline {pipeline_id} not found")
 
             log_url = pipeline.log_url
+            print(f"[DEBUG] handle_callback - Initial pipeline.log_url: {log_url}")
             build_url = pipeline.build_url
 
             match status.lower():
@@ -161,10 +162,19 @@ class BuildPipeline:
                     pipeline.status = PipelineStatus.PENDING
                     pipeline.result = result
 
+            print(
+                f"[DEBUG] handle_callback - Before update check, log_url var: {log_url}, pipeline.log_url: {pipeline.log_url}"
+            )
             if log_url and not pipeline.log_url:
                 pipeline.log_url = log_url
+                print(
+                    f"[DEBUG] handle_callback - Updated pipeline.log_url to: {pipeline.log_url}"
+                )
             if build_url and not pipeline.build_url:
                 pipeline.build_url = build_url
+            print(
+                f"[DEBUG] handle_callback - Final pipeline.log_url: {pipeline.log_url}"
+            )
 
             await db.commit()
             return pipeline
