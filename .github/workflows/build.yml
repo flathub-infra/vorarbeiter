@@ -24,10 +24,6 @@ on:
         description: 'Build ID'
         required: true
         default: "0"
-      arches:
-        description: 'Comma-separated list of architectures'
-        required: true
-        default: 'x86_64,aarch64'
       repo_token:
         description: 'Repository token'
         required: true
@@ -120,34 +116,46 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: flathub/${{ inputs.app_id }}
+          fetch-depth: 1
+          path: repo
+
       - id: set-matrix
+        shell: python
         run: |
-          python3 -c "
           import json
           import os
 
-          arches = '${{ inputs.arches }}'
+          arches = ["x86_64", "aarch64"]
 
-          matrix = {'include': []}
-          for arch in arches.split(','):
+          if os.path.exists("repo/flathub.json"):
+              with open("repo/flathub.json") as f:
+                  flathub_json = json.load(f)
+
+              if "only-arches" in flathub_json:
+                  arches = flathub_json["only-arches"]
+
+              if "skip-arches" in flathub_json:
+                  arches = list(set(arches) - set(flathub_json["skip-arches"]))
+
+          matrix = {"include": []}
+          for arch in arches:
               arch = arch.strip()
               match arch:
-                  case 'x86_64':
-                      runner = 'ubuntu-24.04'
-                  case 'aarch64':
-                      runner = 'ubuntu-24.04-arm'
+                  case "x86_64":
+                      runner = "ubuntu-24.04"
+                  case "aarch64":
+                      runner = "ubuntu-24.04-arm"
                   case _:
-                      print(f'Error: Unsupported architecture: {arch}')
+                      print(f"Error: Unsupported architecture: {arch}")
                       exit(1)
 
-              matrix['include'].append({
-                  'arch': arch,
-                  'runner': runner
-              })
+              matrix["include"].append({"arch": arch, "runner": runner})
 
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f'matrix={json.dumps(matrix)}\\n')
-          "
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"matrix={json.dumps(matrix)}\\n")
 
   build:
     name: build-${{ matrix.arch }}

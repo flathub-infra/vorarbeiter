@@ -72,7 +72,6 @@ class BuildPipeline:
                         "branch": branch,
                         "git_ref": pipeline.params.get("ref", "master"),
                         "build_url": str(pipeline.id),
-                        "arches": "x86_64,aarch64",
                         "repo_token": settings.repo_token,
                         "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
                         "callback_token": pipeline.callback_token,
