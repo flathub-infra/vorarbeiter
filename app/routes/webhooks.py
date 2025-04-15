@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import uuid
+import httpx
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
@@ -177,12 +178,29 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         issue = payload.get("issue", {})
         pr_url = issue.get("pull_request", {}).get("url", "")
         pr_number = issue.get("number")
+        repo = event.repository
 
         if not pr_url or pr_number is None:
             return None
 
         pr_ref = f"refs/pull/{pr_number}/head"
-        sha = payload.get("after")
+
+        github_api_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
+        headers = {
+            "Accept": "application/vnd.github.v3+json",
+            "Authorization": f"token {settings.github_status_token}",
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(github_api_url, headers=headers)
+                response.raise_for_status()
+                pr_data = response.json()
+                sha = pr_data.get("head", {}).get("sha")
+        except httpx.RequestError as e:
+            print(f"Error fetching PR details from GitHub: {e}")
+        except httpx.HTTPStatusError as e:
+            print(f"GitHub API error: {e.response.status_code} - {e.response.text}")
 
         params.update(
             {
