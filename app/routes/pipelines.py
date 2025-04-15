@@ -1,19 +1,19 @@
-import uuid
-import secrets
-from typing import Any, Dict, List, Optional
-from datetime import datetime
-from pydantic import BaseModel, Field, field_validator
-
-from fastapi import APIRouter, HTTPException, status, Depends, Response
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-
-from app.database import get_db
-from app.models import Pipeline, PipelineTrigger, PipelineStatus
-from app.pipelines import BuildPipeline, ensure_providers_initialized
-from app.config import settings
-from sqlalchemy.future import select
-from app.utils.github import update_commit_status, create_pr_comment
 import logging
+import secrets
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.future import select
+
+from app.config import settings
+from app.database import get_db
+from app.models import Pipeline, PipelineStatus, PipelineTrigger
+from app.pipelines import BuildPipeline, ensure_providers_initialized
+from app.utils.github import create_pr_comment, update_commit_status
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
@@ -294,56 +294,80 @@ async def pipeline_callback(
             }
 
         elif "log_url" in data:
-            if pipeline.log_url:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Log URL already set",
-                )
+            repo = None
+            sha = None
+            pr_number_str = None
+            saved_log_url = None
 
-            log_url_callback = PipelineLogUrlCallback(**data)
-            pipeline.log_url = log_url_callback.log_url
-            await db.flush()
+            async with get_db() as db:
+                pipeline = await db.get(Pipeline, pipeline_id)
+                if not pipeline:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Pipeline {pipeline_id} not found",
+                    )
 
-            repo = pipeline.params.get("repo")
-            sha = pipeline.params.get("sha")
-            pr_number_str = pipeline.params.get("pr_number")
+                if not secrets.compare_digest(
+                    credentials.credentials, pipeline.callback_token
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid callback token",
+                    )
 
-            if repo and sha:
-                target_url = (
-                    pipeline.log_url
-                    if pipeline.log_url
-                    else f"{settings.base_url}/api/pipelines/{pipeline_id}"
-                )
-                await update_commit_status(
-                    repo=repo,
-                    sha=sha,
-                    state="pending",
-                    description="Build in progress",
-                    target_url=target_url,
-                )
+                if pipeline.log_url:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Log URL already set",
+                    )
 
-                if pr_number_str and pipeline.log_url:
-                    try:
-                        pr_number = int(pr_number_str)
-                        comment = f"🚧 Started [test build]({pipeline.log_url})."
-                        await create_pr_comment(
-                            repo=repo,
-                            pr_number=pr_number,
-                            comment=comment,
-                        )
-                    except ValueError:
-                        logging.error(
-                            f"Invalid pr_number '{pr_number_str}' for pipeline {pipeline_id}. Skipping PR comment."
-                        )
-                    except Exception as e:
-                        logging.error(
-                            f"Error creating 'Started' PR comment for pipeline {pipeline_id}: {e}"
-                        )
+                log_url_callback = PipelineLogUrlCallback(**data)
+                pipeline.log_url = log_url_callback.log_url
+                await db.commit()
+
+                saved_log_url = pipeline.log_url
+                repo = pipeline.params.get("repo")
+                sha = pipeline.params.get("sha")
+                pr_number_str = pipeline.params.get("pr_number")
+
+            if repo and sha and saved_log_url:
+                try:
+                    target_url = saved_log_url
+                    await update_commit_status(
+                        repo=repo,
+                        sha=sha,
+                        state="pending",
+                        description="Build in progress",
+                        target_url=target_url,
+                    )
+
+                    if pr_number_str:
+                        try:
+                            pr_number = int(pr_number_str)
+                            comment = f"🚧 Started [test build]({saved_log_url})."
+                            await create_pr_comment(
+                                repo=repo,
+                                pr_number=pr_number,
+                                comment=comment,
+                            )
+                        except ValueError:
+                            logging.error(
+                                f"Invalid pr_number '{pr_number_str}' for pipeline {pipeline_id}. Skipping PR comment."
+                            )
+                        except Exception as e_pr:
+                            logging.error(
+                                f"Error creating 'Started' PR comment for pipeline {pipeline_id}: {e_pr}"
+                            )
+
+                except Exception as e_status:
+                    logging.error(
+                        f"Error processing GitHub updates after saving log_url for pipeline {pipeline_id}: {e_status}"
+                    )
 
             return {
                 "status": "ok",
                 "pipeline_id": str(pipeline_id),
-                "log_url": pipeline.log_url,
+                "log_url": saved_log_url,
             }
 
         else:
