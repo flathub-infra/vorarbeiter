@@ -206,8 +206,13 @@ async def pipeline_callback(
             app_id = data.get("app_id")
             if isinstance(app_id, str) and app_id:
                 pipeline.app_id = app_id
-                await db.flush()
-                await db.refresh(pipeline)
+                await db.commit()
+
+                return {
+                    "status": "ok",
+                    "pipeline_id": str(pipeline_id),
+                    "app_id": app_id,
+                }
 
         if "status" in data:
             if pipeline.status in [
@@ -384,7 +389,7 @@ async def pipeline_callback(
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Request must contain either 'status' or 'log_url' field",
+                detail="Request must contain either 'status', 'log_url', or 'app_id' field",
             )
 
 
