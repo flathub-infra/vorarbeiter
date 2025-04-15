@@ -22,6 +22,70 @@ _get_build_subject:
     commit_hash=$(git rev-parse --short=12 HEAD)
     echo "$commit_msg ($commit_hash)"
 
+detect-appid $path:
+    #!/usr/bin/env python3
+    import glob
+    import os
+    import sys
+
+    import gi
+    import yaml
+
+    gi.require_version("Json", "1.0")
+    from gi.repository import Json
+
+
+    def detect_appid(dirname):
+        files = []
+        ret = (None, None)
+        appid = None
+
+        for ext in ("yml", "yaml", "json"):
+            files.extend(glob.glob(f"{dirname}/*.{ext}"))
+
+        for filename in files:
+            if os.path.isfile(filename):
+                ext = filename.split(".")[-1]
+
+                with open(filename) as f:
+                    if ext in ("yml", "yaml"):
+                        manifest = yaml.safe_load(f)
+                        if "app-id" in manifest:
+                            appid = manifest["app-id"]
+                        elif "id" in manifest:
+                            appid = manifest["id"]
+                    else:
+                        parser = Json.Parser()
+                        if parser.load_from_file(filename):
+                            root_node = parser.get_root()
+                            if root_node.get_node_type() == Json.NodeType.OBJECT:
+                                json_object = root_node.get_object()
+                                if json_object.has_member("id"):
+                                    appid = json_object.get_string_member("id")
+                                elif json_object.has_member("app-id"):
+                                    appid = json_object.get_string_member("app-id")
+
+                if not appid:
+                    continue
+
+                if appid:
+                    manifest_file = os.path.basename(filename)
+                    if os.path.splitext(manifest_file)[0] != appid:
+                        continue
+                    ret = (manifest_file, appid)
+
+        return ret
+
+
+    path = os.environ.get("path")
+
+    manifest_file, appid = detect_appid(path)
+    if manifest_file is None or appid is None:
+        print("Failed to detect appid")
+        sys.exit(1)
+
+    print(appid)
+
 checkout repo ref:
     #!/usr/bin/env bash
     set -euxo pipefail
