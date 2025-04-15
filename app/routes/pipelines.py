@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
@@ -281,6 +282,22 @@ async def pipeline_callback(
                                 if build_url := updated_pipeline.build_url:
                                     build_id = build_url.split("/")[-1]
                                     comment = f"🚧 [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user https://dl.flathub.org/build-repo/{build_id}/{updated_pipeline.app_id}.flatpakref\n```"
+
+                                    async with httpx.AsyncClient() as client:
+                                        commit_endpoint = f"{build_url}/commit"
+                                        payload = {
+                                            "endoflife": None,
+                                            "endoflife_rebase": None,
+                                        }
+                                        headers = {
+                                            "Authorization": f"Bearer {settings.flat_manager_token}"
+                                        }
+                                        resp = await client.post(
+                                            commit_endpoint,
+                                            headers=headers,
+                                            json=payload,
+                                        )
+                                        resp.raise_for_status()
                                 else:
                                     comment = f"🚧 [Test build succeeded]({log_url})."
                             elif status_value == "failure":
