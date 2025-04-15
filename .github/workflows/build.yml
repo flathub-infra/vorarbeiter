@@ -66,7 +66,6 @@ jobs:
           echo "BRANCH=${{ inputs.flat_manager_repo }}" >> $GITHUB_ENV
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
-          echo "BUILD_URL=https://hub.flathub.org/api/v1/build/${{ inputs.build_url }}" >> $GITHUB_ENV
 
       - name: Create work directory
         run: |
@@ -182,7 +181,7 @@ jobs:
           echo "BRANCH=${{ inputs.flat_manager_repo }}" >> $GITHUB_ENV
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
-          echo "BUILD_URL=https://hub.flathub.org/api/v1/build/${{ inputs.build_url }}" >> $GITHUB_ENV
+          echo "BUILD_URL=${{ inputs.build_url }}" >> $GITHUB_ENV
 
           REPO_TOKEN="$(jq -r '.inputs.flat_manager_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$REPO_TOKEN"
