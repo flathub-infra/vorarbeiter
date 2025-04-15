@@ -202,6 +202,13 @@ async def pipeline_callback(
                 detail="Invalid callback token",
             )
 
+        if pipeline.app_id == "flathub" and "app_id" in data:
+            app_id = data.get("app_id")
+            if isinstance(app_id, str) and app_id:
+                pipeline.app_id = app_id
+                await db.flush()
+                await db.refresh(pipeline)
+
         if "status" in data:
             if pipeline.status in [
                 PipelineStatus.SUCCEEDED,
