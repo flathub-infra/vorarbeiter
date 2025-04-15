@@ -84,7 +84,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            curl https://raw.githubusercontent.com/barthalion/justpak/refs/heads/main/justfile -o justfile
+            curl https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/justfile -o justfile
 
       - name: Checkout repository
         run: |
@@ -214,7 +214,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            curl https://raw.githubusercontent.com/barthalion/justpak/refs/heads/main/justfile -o justfile
+            curl https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/justfile -o justfile
 
       - name: Checkout repository
         run: |
