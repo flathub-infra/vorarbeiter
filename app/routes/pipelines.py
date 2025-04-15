@@ -231,10 +231,13 @@ async def pipeline_callback(
                 if repo and sha:
                     github_state = "success" if status_value == "success" else "failure"
                     description = f"Build {status_value}."
-                    if updated_pipeline.log_url:
-                        target_url = updated_pipeline.log_url
-                    else:
-                        target_url = f"{settings.base_url}/api/pipelines/{pipeline_id}"
+
+                    target_url = updated_pipeline.log_url
+                    if not target_url:
+                        logging.warning(
+                            f"Pipeline {pipeline_id}: log_url is unexpectedly None when setting final commit status."
+                        )
+                        target_url = ""
 
                     await update_commit_status(
                         repo=repo,
@@ -251,13 +254,11 @@ async def pipeline_callback(
                             log_url = updated_pipeline.log_url
                             comment = ""
                             if status_value == "success":
-                                comment = "🚧 Test build succeeded."
+                                comment = f"🚧 [Test build]({log_url}) succeeded."
                             elif status_value == "failure":
-                                comment = f"🚧 [Test build failed]({log_url})."
+                                comment = f"🚧 [Test build]({log_url}) failed."
                             elif status_value == "cancelled":
-                                comment = (
-                                    f"🚧 [Test build has been cancelled]({log_url})."
-                                )
+                                comment = "🚧 [Test build]({log_url}) was cancelled."
 
                             if comment:
                                 await create_pr_comment(
