@@ -108,6 +108,14 @@ jobs:
 
           echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
 
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
+            -d "{\"app_id\": \"$(cat app_id)\"}" \
+            "${{ inputs.callback_url }}"
+
       - name: Validate manifest
         run: |
           docker run --rm --privileged \
