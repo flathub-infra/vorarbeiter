@@ -100,6 +100,19 @@ jobs:
               just checkout $REPO $REF
             '
 
+      - name: Detect app ID of the new submission
+        if: ${{ github.event.inputs.app_id == 'flathub' }}
+        run: |
+          docker run --rm --privileged \
+            --entrypoint="" \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -w /work \
+            -e APP_ID \
+            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            just detect-appid /work > app_id
+
+          echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
+
       - name: Validate manifest
         run: |
           docker run --rm --privileged \
@@ -216,6 +229,19 @@ jobs:
               git config --global --add safe.directory "*"
               just checkout $REPO $REF
             '
+
+      - name: Detect app ID of the new submission
+        if: ${{ github.event.inputs.app_id == 'flathub' }}
+        run: |
+          docker run --rm --privileged \
+            --entrypoint="" \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -w /work \
+            -e APP_ID \
+            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            just detect-appid /work > app_id
+
+          echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
 
       - name: Build flatpak
         run: |
