@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://postgres:postgres@db:5432/test_db"
     debug: bool = False
     github_token: str = "test_github_token"
+    github_status_token: str = "test_github_status_token"
     github_webhook_secret: str = "test_webhook_secret"
     repo_token: str = "test_repo_token"
     sentry_dsn: str | None = None

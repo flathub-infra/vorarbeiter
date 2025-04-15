@@ -399,10 +399,14 @@ async def test_create_pipeline_push():
     """Test creating a pipeline from a push webhook event."""
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
+
+    modified_payload = dict(SAMPLE_PUSH_PAYLOAD)
+    modified_payload["after"] = "abcdef123456"
+
     webhook_event = WebhookEvent(
         id=event_id,
         source=WebhookSource.GITHUB,
-        payload=SAMPLE_PUSH_PAYLOAD,
+        payload=modified_payload,
         repository="test-owner/test-repo",
         actor="test-actor",
     )
@@ -442,6 +446,10 @@ async def test_create_pipeline_push():
                 assert kwargs["params"].get("ref") == "refs/heads/master"
                 assert kwargs["params"].get("push") == "true"
 
+                assert mock_pipeline_service.create_pipeline.called
+                assert mock_pipeline_service.start_pipeline.called
+                assert isinstance(result, uuid.UUID)
+
 
 @pytest.mark.asyncio
 async def test_create_pipeline_comment():
@@ -461,6 +469,7 @@ async def test_create_pipeline_comment():
     comment_payload["comment"]["html_url"] = (
         "https://github.com/test-owner/test-repo/pull/42#comment-12345"
     )
+    comment_payload["after"] = "fedcba654321"
 
     webhook_event = WebhookEvent(
         id=event_id,
@@ -502,6 +511,10 @@ async def test_create_pipeline_comment():
                 assert "params" in kwargs
                 assert kwargs["params"].get("pr_number") == "42"
                 assert kwargs["params"].get("ref") == "refs/pull/42/head"
+
+                assert mock_pipeline_service.create_pipeline.called
+                assert mock_pipeline_service.start_pipeline.called
+                assert isinstance(result, uuid.UUID)
 
 
 @pytest.mark.asyncio

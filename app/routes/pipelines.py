@@ -12,6 +12,7 @@ from app.models import Pipeline, PipelineTrigger, PipelineStatus
 from app.pipelines import BuildPipeline, ensure_providers_initialized
 from app.config import settings
 from sqlalchemy.future import select
+from app.utils.github import update_commit_status
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
@@ -221,6 +222,27 @@ async def pipeline_callback(
                 pipeline_id=pipeline_id, status=status_value, result=result
             )
 
+            updated_pipeline = await db.get(Pipeline, pipeline_id)
+            if updated_pipeline:
+                repo = updated_pipeline.params.get("repo")
+                sha = updated_pipeline.params.get("sha")
+
+                if repo and sha:
+                    github_state = "success" if status_value == "success" else "failure"
+                    description = f"Build {status_value}."
+                    if updated_pipeline.log_url:
+                        target_url = updated_pipeline.log_url
+                    else:
+                        target_url = f"{settings.base_url}/api/pipelines/{pipeline_id}"
+
+                    await update_commit_status(
+                        repo=repo,
+                        sha=sha,
+                        state=github_state,
+                        description=description,
+                        target_url=target_url,
+                    )
+
             return {
                 "status": "ok",
                 "pipeline_id": str(pipeline_id),
@@ -237,6 +259,23 @@ async def pipeline_callback(
             log_url_callback = PipelineLogUrlCallback(**data)
             pipeline.log_url = log_url_callback.log_url
             await db.flush()
+
+            repo = pipeline.params.get("repo")
+            sha = pipeline.params.get("sha")
+            if repo and sha:
+                log_url = pipeline.log_url
+                if log_url:
+                    target_url = log_url
+                else:
+                    target_url = f"{settings.base_url}/api/pipelines/{pipeline_id}"
+
+                await update_commit_status(
+                    repo=repo,
+                    sha=sha,
+                    state="pending",
+                    description="Build in progress",
+                    target_url=target_url,
+                )
 
             return {
                 "status": "ok",

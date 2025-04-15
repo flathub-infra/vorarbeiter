@@ -8,6 +8,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline
+from app.utils.github import update_commit_status
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
@@ -138,6 +139,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     payload = event.payload
     app_id = f"{event.repository.split('/')[-1]}"
     params = {"repo": event.repository}
+    sha = None
 
     if "pull_request" in payload and payload.get("action") in [
         "opened",
@@ -147,6 +149,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         pr = payload.get("pull_request", {})
         branch = pr.get("head", {}).get("ref", "")
         pr_number = pr.get("number")
+        sha = pr.get("head", {}).get("sha")
         params.update(
             {
                 "branch": branch,
@@ -159,6 +162,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     elif "commits" in payload and payload.get("ref", ""):
         ref = payload.get("ref", "")
         branch = ref.replace("refs/heads/", "")
+        sha = payload.get("after")
         params.update(
             {
                 "branch": branch,
@@ -178,6 +182,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             return None
 
         pr_ref = f"refs/pull/{pr_number}/head"
+        sha = payload.get("after")
 
         params.update(
             {
@@ -186,8 +191,8 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             }
         )
 
-    else:
-        return None
+    if sha:
+        params["sha"] = sha
 
     pipeline_service = BuildPipeline()
     pipeline = await pipeline_service.create_pipeline(
@@ -195,6 +200,17 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         params=params,
         webhook_event_id=event.id,
     )
+
+    commit_sha = pipeline.params.get("sha")
+    if commit_sha:
+        target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
+        await update_commit_status(
+            repo=event.repository,
+            sha=commit_sha,
+            state="pending",
+            description="Build enqueued",
+            target_url=target_url,
+        )
 
     pipeline = await pipeline_service.start_pipeline(pipeline_id=pipeline.id)
 
