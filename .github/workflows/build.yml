@@ -288,6 +288,7 @@ jobs:
             --entrypoint="" \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
+            -e REPO_TOKEN \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
             just upload $BUILD_URL
 
