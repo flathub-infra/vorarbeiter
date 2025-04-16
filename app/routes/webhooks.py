@@ -1,15 +1,15 @@
 import hashlib
 import hmac
 import uuid
-import httpx
 
+import httpx
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from app.config import settings
 from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline
-from app.utils.github import update_commit_status, create_pr_comment
+from app.utils.github import create_pr_comment, update_commit_status
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
@@ -148,12 +148,10 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         "reopened",
     ]:
         pr = payload.get("pull_request", {})
-        branch = pr.get("head", {}).get("ref", "")
         pr_number = pr.get("number")
         sha = pr.get("head", {}).get("sha")
         params.update(
             {
-                "branch": branch,
                 "ref": f"refs/pull/{pr_number}/head",
                 "pr_number": str(pr_number) if pr_number is not None else "",
                 "action": str(payload.get("action", "")),
@@ -162,11 +160,9 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
     elif "commits" in payload and payload.get("ref", ""):
         ref = payload.get("ref", "")
-        branch = ref.replace("refs/heads/", "")
         sha = payload.get("after")
         params.update(
             {
-                "branch": branch,
                 "ref": ref,
                 "push": "true",
             }

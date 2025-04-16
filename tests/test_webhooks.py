@@ -1,17 +1,18 @@
-import pytest
-import uuid
-import hmac
 import hashlib
+import hmac
 import json
+import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.main import app
-from app.models.webhook_event import WebhookEvent, WebhookSource
-from app.models import Pipeline, PipelineStatus
 from app.config import settings
+from app.main import app
+from app.models import Pipeline, PipelineStatus
+from app.models.webhook_event import WebhookEvent, WebhookSource
 
 # Sample GitHub payloads (simplified)
 SAMPLE_GITHUB_PAYLOAD = {
@@ -442,7 +443,6 @@ async def test_create_pipeline_push():
                 # Verify the parameters passed to create_pipeline
                 args, kwargs = mock_pipeline_service.create_pipeline.call_args
                 assert "params" in kwargs
-                assert kwargs["params"].get("branch") == "master"
                 assert kwargs["params"].get("ref") == "refs/heads/master"
                 assert kwargs["params"].get("push") == "true"
 
