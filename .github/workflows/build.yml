@@ -79,7 +79,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            curl https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/justfile -o justfile
+            curl https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/justfile -o flathub.justfile
 
       - name: Checkout repository
         run: |
@@ -92,7 +92,7 @@ jobs:
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
             /bin/bash -c '
               git config --global --add safe.directory "*"
-              just checkout $REPO $REF
+              just --justfile flathub.justfile checkout $REPO $REF
             '
 
       - name: Detect app ID of the new submission
@@ -124,7 +124,7 @@ jobs:
             -w /work \
             -e APP_ID \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            just validate-manifest $APP_ID
+            just --justfile flathub.justfile validate-manifest $APP_ID
 
   setup-matrix:
     runs-on: ubuntu-latest
@@ -218,7 +218,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            curl https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/justfile -o justfile
+            curl https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/justfile -o flathub.justfile
 
       - name: Checkout repository
         run: |
@@ -231,7 +231,7 @@ jobs:
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
             /bin/bash -c '
               git config --global --add safe.directory "*"
-              just checkout $REPO $REF
+              just --justfile flathub.justfile checkout $REPO $REF
             '
 
       - name: Detect app ID of the new submission
@@ -243,7 +243,7 @@ jobs:
             -w /work \
             -e APP_ID \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            just detect-appid /work > app_id
+            just --justfile flathub.justfile detect-appid /work > app_id
 
           echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
 
@@ -258,8 +258,8 @@ jobs:
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
             /bin/bash -c '
               git config --global --add safe.directory "*"
-              just prepare-env
-              just build $APP_ID $BRANCH
+              just --justfile flathub.justfile prepare-env
+              just --justfile flathub.justfile build $APP_ID $BRANCH
             '
 
       - name: Commit screenshots
@@ -269,7 +269,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            just commit-screenshots
+            just --justfile flathub.justfile commit-screenshots
 
       - name: Validate build
         run: |
@@ -278,7 +278,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            just validate-build
+            just --justfile flathub.justfile validate-build
 
       - name: Generate deltas
         run: |
@@ -287,7 +287,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            just generate-deltas
+            just --justfile flathub.justfile generate-deltas
 
       - name: Upload build
         run: |
@@ -297,7 +297,7 @@ jobs:
             -w /work \
             -e REPO_TOKEN \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            just upload $BUILD_URL
+            just --justfile flathub.justfile upload $BUILD_URL
 
   callback:
     runs-on: ubuntu-latest
