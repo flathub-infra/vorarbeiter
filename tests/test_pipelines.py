@@ -126,11 +126,11 @@ async def test_start_pipeline(build_pipeline, mock_db):
 @pytest.mark.parametrize(
     "source_branch, expected_branch, expected_flat_manager_repo",
     [
-        ("master", "stable", "stable"),
-        ("beta", "beta", "beta"),
+        ("master", "stable", "test"),
+        ("beta", "beta", "test"),
         ("feature/new-thing", "test", "test"),
         (None, "test", "test"),
-        ("branch/my-feature", "my-feature", "stable"),
+        ("branch/my-feature", "my-feature", "test"),
     ],
 )
 async def test_start_pipeline_branch_mapping(
