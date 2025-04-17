@@ -1,16 +1,16 @@
 import uuid
-import pytest
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from contextlib import asynccontextmanager
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.providers import JobProvider, ProviderType
 from app.pipelines.build import BuildPipeline
+from app.providers import JobProvider, ProviderType
 
 
 @pytest.fixture
@@ -126,30 +126,30 @@ async def test_start_pipeline(build_pipeline, mock_db):
 @patch("app.pipelines.build.get_provider")
 @patch("httpx.AsyncClient")
 @pytest.mark.parametrize(
-    "source_branch, expected_branch, expected_flat_manager_repo",
+    "source_ref, expected_branch, expected_flat_manager_repo",
     [
-        ("master", "stable", "stable"),
-        ("beta", "beta", "beta"),
-        ("feature/new-thing", "test", "test"),
+        ("refs/heads/master", "stable", "stable"),
+        ("refs/heads/beta", "beta", "beta"),
+        ("refs/heads/feature/new-thing", "test", "test"),
         (None, "test", "test"),
-        ("branch/my-feature", "my-feature", "stable"),
+        ("refs/heads/branch/my-feature", "my-feature", "stable"),
     ],
 )
 async def test_start_pipeline_branch_mapping(
     mock_httpx_client,
     mock_get_provider,
     mock_get_db,
-    source_branch,
+    source_ref,
     expected_branch,
     expected_flat_manager_repo,
 ):
     """
-    Verify that start_pipeline correctly maps the source branch (from params)
+    Verify that start_pipeline correctly maps the source ref (from params)
     to the target branch used in the GitHub dispatch inputs.
     """
     pipeline_id = uuid.uuid4()
     app_id = "test.app"
-    params = {"branch": source_branch} if source_branch else {}
+    params = {"ref": source_ref} if source_ref else {}
 
     mock_db_session = AsyncMock()
     mock_pipeline = Pipeline(

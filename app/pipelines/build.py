@@ -48,15 +48,15 @@ class BuildPipeline:
             pipeline.status = PipelineStatus.RUNNING
             pipeline.started_at = datetime.now()
 
-            source_branch = pipeline.params.get("branch")
-            match source_branch:
-                case "master":
+            ref = pipeline.params.get("ref")
+            match ref:
+                case "refs/heads/master":
                     flat_manager_repo = "stable"
-                case "beta":
+                case "refs/heads/beta":
                     flat_manager_repo = "beta"
-                case source_branch if isinstance(
-                    source_branch, str
-                ) and source_branch.startswith("branch/"):
+                case ref if isinstance(ref, str) and ref.startswith(
+                    "refs/heads/branch/"
+                ):
                     flat_manager_repo = "stable"
                 case _:
                     flat_manager_repo = "test"
