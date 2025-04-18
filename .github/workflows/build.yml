@@ -158,52 +158,25 @@ jobs:
                   arches = list(set(arches) - set(flathub_json["skip-arches"]))
 
           matrix = {"include": []}
-          app_id = "${{ inputs.app_id }}"
           for arch in arches:
               arch = arch.strip()
-
-              if app_id == "io.github.ungoogled_software.ungoogled_chromium":
-                  match arch:
-                      case "x86_64":
-                          matrix["include"].append({
-                              "arch": arch,
-                              "runner_config": [
-                                  f"runs-on=${{{{ github.run_id }}}}",
-                                  "runner=4cpu-linux-x64"
-                              ]
-                          })
-                          continue
-                      case "aarch64":
-                          matrix["include"].append({
-                              "arch": arch,
-                              "runner_config": [
-                                  f"runs-on=${{{{ github.run_id }}}}",
-                                  "runner=4cpu-linux-arm64"
-                              ]
-                          })
-                          continue
-
               match arch:
                   case "x86_64":
-                      matrix["include"].append({
-                          "arch": arch,
-                          "runner_config": "ubuntu-24.04"
-                      })
+                      runner = "ubuntu-24.04"
                   case "aarch64":
-                      matrix["include"].append({
-                          "arch": arch,
-                          "runner_config": "ubuntu-24.04-arm"
-                      })
+                      runner = "ubuntu-24.04-arm"
                   case _:
                       print(f"Error: Unsupported architecture: {arch}")
                       exit(1)
+
+              matrix["include"].append({"arch": arch, "runner": runner})
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"matrix={json.dumps(matrix)}\\n")
 
   build:
     name: build-${{ matrix.arch }}
-    runs-on: ${{ matrix.runner_config }}
+    runs-on: ${{ matrix.runner }}
     needs: [validate-manifest, setup-matrix]
     strategy:
       fail-fast: true
