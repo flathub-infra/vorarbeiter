@@ -1,8 +1,10 @@
 from app.providers.base import JobProvider, ProviderType
 from app.providers.github import GitHubJobProvider
+from app.providers.gitlab import GnomeGitlabJobProvider
 
 _providers = {
     ProviderType.GITHUB: GitHubJobProvider(),
+    ProviderType.GNOME_GITLAB: GnomeGitlabJobProvider(),
 }
 
 
@@ -21,6 +23,7 @@ __all__ = [
     "JobProvider",
     "ProviderType",
     "GitHubJobProvider",
+    "GnomeGitlabJobProvider",
     "initialize_providers",
     "get_provider",
 ]
