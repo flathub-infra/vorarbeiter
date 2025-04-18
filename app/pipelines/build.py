@@ -18,6 +18,7 @@ class BuildPipeline:
         self,
         app_id: str,
         params: Dict[str, Any],
+        provider: ProviderType = ProviderType.GITHUB,
         webhook_event_id: Optional[uuid.UUID] = None,
     ) -> Pipeline:
         async with get_db() as db:
@@ -25,7 +26,7 @@ class BuildPipeline:
                 app_id=app_id,
                 params=params,
                 webhook_event_id=webhook_event_id,
-                provider=ProviderType.GITHUB.value,
+                provider=provider.value,
                 provider_data={},
             )
             db.add(pipeline)

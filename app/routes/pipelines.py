@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines import BuildPipeline, ensure_providers_initialized
+from app.providers.base import ProviderType
 from app.utils.github import create_pr_comment, update_commit_status
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
@@ -35,6 +36,7 @@ async def verify_token(
 class PipelineTriggerRequest(BaseModel):
     app_id: str
     params: Dict[str, Any]
+    provider: ProviderType = ProviderType.GITHUB
 
 
 class PipelineSummary(BaseModel):
@@ -95,6 +97,7 @@ async def trigger_pipeline(
     pipeline = await pipeline_service.create_pipeline(
         app_id=data.app_id,
         params=data.params,
+        provider=data.provider,
         webhook_event_id=None,
     )
 

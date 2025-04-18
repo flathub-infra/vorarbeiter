@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 class ProviderType(Enum):
     GITHUB = "github"
+    GNOME_GITLAB = "gnome_gitlab"
 
 
 class JobProvider(ABC):
