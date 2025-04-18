@@ -12,7 +12,7 @@ from app.providers import ProviderType, get_provider
 
 class BuildPipeline:
     def __init__(self):
-        self.github_provider = get_provider(ProviderType.GITHUB)
+        pass
 
     async def create_pipeline(
         self,
@@ -102,27 +102,70 @@ class BuildPipeline:
             except Exception as e:
                 raise ValueError(f"Failed to create build in flat-manager: {str(e)}")
 
-            job_data = {
-                "app_id": pipeline.app_id,
-                "job_type": "build",
-                "params": {
-                    "owner": "flathub-infra",
-                    "repo": "vorarbeiter",
-                    "workflow_id": "build.yml",
-                    "ref": "main",
-                    "inputs": {
-                        "app_id": pipeline.app_id,
-                        "git_ref": pipeline.params.get("ref", "master"),
-                        "build_url": build_url,
-                        "flat_manager_repo": flat_manager_repo,
-                        "flat_manager_token": upload_token,
-                        "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
-                        "callback_token": pipeline.callback_token,
-                    },
-                },
-            }
+            provider_type_str = pipeline.provider
+            if not provider_type_str:
+                provider_type = ProviderType.GITHUB
+            else:
+                try:
+                    provider_type = ProviderType(provider_type_str)
+                except ValueError:
+                    raise ValueError(
+                        f"Pipeline {pipeline.id} has invalid provider '{provider_type_str}'"
+                    )
 
-            provider_result = await self.github_provider.dispatch(
+            provider = get_provider(provider_type)
+
+            job_data = {}
+            if provider_type == ProviderType.GITHUB:
+                job_data = {
+                    "app_id": pipeline.app_id,
+                    "job_type": "build",
+                    "params": {
+                        "owner": "flathub-infra",
+                        "repo": "vorarbeiter",
+                        "workflow_id": "build.yml",
+                        "ref": pipeline.params.get(
+                            "ref", "main"
+                        ),  # Use ref from pipeline params if available
+                        "inputs": {
+                            "app_id": pipeline.app_id,
+                            "git_ref": pipeline.params.get(
+                                "git_ref", pipeline.params.get("ref", "master")
+                            ),  # Use git_ref or ref
+                            "build_url": build_url,
+                            "flat_manager_repo": flat_manager_repo,
+                            "flat_manager_token": upload_token,
+                            "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
+                            "callback_token": pipeline.callback_token,
+                        },
+                    },
+                }
+            elif provider_type == ProviderType.GNOME_GITLAB:
+                gitlab_variables = {
+                    "APP_ID": pipeline.app_id,
+                    "GIT_REF": pipeline.params.get(
+                        "git_ref", pipeline.params.get("ref", "master")
+                    ),  # Pass git ref
+                    "BUILD_URL": build_url,
+                    "FLAT_MANAGER_REPO": flat_manager_repo,
+                    "FLAT_MANAGER_TOKEN": upload_token,
+                    "CALLBACK_URL": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
+                    "CALLBACK_TOKEN": pipeline.callback_token,
+                    # Add any other custom variables from pipeline.params['variables']
+                    **(pipeline.params.get("variables", {})),
+                }
+                job_data = {
+                    "app_id": pipeline.app_id,
+                    "job_type": "build",
+                    "params": {
+                        "ref": pipeline.params.get("ref", "main"),
+                        "variables": gitlab_variables,
+                    },
+                }
+            else:
+                raise ValueError(f"Unsupported provider type: {provider_type}")
+
+            provider_result = await provider.dispatch(
                 str(pipeline.id), str(pipeline.id), job_data
             )
 

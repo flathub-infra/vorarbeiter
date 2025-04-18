@@ -84,6 +84,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
     mock_pipeline.status = PipelineStatus.PENDING
     mock_pipeline.app_id = "org.flathub.Test"
     mock_pipeline.params = {"repo": "test", "branch": "main"}
+    mock_pipeline.provider = ProviderType.GITHUB.value
 
     async def mock_get(model_class, model_id):
         if model_class is Pipeline and model_id == pipeline_id:
@@ -97,28 +98,41 @@ async def test_start_pipeline(build_pipeline, mock_db):
         yield mock_db
 
     dispatch_result = {"status": "dispatched"}
-    build_pipeline.github_provider.dispatch = AsyncMock(return_value=dispatch_result)
+
+    mock_provider_instance = AsyncMock(spec=JobProvider)
+    mock_provider_instance.dispatch = AsyncMock(return_value=dispatch_result)
 
     mock_httpx_response = MagicMock()
     mock_httpx_response.raise_for_status = MagicMock()
-    mock_httpx_response.json.return_value = {"id": 12345}
+    token_response_json = {"token": "mock_upload_token_123"}
+    mock_httpx_response.json.side_effect = [{"id": 12345}, token_response_json]
 
     mock_httpx_client = AsyncMock()
     mock_httpx_client.__aenter__.return_value.post.return_value = mock_httpx_response
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch("httpx.AsyncClient", return_value=mock_httpx_client):
-            result = await build_pipeline.start_pipeline(pipeline_id)
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch("httpx.AsyncClient", return_value=mock_httpx_client) as mock_async_client,
+        patch(
+            "app.pipelines.build.get_provider", return_value=mock_provider_instance
+        ) as mock_get_provider,
+    ):
+        result = await build_pipeline.start_pipeline(pipeline_id)
 
     assert result.status == PipelineStatus.RUNNING
-    assert build_pipeline.github_provider.dispatch.called
+
+    mock_get_provider.assert_called_once_with(ProviderType.GITHUB)
+
+    assert mock_provider_instance.dispatch.called
+
+    assert mock_async_client.called
     assert mock_httpx_client.__aenter__.return_value.post.call_count == 2
 
-    dispatch_call_args = build_pipeline.github_provider.dispatch.call_args[0]
+    dispatch_call_args = mock_provider_instance.dispatch.call_args[0]
     job_data = dispatch_call_args[2]
     assert job_data["params"]["inputs"][
         "flat_manager_token"
-    ] == mock_httpx_response.json.return_value.get("token")
+    ] == token_response_json.get("token")
 
 
 @pytest.mark.asyncio
