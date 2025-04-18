@@ -145,7 +145,6 @@ jobs:
           import json
           import os
 
-          app_id = "${{ inputs.app_id }}"
           arches = ["x86_64", "aarch64"]
 
           if os.path.exists("repo/flathub.json"):
@@ -159,45 +158,30 @@ jobs:
                   arches = list(set(arches) - set(flathub_json["skip-arches"]))
 
           matrix = {"include": []}
+          for arch in arches:
+              arch = arch.strip()
+              match arch:
+                  case "x86_64":
+                      runner = "ubuntu-24.04"
+                  case "aarch64":
+                      runner = "ubuntu-24.04-arm"
+                  case _:
+                      print(f"Error: Unsupported architecture: {arch}")
+                      exit(1)
 
-          if app_id == "io.github.ungoogled_software.ungoogled_chromium":
-              for arch in arches:
-                  arch = arch.strip()
-                  match arch:
-                      case "x86_64":
-                          runner = "4cpu-linux-arm64"
-                      case "aarch64":
-                          runner = "4cpu-linux-arm64"
-                      case _:
-                          print(f"Error: Unsupported architecture: {arch}")
-                          exit(1)
-
-                  matrix["include"].append({"arch": arch, "runner": runner})
-          else:
-              for arch in arches:
-                  arch = arch.strip()
-                  match arch:
-                      case "x86_64":
-                          runner = "ubuntu-24.04"
-                      case "aarch64":
-                          runner = "ubuntu-24.04-arm"
-                      case _:
-                          print(f"Error: Unsupported architecture: {arch}")
-                          exit(1)
-
-                  matrix["include"].append({"arch": arch, "runner": runner})
+              matrix["include"].append({"arch": arch, "runner": runner})
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"matrix={json.dumps(matrix)}\\n")
 
   build:
+    name: build-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     needs: [validate-manifest, setup-matrix]
     strategy:
       fail-fast: true
       matrix:
         include: ${{ fromJSON(needs.setup-matrix.outputs.matrix).include }}
-    name: build-${{ matrix.arch }}
-    runs-on: runs-on=${{ github.run_id }}/runner=${{ matrix.runner }}/tag=${{ matrix.arch }}
     steps:
       - name: Set variables
         run: |
