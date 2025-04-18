@@ -168,7 +168,7 @@ jobs:
                           matrix["include"].append({
                               "arch": arch,
                               "runner_config": [
-                                  f"runs-on=${{{{ github.run_id }}}}",
+                                  "runs-on=${{ github.run_id }}",
                                   "runner=4cpu-linux-x64"
                               ]
                           })
@@ -177,7 +177,7 @@ jobs:
                           matrix["include"].append({
                               "arch": arch,
                               "runner_config": [
-                                  f"runs-on=${{{{ github.run_id }}}}",
+                                  "runs-on=${{ github.run_id }}",
                                   "runner=4cpu-linux-arm64"
                               ]
                           })
