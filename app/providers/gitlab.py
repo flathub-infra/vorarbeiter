@@ -1,3 +1,4 @@
+import json
 from typing import Any, Dict
 
 import httpx
@@ -21,6 +22,7 @@ class GnomeGitlabJobProvider(JobProvider):
             base_url="https://gitlab.gnome.org/api/v4",
             headers={
                 "PRIVATE-TOKEN": self.token,
+                "Content-Type": "application/json",
             },
         )
 
@@ -39,14 +41,24 @@ class GnomeGitlabJobProvider(JobProvider):
         ref = params.get("ref", "main")
         variables = params.get("variables", {})
 
-        trigger_variables = {f"variables[{k}]": str(v) for k, v in variables.items()}
+        pipeline_variables = {
+            **variables,
+            "VORARBEITER_JOB_ID": job_id,
+            "VORARBEITER_PIPELINE_ID": pipeline_id,
+            "APP_ID": job_data.get("app_id", ""),
+        }
 
-        form_data = {"token": self.token, "ref": ref, **trigger_variables}
+        payload = {
+            "ref": ref,
+            "variables": [
+                {"key": k, "value": str(v)} for k, v in pipeline_variables.items()
+            ],
+        }
 
         try:
             response = await self.client.post(
-                f"/projects/{project_id}/trigger/pipeline",
-                data=form_data,
+                f"/projects/{project_id}/pipeline",
+                content=json.dumps(payload),
             )
             response.raise_for_status()
 
@@ -74,18 +86,11 @@ class GnomeGitlabJobProvider(JobProvider):
                 )
 
         except httpx.HTTPStatusError as e:
-            error_detail = (
-                f"Error dispatching GitLab trigger for project {project_id}: {e}"
-            )
-            try:
-                error_body = e.response.json()
-                error_detail += f" Response: {error_body}"
-            except Exception:
-                error_detail += f" Response: {e.response.text}"
-            print(error_detail)
+            print(f"Error dispatching GitLab pipeline for project {project_id}: {e}")
+            print(f"Response content: {e.response.text}")
             raise e
         except Exception as e:
-            print(f"An unexpected error occurred during trigger dispatch: {e}")
+            print(f"An unexpected error occurred: {e}")
             raise e
 
     async def cancel(self, job_id: str, provider_data: Dict[str, Any]) -> bool:
@@ -109,8 +114,7 @@ class GnomeGitlabJobProvider(JobProvider):
                 f"Attempting to cancel GitLab pipeline {gitlab_pipeline_id} for project {project_id} (Job ID: {job_id})"
             )
             response = await self.client.post(
-                f"/projects/{project_id}/pipelines/{gitlab_pipeline_id}/cancel",
-                headers={"Content-Type": "application/json"},
+                f"/projects/{project_id}/pipelines/{gitlab_pipeline_id}/cancel"
             )
 
             if response.status_code == 200:
@@ -125,13 +129,10 @@ class GnomeGitlabJobProvider(JobProvider):
                 return False
 
         except httpx.HTTPStatusError as e:
-            error_detail = f"Error cancelling GitLab pipeline {gitlab_pipeline_id} for project {project_id}: {e}"
-            try:
-                error_body = e.response.json()
-                error_detail += f" Response: {error_body}"
-            except Exception:
-                error_detail += f" Response: {e.response.text}"
-            print(error_detail)
+            print(
+                f"Error cancelling GitLab pipeline {gitlab_pipeline_id} for project {project_id}: {e}"
+            )
+            print(f"Response content: {e.response.text}")
             return False
         except Exception as e:
             print(f"An unexpected error occurred during cancellation: {e}")
