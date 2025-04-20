@@ -135,7 +135,6 @@ class BuildPipeline:
         self,
         pipeline_id: uuid.UUID,
         status: str,
-        result: Dict[str, Any],
     ) -> Pipeline:
         async with get_db() as db:
             pipeline = await db.get(Pipeline, pipeline_id)
@@ -149,18 +148,14 @@ class BuildPipeline:
                 case "success":
                     pipeline.status = PipelineStatus.SUCCEEDED
                     pipeline.finished_at = datetime.now()
-                    pipeline.result = result
                 case "failure":
                     pipeline.status = PipelineStatus.FAILED
                     pipeline.finished_at = datetime.now()
-                    pipeline.result = result
                 case "cancelled":
                     pipeline.status = PipelineStatus.CANCELLED
                     pipeline.finished_at = datetime.now()
-                    pipeline.result = result
                 case _:
                     pipeline.status = PipelineStatus.PENDING
-                    pipeline.result = result
 
             if log_url and not pipeline.log_url:
                 pipeline.log_url = log_url

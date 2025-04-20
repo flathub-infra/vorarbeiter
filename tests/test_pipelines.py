@@ -218,16 +218,12 @@ async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline)
         yield mock_db
 
     status = "success"
-    result = {"output": "Build successful"}
 
     with patch("app.pipelines.build.get_db", mock_get_db):
-        pipeline = await build_pipeline.handle_callback(
-            sample_pipeline.id, status, result
-        )
+        pipeline = await build_pipeline.handle_callback(sample_pipeline.id, status)
 
     assert pipeline.status == PipelineStatus.SUCCEEDED
     assert pipeline.finished_at is not None
-    assert pipeline.result == result
 
 
 @pytest.mark.asyncio
@@ -239,16 +235,12 @@ async def test_handle_callback_failure(build_pipeline, mock_db, sample_pipeline)
         yield mock_db
 
     status = "failure"
-    result = {"error": "Build failed"}
 
     with patch("app.pipelines.build.get_db", mock_get_db):
-        pipeline = await build_pipeline.handle_callback(
-            sample_pipeline.id, status, result
-        )
+        pipeline = await build_pipeline.handle_callback(sample_pipeline.id, status)
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at is not None
-    assert pipeline.result == result
 
 
 @pytest.fixture

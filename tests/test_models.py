@@ -72,11 +72,9 @@ def test_pipeline_model_with_provider_fields():
         status=PipelineStatus.RUNNING,
         provider="github",
         provider_data={"workflow_id": "build.yml"},
-        result={"status": "in-progress"},
         created_at=now,
         started_at=now,
     )
 
     assert pipeline.provider == "github"
     assert pipeline.provider_data == {"workflow_id": "build.yml"}
-    assert pipeline.result == {"status": "in-progress"}

@@ -50,7 +50,6 @@ class Pipeline(Base):
 
     provider: Mapped[str] = mapped_column(String(255), index=True, nullable=True)
     provider_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(default=func.now(), index=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)

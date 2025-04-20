@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 from sqlalchemy.future import select
 
 from app.config import settings
@@ -55,7 +55,6 @@ class PipelineResponse(BaseModel):
     params: Dict[str, Any]
     triggered_by: str
     provider: Optional[str] = None
-    result: Optional[Dict[str, Any]] = None
     log_url: Optional[str] = None
     build_url: Optional[str] = None
     created_at: datetime
@@ -66,7 +65,6 @@ class PipelineResponse(BaseModel):
 
 class PipelineStatusCallback(BaseModel):
     status: str
-    result: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("status")
     @classmethod
@@ -125,9 +123,41 @@ async def trigger_pipeline(
     response_model=List[PipelineSummary],
     status_code=status.HTTP_200_OK,
 )
-async def list_pipelines():
+async def list_pipelines(
+    app_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    triggered_by: Optional[str] = None,
+    limit: Optional[int] = 10,
+):
+    limit = min(max(1, limit or 10), 100)
+
     async with get_db() as db:
         stmt = select(Pipeline).order_by(Pipeline.created_at.desc())
+
+        if app_id is not None:
+            stmt = stmt.where(Pipeline.app_id == app_id)
+
+        if status_filter is not None:
+            try:
+                pipeline_status = PipelineStatus(status_filter)
+                stmt = stmt.where(Pipeline.status == pipeline_status)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status value: {status_filter}. Valid values are: {[s.value for s in PipelineStatus]}",
+                )
+
+        if triggered_by is not None:
+            try:
+                pipeline_trigger = PipelineTrigger(triggered_by)
+                stmt = stmt.where(Pipeline.triggered_by == pipeline_trigger)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid triggered_by value: {triggered_by}. Valid values are: {[t.value for t in PipelineTrigger]}",
+                )
+
+        stmt = stmt.limit(limit)
         result = await db.execute(stmt)
         pipelines = list(result.scalars().all())
 
@@ -169,7 +199,6 @@ async def get_pipeline(
             params=pipeline.params,
             triggered_by=pipeline.triggered_by.value,
             provider=pipeline.provider,
-            result=pipeline.result,
             log_url=pipeline.log_url,
             build_url=pipeline.build_url,
             created_at=pipeline.created_at,
@@ -228,12 +257,11 @@ async def pipeline_callback(
 
             status_callback = PipelineStatusCallback(**data)
             status_value = status_callback.status.lower()
-            result = status_callback.result
 
             pipeline_service = BuildPipeline()
 
             updated_pipeline = await pipeline_service.handle_callback(
-                pipeline_id=pipeline_id, status=status_value, result=result
+                pipeline_id=pipeline_id, status=status_value
             )
 
             if updated_pipeline:
