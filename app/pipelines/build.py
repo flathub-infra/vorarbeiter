@@ -2,18 +2,21 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-import httpx
 
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
 from app.providers import github_provider
 from app.providers.base import ProviderType  # Kept for backward compatibility
+from app.utils.flat_manager import FlatManagerClient
 
 
 class BuildPipeline:
     def __init__(self):
         self.provider = github_provider
+        self.flat_manager = FlatManagerClient(
+            url=settings.flat_manager_url, token=settings.flat_manager_token
+        )
 
     async def create_pipeline(
         self,
@@ -65,40 +68,17 @@ class BuildPipeline:
             build_log_url = f"{settings.base_url}/api/pipelines/{pipeline.id}/log_url"
 
             try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        f"{settings.flat_manager_url}/api/v1/build",
-                        json={
-                            "repo": flat_manager_repo,
-                            "build-log-url": build_log_url,
-                        },
-                        headers={
-                            "Authorization": f"Bearer {settings.flat_manager_token}"
-                        },
-                        timeout=30.0,
-                    )
-                    response.raise_for_status()
-                    build_data = response.json()
-                    build_id = build_data.get("id")
-                    build_url = f"{settings.flat_manager_url}/api/v1/build/{build_id}"
-                    pipeline.build_url = build_url
+                build_data = await self.flat_manager.create_build(
+                    repo=flat_manager_repo, build_log_url=build_log_url
+                )
 
-                    upload_token_response = await client.post(
-                        f"{settings.flat_manager_url}/api/v1/token_subset",
-                        json={
-                            "name": "upload",
-                            "sub": f"build/{build_id}",
-                            "scope": ["upload"],
-                            "prefix": [pipeline.app_id],
-                            "duration": 6 * 60 * 60,
-                        },
-                        headers={
-                            "Authorization": f"Bearer {settings.flat_manager_token}"
-                        },
-                        timeout=30.0,
-                    )
-                    upload_token_response.raise_for_status()
-                    upload_token = upload_token_response.json().get("token")
+                build_id = build_data.get("id")
+                build_url = self.flat_manager.get_build_url(build_id)
+                pipeline.build_url = build_url
+
+                upload_token = await self.flat_manager.create_token_subset(
+                    build_id=build_id, app_id=pipeline.app_id
+                )
             except Exception as e:
                 raise ValueError(f"Failed to create build in flat-manager: {str(e)}")
 
