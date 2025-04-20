@@ -4,7 +4,6 @@ import sentry_sdk
 from fastapi import FastAPI
 
 from app.config import settings
-from app.providers import initialize_providers
 from app.routes import pipelines_router, webhooks_router
 
 if settings.sentry_dsn:
@@ -17,7 +16,6 @@ if settings.sentry_dsn:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await initialize_providers()
     yield
 
 

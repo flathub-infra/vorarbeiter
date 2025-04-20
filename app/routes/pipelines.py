@@ -13,7 +13,7 @@ from sqlalchemy.future import select
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.pipelines import BuildPipeline, ensure_providers_initialized
+from app.pipelines import BuildPipeline
 from app.utils.github import create_pr_comment, update_commit_status
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
@@ -89,7 +89,6 @@ async def trigger_pipeline(
     data: PipelineTriggerRequest,
     token: str = Depends(verify_token),
 ):
-    await ensure_providers_initialized()
     pipeline_service = BuildPipeline()
 
     pipeline = await pipeline_service.create_pipeline(
@@ -231,7 +230,6 @@ async def pipeline_callback(
             status_value = status_callback.status.lower()
             result = status_callback.result
 
-            await ensure_providers_initialized()
             pipeline_service = BuildPipeline()
 
             updated_pipeline = await pipeline_service.handle_callback(

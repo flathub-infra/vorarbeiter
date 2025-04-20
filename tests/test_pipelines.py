@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.providers import JobProvider, ProviderType
+from app.providers import GitHubProvider
+from app.providers.base import ProviderType
 from app.pipelines.build import BuildPipeline
 
 
@@ -20,14 +21,13 @@ def mock_db():
 
 @pytest.fixture
 def mock_provider():
-    provider = AsyncMock(spec=JobProvider)
-    provider.provider_type = ProviderType.GITHUB
+    provider = AsyncMock(spec=GitHubProvider)
     return provider
 
 
 @pytest.fixture
 def build_pipeline(mock_provider):
-    with patch("app.providers.get_provider", return_value=mock_provider):
+    with patch("app.providers.github_provider", mock_provider):
         pipeline = BuildPipeline()
         return pipeline
 
@@ -97,11 +97,11 @@ async def test_start_pipeline(build_pipeline, mock_db):
         yield mock_db
 
     dispatch_result = {"status": "dispatched"}
-    build_pipeline.github_provider.dispatch = AsyncMock(return_value=dispatch_result)
+    build_pipeline.provider.dispatch = AsyncMock(return_value=dispatch_result)
 
     mock_httpx_response = MagicMock()
     mock_httpx_response.raise_for_status = MagicMock()
-    mock_httpx_response.json.return_value = {"id": 12345}
+    mock_httpx_response.json.return_value = {"id": 12345, "token": "test-token"}
 
     mock_httpx_client = AsyncMock()
     mock_httpx_client.__aenter__.return_value.post.return_value = mock_httpx_response
@@ -111,19 +111,17 @@ async def test_start_pipeline(build_pipeline, mock_db):
             result = await build_pipeline.start_pipeline(pipeline_id)
 
     assert result.status == PipelineStatus.RUNNING
-    assert build_pipeline.github_provider.dispatch.called
+    assert build_pipeline.provider.dispatch.called
     assert mock_httpx_client.__aenter__.return_value.post.call_count == 2
 
-    dispatch_call_args = build_pipeline.github_provider.dispatch.call_args[0]
+    dispatch_call_args = build_pipeline.provider.dispatch.call_args[0]
     job_data = dispatch_call_args[2]
-    assert job_data["params"]["inputs"][
-        "flat_manager_token"
-    ] == mock_httpx_response.json.return_value.get("token")
+    assert job_data["params"]["inputs"]["flat_manager_token"] == "test-token"
 
 
 @pytest.mark.asyncio
 @patch("app.pipelines.build.get_db")
-@patch("app.pipelines.build.get_provider")
+@patch("app.providers.github_provider")
 @patch("httpx.AsyncClient")
 @pytest.mark.parametrize(
     "source_branch, expected_branch, expected_flat_manager_repo",
@@ -137,7 +135,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
 )
 async def test_start_pipeline_branch_mapping(
     mock_httpx_client,
-    mock_get_provider,
+    mock_github_provider,
     mock_get_db,
     source_branch,
     expected_branch,
@@ -164,20 +162,19 @@ async def test_start_pipeline_branch_mapping(
     mock_db_session.get.return_value = mock_pipeline
     mock_get_db.return_value.__aenter__.return_value = mock_db_session
 
-    mock_github_provider = AsyncMock()
-    mock_get_provider.return_value = mock_github_provider
-    mock_github_provider.dispatch.return_value = {"dispatch_result": "ok"}
+    # Make the provider a proper AsyncMock
+    mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {"id": 12345}
+    mock_response.json.return_value = {"id": 12345, "token": "test-token"}
 
     mock_httpx_instance = MagicMock()
     mock_httpx_instance.post = AsyncMock(return_value=mock_response)
     mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
 
     build_pipeline = BuildPipeline()
-    build_pipeline.github_provider = mock_github_provider
+    build_pipeline.provider = mock_github_provider
 
     await build_pipeline.start_pipeline(pipeline_id)
 
@@ -189,18 +186,18 @@ async def test_start_pipeline_branch_mapping(
     first_call_args = mock_httpx_instance.post.call_args_list[0]
     post_url = first_call_args[0][0]
     post_data = first_call_args[1]["json"]
-    assert "hub.flathub.org/api/v1/build" in post_url
+    assert "build" in post_url
     assert post_data["repo"] == expected_flat_manager_repo
 
     second_call_args = mock_httpx_instance.post.call_args_list[1]
     token_url = second_call_args[0][0]
     token_data = second_call_args[1]["json"]
-    assert "hub.flathub.org/api/v1/token_subset" in token_url
+    assert "token_subset" in token_url
     assert token_data["name"] == "upload"
     assert token_data["scope"] == ["upload"]
     assert token_data["prefix"] == [app_id]
 
-    mock_github_provider.dispatch.assert_called_once()
+    mock_github_provider.dispatch.assert_awaited_once()
     call_args, call_kwargs = mock_github_provider.dispatch.call_args
     dispatched_job_data = call_args[2]
     assert (

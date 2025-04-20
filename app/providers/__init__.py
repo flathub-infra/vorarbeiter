@@ -1,26 +1,6 @@
-from app.providers.base import JobProvider, ProviderType
-from app.providers.github import GitHubJobProvider
+from app.providers.github import GitHubProvider
 
-_providers = {
-    ProviderType.GITHUB: GitHubJobProvider(),
-}
+# Create a single GitHub provider instance
+github_provider = GitHubProvider()
 
-
-async def initialize_providers():
-    for provider in _providers.values():
-        await provider.initialize()
-
-
-def get_provider(provider_type: ProviderType) -> JobProvider:
-    if provider_type not in _providers:
-        raise ValueError(f"Unsupported provider type: {provider_type}")
-    return _providers[provider_type]
-
-
-__all__ = [
-    "JobProvider",
-    "ProviderType",
-    "GitHubJobProvider",
-    "initialize_providers",
-    "get_provider",
-]
+__all__ = ["GitHubProvider", "github_provider"]

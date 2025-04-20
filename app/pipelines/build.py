@@ -7,12 +7,13 @@ import httpx
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
-from app.providers import ProviderType, get_provider
+from app.providers import github_provider
+from app.providers.base import ProviderType  # Kept for backward compatibility
 
 
 class BuildPipeline:
     def __init__(self):
-        self.github_provider = get_provider(ProviderType.GITHUB)
+        self.provider = github_provider
 
     async def create_pipeline(
         self,
@@ -121,7 +122,7 @@ class BuildPipeline:
                 },
             }
 
-            provider_result = await self.github_provider.dispatch(
+            provider_result = await self.provider.dispatch(
                 str(pipeline.id), str(pipeline.id), job_data
             )
 
