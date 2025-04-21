@@ -65,6 +65,8 @@ class BuildPipeline:
                 case _:
                     flat_manager_repo = "test"
 
+            pipeline.repo = flat_manager_repo
+
             build_log_url = f"{settings.base_url}/api/pipelines/{pipeline.id}/log_url"
 
             try:
