@@ -43,7 +43,6 @@ class PipelineSummary(BaseModel):
     app_id: str
     status: str
     repo: str | None = None
-    target_repo: str | None = None
     triggered_by: str
     created_at: datetime
     started_at: datetime | None = None
@@ -56,7 +55,6 @@ class PipelineResponse(BaseModel):
     app_id: str
     status: str
     repo: str | None = None
-    target_repo: str | None = None
     params: dict[str, Any]
     triggered_by: str
     provider: str | None = None
@@ -175,8 +173,7 @@ async def list_pipelines(
                 id=str(pipeline.id),
                 app_id=pipeline.app_id,
                 status=pipeline.status.value,
-                repo=pipeline.repo,
-                target_repo=str(pipeline.flat_manager_repo)
+                repo=str(pipeline.flat_manager_repo)
                 if pipeline.flat_manager_repo is not None
                 else None,
                 triggered_by=pipeline.triggered_by.value,
@@ -209,8 +206,7 @@ async def get_pipeline(
             id=str(pipeline.id),
             app_id=pipeline.app_id,
             status=pipeline.status.value,
-            repo=pipeline.repo,
-            target_repo=str(pipeline.flat_manager_repo)
+            repo=str(pipeline.flat_manager_repo)
             if pipeline.flat_manager_repo is not None
             else None,
             params=pipeline.params,
