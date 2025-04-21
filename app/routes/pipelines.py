@@ -132,6 +132,7 @@ async def list_pipelines(
     app_id: str | None = None,
     status_filter: str | None = None,
     triggered_by: str | None = None,
+    target_repo: str | None = None,
     limit: int | None = 10,
 ):
     limit = min(max(1, limit or 10), 100)
@@ -161,6 +162,9 @@ async def list_pipelines(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid triggered_by value: {triggered_by}. Valid values are: {[t.value for t in PipelineTrigger]}",
                 )
+
+        if target_repo is not None:
+            stmt = stmt.where(Pipeline.flat_manager_repo == target_repo)
 
         stmt = stmt.limit(limit)
         result = await db.execute(stmt)
