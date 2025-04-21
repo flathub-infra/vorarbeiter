@@ -1,12 +1,12 @@
-import uuid
 import secrets
+import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
 import sqlalchemy
-from sqlalchemy import String, JSON, Text, func, ForeignKey
-from sqlalchemy.orm import mapped_column, Mapped, relationship
+from sqlalchemy import JSON, ForeignKey, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.webhook_event import Base
 
@@ -18,6 +18,7 @@ class PipelineStatus(Enum):
     CANCELLED = "cancelled"
     PUBLISHED = "published"
     SUCCEEDED = "succeeded"
+    SUPERSEDED = "superseded"
 
 
 class PipelineTrigger(Enum):
@@ -56,17 +57,17 @@ class Pipeline(Base):
     provider_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(default=func.now(), index=True)
-    started_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
-    finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
-    published_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
-    webhook_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    webhook_event_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("webhookevent.id"), nullable=True, index=True
     )
     webhook_event = relationship("WebhookEvent", backref="pipelines")
 
-    log_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    build_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    log_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    build_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     callback_token: Mapped[str] = mapped_column(
         String(32), default=lambda: secrets.token_hex(16)
     )

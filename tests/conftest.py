@@ -1,16 +1,17 @@
 import pytest
 import os
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+import pytest_asyncio
 
 # Force SQLite for tests
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 
 from app.main import app
 from app.config import settings
-from app.database import get_db
+from app.database import engine as app_engine
+from app.models import Base
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -34,18 +35,27 @@ def mock_db_session():
     return mock_session
 
 
+@pytest_asyncio.fixture(scope="function")
+async def _real_db_session_generator():
+    """(Internal) Provide a session maker after setting up/tearing down the DB."""
+    async with app_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_maker = async_sessionmaker(bind=app_engine, expire_on_commit=False)
+
+    try:
+        yield session_maker
+    finally:
+        async with app_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.fixture(scope="function")
+def db_session_maker(_real_db_session_generator):
+    return _real_db_session_generator
+
+
 @pytest.fixture
-def client(mock_db_session):
-    """Create a test client with a mocked database session."""
-
-    @asynccontextmanager
-    async def override_get_db():
-        try:
-            yield mock_db_session
-        finally:
-            pass
-
-    app.dependency_overrides[get_db] = override_get_db
+def client():
     test_client = TestClient(app)
     yield test_client
-    app.dependency_overrides.clear()

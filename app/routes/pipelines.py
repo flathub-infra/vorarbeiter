@@ -2,7 +2,7 @@ import logging
 import secrets
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -35,35 +35,35 @@ async def verify_token(
 
 class PipelineTriggerRequest(BaseModel):
     app_id: str
-    params: Dict[str, Any]
+    params: dict[str, Any]
 
 
 class PipelineSummary(BaseModel):
     id: str
     app_id: str
     status: str
-    repo: Optional[str] = None
+    repo: str | None = None
     triggered_by: str
     created_at: datetime
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
-    published_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    published_at: datetime | None = None
 
 
 class PipelineResponse(BaseModel):
     id: str
     app_id: str
     status: str
-    repo: Optional[str] = None
-    params: Dict[str, Any]
+    repo: str | None = None
+    params: dict[str, Any]
     triggered_by: str
-    provider: Optional[str] = None
-    log_url: Optional[str] = None
-    build_url: Optional[str] = None
+    provider: str | None = None
+    log_url: str | None = None
+    build_url: str | None = None
     created_at: datetime
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
-    published_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    published_at: datetime | None = None
 
 
 class PipelineStatusCallback(BaseModel):
@@ -83,7 +83,7 @@ class PipelineLogUrlCallback(BaseModel):
 
 @pipelines_router.post(
     "/pipelines",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     status_code=status.HTTP_201_CREATED,
 )
 async def trigger_pipeline(
@@ -123,14 +123,14 @@ async def trigger_pipeline(
 
 @pipelines_router.get(
     "/pipelines",
-    response_model=List[PipelineSummary],
+    response_model=list[PipelineSummary],
     status_code=status.HTTP_200_OK,
 )
 async def list_pipelines(
-    app_id: Optional[str] = None,
-    status_filter: Optional[str] = None,
-    triggered_by: Optional[str] = None,
-    limit: Optional[int] = 10,
+    app_id: str | None = None,
+    status_filter: str | None = None,
+    triggered_by: str | None = None,
+    limit: int | None = 10,
 ):
     limit = min(max(1, limit or 10), 100)
 
@@ -219,7 +219,7 @@ async def get_pipeline(
 )
 async def pipeline_callback(
     pipeline_id: uuid.UUID,
-    data: Dict[str, Any],
+    data: dict[str, Any],
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     async with get_db() as db:
@@ -489,3 +489,117 @@ async def redirect_to_log_url(
         response.status_code = status.HTTP_307_TEMPORARY_REDIRECT
         response.headers["Location"] = pipeline.log_url
         return {}
+
+
+class PublishSummary(BaseModel):
+    published: list[str]
+    superseded: list[str]
+    errors: list[dict[str, str]]
+
+
+@pipelines_router.post(
+    "/pipelines/publish",
+    response_model=PublishSummary,
+    status_code=status.HTTP_200_OK,
+)
+async def publish_pipelines(
+    token: str = Depends(verify_token),
+):
+    logging.info("Starting pipeline publishing process")
+
+    published_ids = []
+    superseded_ids = []
+    errors = []
+
+    async with get_db() as db:
+        query = select(Pipeline).where(
+            Pipeline.status == PipelineStatus.SUCCEEDED,
+            Pipeline.repo.in_(["stable", "beta"]),
+        )
+        result = await db.execute(query)
+        pipelines = list(result.scalars().all())
+
+        pipeline_groups: dict[tuple[str, str | None], list[Pipeline]] = {}
+        for pipeline in pipelines:
+            key = (pipeline.app_id, pipeline.repo)
+            if key not in pipeline_groups:
+                pipeline_groups[key] = []
+            pipeline_groups[key].append(pipeline)
+
+        for (app_id, repo), group in pipeline_groups.items():
+            # Skip if repo is None (shouldn't happen with our WHERE clause, but mypy needs this)
+            if repo is None:
+                continue
+
+            sorted_pipelines = sorted(
+                group,
+                key=lambda p: p.started_at if p.started_at else datetime.min,
+                reverse=True,
+            )
+
+            candidate = sorted_pipelines[0]
+            duplicates = sorted_pipelines[1:]
+
+            if not candidate.build_url:
+                logging.warning(f"Pipeline {candidate.id} has no build_url, skipping")
+                errors.append(
+                    {
+                        "pipeline_id": str(candidate.id),
+                        "error": "No build_url available",
+                    }
+                )
+                continue
+
+            build_id = candidate.build_url.split("/")[-1]
+
+            try:
+                flat_manager = FlatManagerClient(
+                    url=settings.flat_manager_url,
+                    token=settings.flat_manager_token,
+                )
+                await flat_manager.publish(build_id)
+
+                candidate.status = PipelineStatus.PUBLISHED
+                candidate.published_at = datetime.now()
+                published_ids.append(str(candidate.id))
+                logging.info(
+                    f"Published build {build_id} for pipeline {candidate.id} ({app_id} to {repo})"
+                )
+
+                for dup in duplicates:
+                    dup.status = PipelineStatus.SUPERSEDED
+                    superseded_ids.append(str(dup.id))
+                    logging.info(
+                        f"Marked pipeline {dup.id} as SUPERSEDED (older version of {app_id} to {repo})"
+                    )
+
+            except httpx.HTTPStatusError as e:
+                logging.error(
+                    f"Failed to publish build {build_id} for pipeline {candidate.id}. Status: {e.response.status_code}, Response: {e.response.text}"
+                )
+                errors.append(
+                    {
+                        "pipeline_id": str(candidate.id),
+                        "error": f"HTTP error: {e.response.status_code} - {e.response.text}",
+                    }
+                )
+            except Exception as e:
+                logging.error(
+                    f"An unexpected error occurred while publishing build {build_id} for pipeline {candidate.id}: {e}"
+                )
+                errors.append(
+                    {
+                        "pipeline_id": str(candidate.id),
+                        "error": f"Unexpected error: {str(e)}",
+                    }
+                )
+
+        await db.commit()
+
+    logging.info(
+        f"Pipeline publishing completed: {len(published_ids)} published, {len(superseded_ids)} superseded, {len(errors)} errors"
+    )
+
+    return PublishSummary(
+        published=published_ids, superseded=superseded_ids, errors=errors
+    )
