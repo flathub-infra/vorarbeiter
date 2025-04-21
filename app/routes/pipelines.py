@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines import BuildPipeline
+from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import create_pr_comment, update_commit_status
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
@@ -297,6 +298,31 @@ async def pipeline_callback(
                         description=description,
                         target_url=target_url,
                     )
+
+                    if status_value != "success":
+                        if build_url := updated_pipeline.build_url:
+                            try:
+                                build_id = build_url.split("/")[-1]
+                                flat_manager = FlatManagerClient(
+                                    url=settings.flat_manager_url,
+                                    token=settings.flat_manager_token,
+                                )
+                                await flat_manager.purge(build_id)
+                                logging.info(
+                                    f"Purged build {build_id} (status: {status_value}) for pipeline {pipeline_id}"
+                                )
+                            except httpx.HTTPStatusError as e:
+                                logging.error(
+                                    f"Failed to purge build {build_id} for pipeline {pipeline_id}. Status: {e.response.status_code}, Response: {e.response.text}"
+                                )
+                            except Exception as e:
+                                logging.error(
+                                    f"An unexpected error occurred while purging build {build_id} for pipeline {pipeline_id}: {e}"
+                                )
+                        else:
+                            logging.warning(
+                                f"Pipeline {pipeline_id} finished with status '{status_value}' but has no build_url, skipping purge."
+                            )
 
                     pr_number_str = updated_pipeline.params.get("pr_number")
                     if pr_number_str:
