@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 from app.config import settings
@@ -21,8 +21,8 @@ class BuildPipeline:
     async def create_pipeline(
         self,
         app_id: str,
-        params: Dict[str, Any],
-        webhook_event_id: Optional[uuid.UUID] = None,
+        params: dict[str, Any],
+        webhook_event_id: uuid.UUID | None = None,
     ) -> Pipeline:
         async with get_db() as db:
             pipeline = Pipeline(
@@ -148,6 +148,6 @@ class BuildPipeline:
             await db.commit()
             return pipeline
 
-    async def get_pipeline(self, pipeline_id: uuid.UUID) -> Optional[Pipeline]:
+    async def get_pipeline(self, pipeline_id: uuid.UUID) -> Pipeline | None:
         async with get_db() as db:
             return await db.get(Pipeline, pipeline_id)

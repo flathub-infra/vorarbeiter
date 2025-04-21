@@ -2,7 +2,7 @@ import secrets
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import sqlalchemy
 from sqlalchemy import JSON, ForeignKey, String, Text, func
@@ -41,8 +41,8 @@ class Pipeline(Base):
     )
     app_id: Mapped[str] = mapped_column(String(255), index=True)
     params: Mapped[dict[str, Any]] = mapped_column(JSON)
-    repo: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
-    flat_manager_repo: Mapped[Optional[str]] = mapped_column(
+    repo: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    flat_manager_repo: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )
     triggered_by: Mapped[PipelineTrigger] = mapped_column(

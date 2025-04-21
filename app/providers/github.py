@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict
+from typing import Any
 
 import httpx
 
@@ -24,8 +24,8 @@ class GitHubProvider:
         )
 
     async def dispatch(
-        self, job_id: str, pipeline_id: str, job_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, job_id: str, pipeline_id: str, job_data: dict[str, Any]
+    ) -> dict[str, Any]:
         async with self._get_client() as client:
             params = job_data.get("params", {})
             owner = params["owner"]
@@ -66,7 +66,7 @@ class GitHubProvider:
                 "ref": ref,
             }
 
-    async def cancel(self, job_id: str, provider_data: Dict[str, Any]) -> bool:
+    async def cancel(self, job_id: str, provider_data: dict[str, Any]) -> bool:
         run_id = provider_data.get("run_id")
         if not run_id:
             return False

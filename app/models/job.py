@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import JSON, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -30,11 +30,11 @@ class Job(Base):
     provider: Mapped[str] = mapped_column(String(255), index=True)
     provider_data: Mapped[dict[str, Any]] = mapped_column(JSON)
 
-    result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(default=func.now(), index=True)
-    started_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
-    finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     pipeline_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("pipeline.id"), index=True

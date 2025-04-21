@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Dict
+from typing import Any
+from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -11,8 +12,8 @@ from sqlalchemy.ext.asyncio import (
 from app.config import settings
 
 
-def get_engine_args() -> Dict[str, Any]:
-    args: Dict[str, Any] = {
+def get_engine_args() -> dict[str, Any]:
+    args: dict[str, Any] = {
         "echo": settings.debug,
         "future": True,
         "pool_pre_ping": True,
@@ -38,7 +39,7 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 @asynccontextmanager
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
     """Context manager that provides an AsyncSession."""
     async with AsyncSessionLocal() as session:
         async with session.begin():
