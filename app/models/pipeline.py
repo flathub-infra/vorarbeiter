@@ -41,6 +41,9 @@ class Pipeline(Base):
     app_id: Mapped[str] = mapped_column(String(255), index=True)
     params: Mapped[dict[str, Any]] = mapped_column(JSON)
     repo: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    flat_manager_repo: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True
+    )
     triggered_by: Mapped[PipelineTrigger] = mapped_column(
         index=True,
         default=PipelineTrigger.WEBHOOK,
