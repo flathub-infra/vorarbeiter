@@ -17,10 +17,11 @@ class TokenResponse(TypedDict):
 
 
 class FlatManagerClient:
-    def __init__(self, url: str, token: str):
+    def __init__(self, url: str, token: str, timeout: float = 30.0):
         self.url = url
         self.token = token
         self.headers = {"Authorization": f"Bearer {token}"}
+        self.timeout = timeout
 
     async def create_build(self, repo: str, build_log_url: str) -> BuildResponse:
         async with httpx.AsyncClient() as client:
@@ -31,7 +32,7 @@ class FlatManagerClient:
                     "build-log-url": build_log_url,
                 },
                 headers=self.headers,
-                timeout=30.0,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             data: BuildResponse = response.json()
@@ -49,7 +50,7 @@ class FlatManagerClient:
                     "duration": 6 * 60 * 60,
                 },
                 headers=self.headers,
-                timeout=30.0,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             data: TokenResponse = response.json()
@@ -57,3 +58,25 @@ class FlatManagerClient:
 
     def get_build_url(self, build_id: str) -> str:
         return f"{self.url}/api/v1/build/{build_id}"
+
+    async def publish(self, build_id: str):
+        build_url = self.get_build_url(build_id)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{build_url}/publish",
+                headers=self.headers,
+                json={},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+
+    async def purge(self, build_id: str):
+        build_url = self.get_build_url(build_id)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{build_url}/purge",
+                headers=self.headers,
+                json={},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
