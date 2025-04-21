@@ -42,6 +42,7 @@ class PipelineSummary(BaseModel):
     id: str
     app_id: str
     status: str
+    repo: Optional[str] = None
     triggered_by: str
     created_at: datetime
     started_at: Optional[datetime] = None
@@ -53,6 +54,7 @@ class PipelineResponse(BaseModel):
     id: str
     app_id: str
     status: str
+    repo: Optional[str] = None
     params: Dict[str, Any]
     triggered_by: str
     provider: Optional[str] = None
@@ -167,6 +169,7 @@ async def list_pipelines(
                 id=str(pipeline.id),
                 app_id=pipeline.app_id,
                 status=pipeline.status.value,
+                repo=pipeline.repo,
                 triggered_by=pipeline.triggered_by.value,
                 created_at=pipeline.created_at,
                 started_at=pipeline.started_at,
@@ -197,6 +200,7 @@ async def get_pipeline(
             id=str(pipeline.id),
             app_id=pipeline.app_id,
             status=pipeline.status.value,
+            repo=pipeline.repo,
             params=pipeline.params,
             triggered_by=pipeline.triggered_by.value,
             provider=pipeline.provider,
@@ -266,7 +270,7 @@ async def pipeline_callback(
             )
 
             if updated_pipeline:
-                repo = updated_pipeline.params.get("repo")
+                repo = updated_pipeline.repo
                 sha = updated_pipeline.params.get("sha")
 
                 if repo and sha:
@@ -411,7 +415,7 @@ async def pipeline_callback(
                 await db.commit()
 
                 saved_log_url = pipeline.log_url
-                repo = pipeline.params.get("repo")
+                repo = pipeline.repo
                 sha = pipeline.params.get("sha")
                 pr_number_str = pipeline.params.get("pr_number")
 
