@@ -28,7 +28,6 @@ class BuildPipeline:
             pipeline = Pipeline(
                 app_id=app_id,
                 params=params,
-                repo=params.get("repo"),
                 webhook_event_id=webhook_event_id,
                 provider=ProviderType.GITHUB.value,
                 provider_data={},

@@ -8,9 +8,9 @@ logger = logging.getLogger(__name__)
 
 
 async def update_commit_status(
-    repo: str,
     sha: str,
     state: str,
+    app_id: str,
     target_url: str | None = None,
     description: str | None = None,
     context: str = "builds/x86_64",
@@ -19,8 +19,9 @@ async def update_commit_status(
         logger.warning("GITHUB_STATUS_TOKEN is not set. Skipping status update.")
         return
 
-    if not repo or "/" not in repo:
-        logger.error(f"Invalid repository name format: {repo}. Skipping status update.")
+    repo = f"flathub/{app_id}"
+    if not app_id:
+        logger.error("Missing app_id for GitHub status update. Skipping status update.")
         return
 
     if not sha:
@@ -74,13 +75,14 @@ async def update_commit_status(
         )
 
 
-async def create_pr_comment(repo: str, pr_number: int, comment: str) -> None:
+async def create_pr_comment(app_id: str, pr_number: int, comment: str) -> None:
     if not settings.github_status_token:
         logger.warning("GITHUB_STATUS_TOKEN is not set. Skipping PR comment creation.")
         return
 
-    if not repo or "/" not in repo:
-        logger.error(f"Invalid repository name format: {repo}. Skipping PR comment.")
+    repo = f"flathub/{app_id}"
+    if not app_id:
+        logger.error("Missing app_id for GitHub PR comment. Skipping PR comment.")
         return
 
     if not pr_number:

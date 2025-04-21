@@ -38,7 +38,7 @@ def sample_pipeline():
         id=uuid.uuid4(),
         app_id="org.flathub.Test",
         status=PipelineStatus.PENDING,
-        params={"repo": "test", "branch": "main"},
+        params={"branch": "main"},
         created_at=datetime.now(),
         triggered_by=PipelineTrigger.MANUAL,
         provider=ProviderType.GITHUB.value,
@@ -50,7 +50,7 @@ def sample_pipeline():
 @pytest.mark.asyncio
 async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
     app_id = "org.flathub.Test"
-    params = {"repo": "test", "branch": "main"}
+    params = {"branch": "main"}
 
     mock_db.flush = AsyncMock()
 
@@ -288,7 +288,7 @@ def test_trigger_pipeline_endpoint(mock_get_db, mock_build_pipeline):
 
     request_data = {
         "app_id": "org.flathub.Test",
-        "params": {"repo": "test", "branch": "main"},
+        "params": {"branch": "main"},
     }
 
     headers = {"Authorization": f"Bearer {settings.admin_token}"}
@@ -306,7 +306,7 @@ def test_trigger_pipeline_endpoint(mock_get_db, mock_build_pipeline):
     pipeline_instance.create_pipeline.assert_called_once()
     call_kwargs = pipeline_instance.create_pipeline.call_args[1]
     assert call_kwargs["app_id"] == "org.flathub.Test"
-    assert call_kwargs["params"] == {"repo": "test", "branch": "main"}
+    assert call_kwargs["params"] == {"branch": "main"}
     assert call_kwargs["webhook_event_id"] is None
 
     pipeline_instance.start_pipeline.assert_called_once()
@@ -319,7 +319,7 @@ def test_trigger_pipeline_unauthorized(mock_get_db, mock_build_pipeline):
 
     request_data = {
         "app_id": "org.flathub.Test",
-        "params": {"repo": "test", "branch": "main"},
+        "params": {"branch": "main"},
     }
 
     # Test with no token
@@ -341,7 +341,7 @@ def test_list_pipelines_endpoint(mock_get_db):
             id=uuid.uuid4(),
             app_id="org.flathub.Test1",
             status=PipelineStatus.RUNNING,
-            repo="stable",
+            flat_manager_repo="stable",
             triggered_by=PipelineTrigger.MANUAL,
             created_at=datetime.now(),
             started_at=datetime.now(),
@@ -352,7 +352,7 @@ def test_list_pipelines_endpoint(mock_get_db):
             id=uuid.uuid4(),
             app_id="org.flathub.Test2",
             status=PipelineStatus.SUCCEEDED,
-            repo="beta",
+            flat_manager_repo="beta",
             triggered_by=PipelineTrigger.WEBHOOK,
             created_at=datetime.now(),
             started_at=datetime.now(),

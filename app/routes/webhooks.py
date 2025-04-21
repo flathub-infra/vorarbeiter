@@ -219,9 +219,9 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     if commit_sha:
         target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
         await update_commit_status(
-            repo=event.repository,
             sha=commit_sha,
             state="pending",
+            app_id=app_id,
             description="Build enqueued",
             target_url=target_url,
         )
@@ -233,7 +233,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         try:
             pr_number = int(pr_number_str)
             await create_pr_comment(
-                repo=event.repository,
+                app_id=app_id,
                 pr_number=pr_number,
                 comment="🚧 Test build enqueued.",
             )

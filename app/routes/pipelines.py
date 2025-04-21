@@ -278,10 +278,10 @@ async def pipeline_callback(
             )
 
             if updated_pipeline:
-                repo = updated_pipeline.repo
+                app_id = updated_pipeline.app_id
                 sha = updated_pipeline.params.get("sha")
 
-                if repo and sha:
+                if app_id and sha:
                     match status_value:
                         case "success":
                             description = "Build succeeded."
@@ -304,9 +304,9 @@ async def pipeline_callback(
                         target_url = ""
 
                     await update_commit_status(
-                        repo=repo,
                         sha=sha,
                         state=github_state,
+                        app_id=app_id,
                         description=description,
                         target_url=target_url,
                     )
@@ -371,7 +371,7 @@ async def pipeline_callback(
 
                             if comment:
                                 await create_pr_comment(
-                                    repo=repo,
+                                    app_id=app_id,
                                     pr_number=pr_number,
                                     comment=comment,
                                 )
@@ -391,7 +391,7 @@ async def pipeline_callback(
             }
 
         elif "log_url" in data:
-            repo = None
+            app_id = None
             sha = None
             pr_number_str = None
             saved_log_url = None
@@ -423,17 +423,17 @@ async def pipeline_callback(
                 await db.commit()
 
                 saved_log_url = pipeline.log_url
-                repo = pipeline.repo
+                app_id = pipeline.app_id
                 sha = pipeline.params.get("sha")
                 pr_number_str = pipeline.params.get("pr_number")
 
-            if repo and sha and saved_log_url:
+            if app_id and sha and saved_log_url:
                 try:
                     target_url = saved_log_url
                     await update_commit_status(
-                        repo=repo,
                         sha=sha,
                         state="pending",
+                        app_id=app_id,
                         description="Build in progress",
                         target_url=target_url,
                     )
@@ -443,7 +443,7 @@ async def pipeline_callback(
                             pr_number = int(pr_number_str)
                             comment = f"🚧 Started [test build]({saved_log_url})."
                             await create_pr_comment(
-                                repo=repo,
+                                app_id=app_id,
                                 pr_number=pr_number,
                                 comment=comment,
                             )
@@ -522,21 +522,20 @@ async def publish_pipelines(
     async with get_db() as db:
         query = select(Pipeline).where(
             Pipeline.status == PipelineStatus.SUCCEEDED,
-            Pipeline.repo.in_(["stable", "beta"]),
+            Pipeline.flat_manager_repo.in_(["stable", "beta"]),
         )
         result = await db.execute(query)
         pipelines = list(result.scalars().all())
 
         pipeline_groups: dict[tuple[str, str | None], list[Pipeline]] = {}
         for pipeline in pipelines:
-            key = (pipeline.app_id, pipeline.repo)
+            key = (pipeline.app_id, pipeline.flat_manager_repo)
             if key not in pipeline_groups:
                 pipeline_groups[key] = []
             pipeline_groups[key].append(pipeline)
 
-        for (app_id, repo), group in pipeline_groups.items():
-            # Skip if repo is None (shouldn't happen with our WHERE clause, but mypy needs this)
-            if repo is None:
+        for (app_id, flat_manager_repo), group in pipeline_groups.items():
+            if flat_manager_repo is None:
                 continue
 
             sorted_pipelines = sorted(
@@ -571,14 +570,14 @@ async def publish_pipelines(
                 candidate.published_at = datetime.now()
                 published_ids.append(str(candidate.id))
                 logging.info(
-                    f"Published build {build_id} for pipeline {candidate.id} ({app_id} to {repo})"
+                    f"Published build {build_id} for pipeline {candidate.id} ({app_id} to {flat_manager_repo})"
                 )
 
                 for dup in duplicates:
                     dup.status = PipelineStatus.SUPERSEDED
                     superseded_ids.append(str(dup.id))
                     logging.info(
-                        f"Marked pipeline {dup.id} as SUPERSEDED (older version of {app_id} to {repo})"
+                        f"Marked pipeline {dup.id} as SUPERSEDED (older version of {app_id} to {flat_manager_repo})"
                     )
 
             except httpx.HTTPStatusError as e:

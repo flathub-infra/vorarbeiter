@@ -41,7 +41,6 @@ class Pipeline(Base):
     )
     app_id: Mapped[str] = mapped_column(String(255), index=True)
     params: Mapped[dict[str, Any]] = mapped_column(JSON)
-    repo: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     flat_manager_repo: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )

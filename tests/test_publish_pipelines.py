@@ -20,7 +20,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
     newer_pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
-        repo="stable",
+        flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
         build_url="https://example.com/builds/123",
@@ -29,7 +29,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
     older_pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
-        repo="stable",
+        flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
         build_url="https://example.com/builds/456",
@@ -40,7 +40,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
     other_app_pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.Other",
-        repo="stable",
+        flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
         build_url="https://example.com/builds/789",
@@ -110,7 +110,7 @@ async def test_publish_pipelines_error_handling(db_session_maker, client):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.Error",
-        repo="stable",
+        flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
         build_url="https://example.com/builds/error",
@@ -166,7 +166,7 @@ async def test_publish_pipelines_no_build_url(db_session_maker, client):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.NoBuildUrl",
-        repo="stable",
+        flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
         build_url=None,
