@@ -94,7 +94,7 @@ class BuildPipeline:
                     "inputs": {
                         "app_id": pipeline.app_id,
                         "git_ref": pipeline.params.get("ref", "master"),
-                        "build_id": build_id,
+                        "build_url": self.flat_manager.get_build_url(build_id),
                         "flat_manager_repo": flat_manager_repo,
                         "flat_manager_token": upload_token,
                         "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
