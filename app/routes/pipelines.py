@@ -374,7 +374,7 @@ async def pipeline_callback(
                                     download_url = flat_manager.get_flatpakref_url(
                                         build_id, updated_pipeline.app_id
                                     )
-                                    comment = f"🚧 [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\\n\\n```\\nflatpak install --user {download_url}\\n```"
+                                    comment = f"🚧 [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```"
                                 else:
                                     comment = f"🚧 [Test build succeeded]({log_url})."
                             elif status_value == "failure":
