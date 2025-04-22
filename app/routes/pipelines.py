@@ -59,7 +59,7 @@ class PipelineResponse(BaseModel):
     triggered_by: str
     provider: str | None = None
     log_url: str | None = None
-    build_url: str | None = None
+    build_id: str | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -213,7 +213,7 @@ async def get_pipeline(
             triggered_by=pipeline.triggered_by.value,
             provider=pipeline.provider,
             log_url=pipeline.log_url,
-            build_url=pipeline.build_url,
+            build_id=pipeline.build_id,
             created_at=pipeline.created_at,
             started_at=pipeline.started_at,
             finished_at=pipeline.finished_at,
@@ -311,10 +311,33 @@ async def pipeline_callback(
                         target_url=target_url,
                     )
 
-                    if status_value != "success":
-                        if build_url := updated_pipeline.build_url:
+                    if status_value == "success":
+                        if build_id := updated_pipeline.build_id:
                             try:
-                                build_id = build_url.split("/")[-1]
+                                flat_manager = FlatManagerClient(
+                                    url=settings.flat_manager_url,
+                                    token=settings.flat_manager_token,
+                                )
+                                await flat_manager.commit(build_id)
+                                logging.info(
+                                    f"Committed build {build_id} for pipeline {pipeline_id}"
+                                )
+                            except httpx.HTTPStatusError as e:
+                                logging.error(
+                                    f"Failed to commit build {build_id} for pipeline {pipeline_id}. Status: {e.response.status_code}, Response: {e.response.text}"
+                                )
+                            except Exception as e:
+                                logging.error(
+                                    f"An unexpected error occurred while committing build {build_id} for pipeline {pipeline_id}: {e}"
+                                )
+                        else:
+                            logging.warning(
+                                f"Pipeline {pipeline_id} succeeded but has no build_id, skipping commit."
+                            )
+
+                    if status_value != "success":
+                        if build_id := updated_pipeline.build_id:
+                            try:
                                 flat_manager = FlatManagerClient(
                                     url=settings.flat_manager_url,
                                     token=settings.flat_manager_token,
@@ -333,7 +356,7 @@ async def pipeline_callback(
                                 )
                         else:
                             logging.warning(
-                                f"Pipeline {pipeline_id} finished with status '{status_value}' but has no build_url, skipping purge."
+                                f"Pipeline {pipeline_id} finished with status '{status_value}' but has no build_id, skipping purge."
                             )
 
                     pr_number_str = updated_pipeline.params.get("pr_number")
@@ -343,25 +366,15 @@ async def pipeline_callback(
                             log_url = updated_pipeline.log_url
                             comment = ""
                             if status_value == "success":
-                                if build_url := updated_pipeline.build_url:
-                                    build_id = build_url.split("/")[-1]
-                                    comment = f"🚧 [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user https://dl.flathub.org/build-repo/{build_id}/{updated_pipeline.app_id}.flatpakref\n```"
-
-                                    async with httpx.AsyncClient() as client:
-                                        commit_endpoint = f"{build_url}/commit"
-                                        payload = {
-                                            "endoflife": None,
-                                            "endoflife_rebase": None,
-                                        }
-                                        headers = {
-                                            "Authorization": f"Bearer {settings.flat_manager_token}"
-                                        }
-                                        resp = await client.post(
-                                            commit_endpoint,
-                                            headers=headers,
-                                            json=payload,
-                                        )
-                                        resp.raise_for_status()
+                                if build_id := updated_pipeline.build_id:
+                                    flat_manager = FlatManagerClient(
+                                        url=settings.flat_manager_url,
+                                        token=settings.flat_manager_token,
+                                    )
+                                    download_url = flat_manager.get_flatpakref_url(
+                                        build_id, updated_pipeline.app_id
+                                    )
+                                    comment = f"🚧 [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\\n\\n```\\nflatpak install --user {download_url}\\n```"
                                 else:
                                     comment = f"🚧 [Test build succeeded]({log_url})."
                             elif status_value == "failure":
@@ -547,17 +560,19 @@ async def publish_pipelines(
             candidate = sorted_pipelines[0]
             duplicates = sorted_pipelines[1:]
 
-            if not candidate.build_url:
-                logging.warning(f"Pipeline {candidate.id} has no build_url, skipping")
+            if not candidate.build_id:
+                logging.warning(
+                    f"Pipeline {candidate.id} has no build_id, skipping publish"
+                )
                 errors.append(
                     {
                         "pipeline_id": str(candidate.id),
-                        "error": "No build_url available",
+                        "error": "No build_id available",
                     }
                 )
                 continue
 
-            build_id = candidate.build_url.split("/")[-1]
+            build_id = candidate.build_id
 
             try:
                 flat_manager = FlatManagerClient(

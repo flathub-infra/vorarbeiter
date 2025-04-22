@@ -59,6 +59,23 @@ class FlatManagerClient:
     def get_build_url(self, build_id: str) -> str:
         return f"{self.url}/api/v1/build/{build_id}"
 
+    def get_flatpakref_url(self, build_id: str, app_id: str) -> str:
+        return f"https://dl.flathub.org/build-repo/{build_id}/{app_id}.flatpakref"
+
+    async def commit(self, build_id: str):
+        build_url = self.get_build_url(build_id)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{build_url}/commit",
+                headers=self.headers,
+                json={
+                    "endoflife": None,
+                    "endoflife_rebase": None,
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+
     async def publish(self, build_id: str):
         build_url = self.get_build_url(build_id)
         async with httpx.AsyncClient() as client:

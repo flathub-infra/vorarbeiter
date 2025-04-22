@@ -75,8 +75,7 @@ class BuildPipeline:
                 )
 
                 build_id = build_data.get("id")
-                build_url = self.flat_manager.get_build_url(build_id)
-                pipeline.build_url = build_url
+                pipeline.build_id = build_id
 
                 upload_token = await self.flat_manager.create_token_subset(
                     build_id=build_id, app_id=pipeline.app_id
@@ -95,7 +94,7 @@ class BuildPipeline:
                     "inputs": {
                         "app_id": pipeline.app_id,
                         "git_ref": pipeline.params.get("ref", "master"),
-                        "build_url": build_url,
+                        "build_id": build_id,
                         "flat_manager_repo": flat_manager_repo,
                         "flat_manager_token": upload_token,
                         "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
@@ -124,7 +123,6 @@ class BuildPipeline:
                 raise ValueError(f"Pipeline {pipeline_id} not found")
 
             log_url = pipeline.log_url
-            build_url = pipeline.build_url
 
             match status.lower():
                 case "success":
@@ -141,8 +139,6 @@ class BuildPipeline:
 
             if log_url and not pipeline.log_url:
                 pipeline.log_url = log_url
-            if build_url and not pipeline.build_url:
-                pipeline.build_url = build_url
 
             await db.commit()
             return pipeline

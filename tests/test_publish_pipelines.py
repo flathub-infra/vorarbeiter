@@ -23,7 +23,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
         flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
-        build_url="https://example.com/builds/123",
+        build_id="123",
         started_at=now,
     )
     older_pipeline = Pipeline(
@@ -32,8 +32,35 @@ async def test_publish_pipelines_success(db_session_maker, client):
         flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
-        build_url="https://example.com/builds/456",
-        started_at=now - timedelta(days=1),
+        build_id="122",
+        started_at=now - timedelta(hours=1),
+    )
+    Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.BetaApp",
+        flat_manager_repo="beta",
+        status=PipelineStatus.SUCCEEDED,
+        params={"key": "value"},
+        build_id="124",
+        started_at=now,
+    )
+    Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.TestApp",
+        flat_manager_repo="test",
+        status=PipelineStatus.SUCCEEDED,
+        params={"key": "value"},
+        build_id="125",
+        started_at=now,
+    )
+    Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.FailedApp",
+        flat_manager_repo="stable",
+        status=PipelineStatus.FAILED,
+        params={"key": "value"},
+        build_id="126",
+        started_at=now,
     )
 
     # Another app's pipeline
@@ -43,7 +70,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
         flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
-        build_url="https://example.com/builds/789",
+        build_id="789",
         started_at=now,
     )
 
@@ -113,7 +140,7 @@ async def test_publish_pipelines_error_handling(db_session_maker, client):
         flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
-        build_url="https://example.com/builds/error",
+        build_id="error",
         started_at=datetime.now(),
     )
 
@@ -162,14 +189,14 @@ async def test_publish_pipelines_error_handling(db_session_maker, client):
 @pytest.mark.asyncio
 async def test_publish_pipelines_no_build_url(db_session_maker, client):
     session_maker = db_session_maker
-    # Create a test pipeline without a build_url
+    # Create a test pipeline without a build_id
     pipeline = Pipeline(
         id=uuid.uuid4(),
-        app_id="org.test.NoBuildUrl",
+        app_id="org.test.NoBuildId",
         flat_manager_repo="stable",
         status=PipelineStatus.SUCCEEDED,
         params={"key": "value"},
-        build_url=None,
+        build_id=None,
         started_at=datetime.now(),
     )
 
@@ -202,7 +229,7 @@ async def test_publish_pipelines_no_build_url(db_session_maker, client):
         assert len(result.superseded) == 0
         assert len(result.errors) == 1
         assert str(pipeline.id) in result.errors[0]["pipeline_id"]
-        assert "No build_url available" in result.errors[0]["error"]
+        assert "No build_id available" in result.errors[0]["error"]
 
         async with session_maker() as session:
             query = select(Pipeline).where(Pipeline.id == pipeline.id)
