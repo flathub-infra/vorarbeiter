@@ -231,6 +231,7 @@ async def pipeline_callback(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     async with get_db() as db:
+        new_app = False
         pipeline = await db.get(Pipeline, pipeline_id)
         if not pipeline:
             raise HTTPException(
@@ -245,6 +246,7 @@ async def pipeline_callback(
             )
 
         if pipeline.app_id == "flathub" and "app_id" in data:
+            new_app = True
             app_id = data.get("app_id")
             if isinstance(app_id, str) and app_id:
                 pipeline.app_id = app_id
@@ -384,7 +386,7 @@ async def pipeline_callback(
 
                             if comment:
                                 await create_pr_comment(
-                                    app_id=app_id,
+                                    app_id=app_id if not new_app else "flathub",
                                     pr_number=pr_number,
                                     comment=comment,
                                 )
@@ -456,7 +458,7 @@ async def pipeline_callback(
                             pr_number = int(pr_number_str)
                             comment = f"🚧 Started [test build]({saved_log_url})."
                             await create_pr_comment(
-                                app_id=app_id,
+                                app_id=app_id if not new_app else "flathub",
                                 pr_number=pr_number,
                                 comment=comment,
                             )

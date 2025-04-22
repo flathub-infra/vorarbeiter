@@ -80,7 +80,6 @@ async def create_pr_comment(app_id: str, pr_number: int, comment: str) -> None:
         logger.warning("GITHUB_STATUS_TOKEN is not set. Skipping PR comment creation.")
         return
 
-    repo = f"flathub/{app_id}"
     if not app_id:
         logger.error("Missing app_id for GitHub PR comment. Skipping PR comment.")
         return
@@ -89,6 +88,7 @@ async def create_pr_comment(app_id: str, pr_number: int, comment: str) -> None:
         logger.error("Missing PR number. Skipping PR comment.")
         return
 
+    repo = f"flathub/{app_id}"
     url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
     headers = {
         "Accept": "application/vnd.github.v3+json",
