@@ -1,4 +1,5 @@
-from typing import TypedDict, NotRequired
+from typing import NotRequired, TypedDict
+from urllib.parse import urlparse
 
 import httpx
 
@@ -57,6 +58,16 @@ class FlatManagerClient:
             return data["token"]
 
     def get_build_url(self, build_id: str) -> str:
+        # Handle case where build_id is already a full URL
+        if isinstance(build_id, str) and (
+            build_id.startswith("http://") or build_id.startswith("https://")
+        ):
+            path_parts = urlparse(build_id).path.rstrip("/").split("/")
+            if path_parts:
+                numeric_id = path_parts[-1]
+                return f"{self.url}/api/v1/build/{numeric_id}"
+            return build_id
+
         return f"{self.url}/api/v1/build/{build_id}"
 
     def get_flatpakref_url(self, build_id: str, app_id: str) -> str:
