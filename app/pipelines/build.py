@@ -83,13 +83,15 @@ class BuildPipeline:
             except Exception as e:
                 raise ValueError(f"Failed to create build in flat-manager: {str(e)}")
 
+            workflow_id = pipeline.params.get("workflow_id", "build.yml")
+
             job_data = {
                 "app_id": pipeline.app_id,
                 "job_type": "build",
                 "params": {
                     "owner": "flathub-infra",
                     "repo": "vorarbeiter",
-                    "workflow_id": "build.yml",
+                    "workflow_id": workflow_id,
                     "ref": "main",
                     "inputs": {
                         "app_id": pipeline.app_id,
