@@ -3,6 +3,7 @@ import secrets
 import uuid
 from datetime import datetime
 from typing import Any
+import json
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -617,15 +618,55 @@ async def publish_pipelines(
                     )
 
             except httpx.HTTPStatusError as e:
-                logging.error(
-                    f"Failed to publish build {build_id} for pipeline {candidate.id}. Status: {e.response.status_code}, Response: {e.response.text}"
-                )
-                errors.append(
-                    {
-                        "pipeline_id": str(candidate.id),
-                        "error": f"HTTP error: {e.response.status_code} - {e.response.text}",
-                    }
-                )
+                try:
+                    error_data = json.loads(e.response.text)
+                    error_type = error_data.get("error-type")
+                    current_state = error_data.get("current-state")
+
+                    if (
+                        e.response.status_code == 400
+                        and error_type == "wrong-published-state"
+                    ):
+                        logging.warning(
+                            f"Pipeline {candidate.id} (Build {build_id}) already published. Marking as published."
+                        )
+                        if candidate.status != PipelineStatus.PUBLISHED:
+                            candidate.status = PipelineStatus.PUBLISHED
+                            candidate.published_at = datetime.now()
+                        if str(candidate.id) not in published_ids:
+                            published_ids.append(str(candidate.id))
+
+                    elif (
+                        e.response.status_code == 400
+                        and error_type == "wrong-repo-state"
+                        and current_state == "validating"
+                    ):
+                        logging.info(
+                            f"Pipeline {candidate.id} (Build {build_id}) is still validating. Skipping for this publish run."
+                        )
+
+                    else:
+                        logging.error(
+                            f"Failed to publish build {build_id} for pipeline {candidate.id}. Status: {e.response.status_code}, Response: {e.response.text}"
+                        )
+                        errors.append(
+                            {
+                                "pipeline_id": str(candidate.id),
+                                "error": f"HTTP error: {e.response.status_code} - {e.response.text}",
+                            }
+                        )
+
+                except (json.JSONDecodeError, AttributeError):
+                    logging.error(
+                        f"Failed to publish build {build_id} for pipeline {candidate.id}. Status: {e.response.status_code}, Response: {e.response.text} (Could not parse error details)"
+                    )
+                    errors.append(
+                        {
+                            "pipeline_id": str(candidate.id),
+                            "error": f"HTTP error: {e.response.status_code} - {e.response.text}",
+                        }
+                    )
+
             except Exception as e:
                 logging.error(
                     f"An unexpected error occurred while publishing build {build_id} for pipeline {candidate.id}: {e}"
