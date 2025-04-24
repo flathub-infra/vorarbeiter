@@ -617,6 +617,25 @@ async def publish_pipelines(
                         f"Marked pipeline {dup.id} as SUPERSEDED (older version of {app_id} to {flat_manager_repo})"
                     )
 
+                    if dup.build_id:
+                        try:
+                            await flat_manager.purge(dup.build_id)
+                            logging.info(
+                                f"Purged build {dup.build_id} for superseded pipeline {dup.id}"
+                            )
+                        except httpx.HTTPStatusError as purge_e:
+                            logging.error(
+                                f"Failed to purge build {dup.build_id} for superseded pipeline {dup.id}. Status: {purge_e.response.status_code}, Response: {purge_e.response.text}"
+                            )
+                        except Exception as purge_e:
+                            logging.error(
+                                f"An unexpected error occurred while purging build {dup.build_id} for superseded pipeline {dup.id}: {purge_e}"
+                            )
+                    else:
+                        logging.warning(
+                            f"Superseded pipeline {dup.id} has no build_id, cannot purge."
+                        )
+
             except httpx.HTTPStatusError as e:
                 try:
                     error_data = json.loads(e.response.text)
