@@ -89,6 +89,7 @@ detect-appid $path:
 checkout repo ref:
     #!/usr/bin/env bash
     set -euxo pipefail
+    git config --global --add safe.directory "*"
     git init
     git remote add origin {{repo}}
     git fetch --depth 1 origin {{ref}}
@@ -100,6 +101,7 @@ prepare-env:
     set -euxo pipefail
     flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
     flatpak remote-add --user --if-not-exists flathub-beta https://dl.flathub.org/beta-repo/flathub-beta.flatpakrepo
+    git config --global --add safe.directory "*"
 
 validate-manifest app_id:
     #!/usr/bin/env bash
