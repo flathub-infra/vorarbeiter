@@ -663,7 +663,14 @@ async def publish_pipelines(
                         logging.info(
                             f"Pipeline {candidate.id} (Build {build_id}) is still validating. Skipping for this publish run."
                         )
-
+                    elif (
+                        e.response.status_code == 400
+                        and error_type == "wrong-repo-state"
+                        and current_state == "uploading"
+                    ):
+                        logging.info(
+                            f"Pipeline {candidate.id} (Build {build_id}) is still uploading. Skipping for this publish run."
+                        )
                     else:
                         logging.error(
                             f"Failed to publish build {build_id} for pipeline {candidate.id}. Status: {e.response.status_code}, Response: {e.response.text}"
