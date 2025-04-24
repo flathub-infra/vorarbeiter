@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import uuid
+import logging
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Request, status
@@ -216,24 +217,30 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     )
 
     commit_sha = pipeline.params.get("sha")
-    if commit_sha:
+    git_repo = pipeline.params.get("repo")
+
+    if commit_sha and git_repo:
         target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
         await update_commit_status(
             sha=commit_sha,
             state="pending",
-            app_id=app_id,
+            git_repo=git_repo,
             description="Build enqueued",
             target_url=target_url,
+        )
+    elif commit_sha and not git_repo:
+        logging.error(
+            f"Pipeline {pipeline.id}: Missing git_repo in params. Cannot update commit status."
         )
 
     pipeline = await pipeline_service.start_pipeline(pipeline_id=pipeline.id)
 
     pr_number_str = pipeline.params.get("pr_number")
-    if pr_number_str:
+    if pr_number_str and git_repo:
         try:
             pr_number = int(pr_number_str)
             await create_pr_comment(
-                app_id=app_id,
+                git_repo=git_repo,
                 pr_number=pr_number,
                 comment="🚧 Test build enqueued.",
             )
@@ -243,5 +250,9 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             )
         except Exception as e:
             print(f"Error creating initial PR comment for pipeline {pipeline.id}: {e}")
+    elif pr_number_str and not git_repo:
+        logging.error(
+            f"Pipeline {pipeline.id}: Missing git_repo in params. Cannot create PR comment."
+        )
 
     return pipeline.id

@@ -280,8 +280,9 @@ async def pipeline_callback(
             if updated_pipeline:
                 app_id = updated_pipeline.app_id
                 sha = updated_pipeline.params.get("sha")
+                git_repo = updated_pipeline.params.get("repo")
 
-                if app_id and sha:
+                if app_id and sha and git_repo:
                     match status_value:
                         case "success":
                             description = "Build succeeded."
@@ -303,13 +304,18 @@ async def pipeline_callback(
                         )
                         target_url = ""
 
-                    await update_commit_status(
-                        sha=sha,
-                        state=github_state,
-                        app_id=app_id,
-                        description=description,
-                        target_url=target_url,
-                    )
+                    if git_repo:
+                        await update_commit_status(
+                            sha=sha,
+                            state=github_state,
+                            git_repo=git_repo,
+                            description=description,
+                            target_url=target_url,
+                        )
+                    else:
+                        logging.error(
+                            f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot update commit status."
+                        )
 
                     if status_value == "success":
                         if build_id := updated_pipeline.build_id:
@@ -360,7 +366,7 @@ async def pipeline_callback(
                             )
 
                     pr_number_str = updated_pipeline.params.get("pr_number")
-                    if pr_number_str:
+                    if pr_number_str and git_repo:
                         try:
                             pr_number = int(pr_number_str)
                             log_url = updated_pipeline.log_url
@@ -384,7 +390,7 @@ async def pipeline_callback(
 
                             if comment:
                                 await create_pr_comment(
-                                    app_id=app_id,
+                                    git_repo=git_repo,
                                     pr_number=pr_number,
                                     comment=comment,
                                 )
@@ -396,6 +402,10 @@ async def pipeline_callback(
                             logging.error(
                                 f"Error creating final PR comment for pipeline {pipeline_id}: {e}"
                             )
+                    elif not git_repo:
+                        logging.error(
+                            f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot create PR comment."
+                        )
 
             return {
                 "status": "ok",
@@ -408,6 +418,7 @@ async def pipeline_callback(
             sha = None
             pr_number_str = None
             saved_log_url = None
+            git_repo = None
 
             async with get_db() as db:
                 pipeline = await db.get(Pipeline, pipeline_id)
@@ -439,24 +450,30 @@ async def pipeline_callback(
                 app_id = pipeline.app_id
                 sha = pipeline.params.get("sha")
                 pr_number_str = pipeline.params.get("pr_number")
+                git_repo = pipeline.params.get("repo")
 
             if app_id and sha and saved_log_url:
                 try:
                     target_url = saved_log_url
-                    await update_commit_status(
-                        sha=sha,
-                        state="pending",
-                        app_id=app_id,
-                        description="Build in progress",
-                        target_url=target_url,
-                    )
+                    if git_repo:
+                        await update_commit_status(
+                            sha=sha,
+                            state="pending",
+                            git_repo=git_repo,
+                            description="Build in progress",
+                            target_url=target_url,
+                        )
+                    else:
+                        logging.error(
+                            f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot update commit status."
+                        )
 
-                    if pr_number_str:
+                    if pr_number_str and git_repo:
                         try:
                             pr_number = int(pr_number_str)
                             comment = f"🚧 Started [test build]({saved_log_url})."
                             await create_pr_comment(
-                                app_id=app_id,
+                                git_repo=git_repo,
                                 pr_number=pr_number,
                                 comment=comment,
                             )
@@ -468,6 +485,10 @@ async def pipeline_callback(
                             logging.error(
                                 f"Error creating 'Started' PR comment for pipeline {pipeline_id}: {e_pr}"
                             )
+                    elif not git_repo:
+                        logging.error(
+                            f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot create PR comment."
+                        )
 
                 except Exception as e_status:
                     logging.error(
