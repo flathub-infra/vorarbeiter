@@ -82,6 +82,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
         mock_client = AsyncMock()
         mock_client_class.return_value = mock_client
         mock_client.publish = AsyncMock()
+        mock_client.get_build_info = AsyncMock(return_value={"repo_state": 0})
 
         @asynccontextmanager
         async def override_get_db_for_test():
@@ -151,6 +152,7 @@ async def test_publish_pipelines_error_handling(db_session_maker, client):
     with patch("app.routes.pipelines.FlatManagerClient") as mock_client_class:
         mock_client = AsyncMock()
         mock_client_class.return_value = mock_client
+        mock_client.get_build_info = AsyncMock(return_value={"repo_state": 0})
 
         mock_response = Response(status_code=400, content=b'{"error": "Bad request"}')
 

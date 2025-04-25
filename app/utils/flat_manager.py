@@ -1,4 +1,4 @@
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 from urllib.parse import urlparse
 
 import httpx
@@ -108,3 +108,14 @@ class FlatManagerClient:
                 timeout=self.timeout,
             )
             response.raise_for_status()
+
+    async def get_build_info(self, build_id: str) -> dict[str, Any]:
+        build_url = self.get_build_url(build_id)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{build_url}/extended",
+                headers=self.headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json()
