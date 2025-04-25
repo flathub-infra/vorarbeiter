@@ -1,9 +1,9 @@
+import json
 import logging
 import secrets
 import uuid
 from datetime import datetime
 from typing import Any
-import json
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -575,6 +575,15 @@ async def publish_pipelines(
                     url=settings.flat_manager_url,
                     token=settings.flat_manager_token,
                 )
+
+                # Mark builds which failed server-side validation as failed
+                build_info = await flat_manager.get_build_info(build_id)
+                repo_state = build_info.get("build", {}).get("repo_state")
+                if repo_state == 3:
+                    candidate.status = PipelineStatus.FAILED
+                    candidate.finished_at = datetime.now()
+                    continue
+
                 await flat_manager.publish(build_id)
 
                 candidate.status = PipelineStatus.PUBLISHED
@@ -644,6 +653,18 @@ async def publish_pipelines(
                     ):
                         logging.info(
                             f"Pipeline {candidate.id} (Build {build_id}) is still uploading. Skipping for this publish run."
+                        )
+                    elif current_state == "failed":
+                        logging.warning(
+                            f"Pipeline {candidate.id} (Build {build_id}) has failed checks in Flat-Manager. Marking as failed."
+                        )
+                        candidate.status = PipelineStatus.FAILED
+                        candidate.finished_at = datetime.now()
+                        errors.append(
+                            {
+                                "pipeline_id": str(candidate.id),
+                                "error": f"Build failed in Flat-Manager: {error_data.get('message', 'No details available')}",
+                            }
                         )
                     else:
                         logging.error(
