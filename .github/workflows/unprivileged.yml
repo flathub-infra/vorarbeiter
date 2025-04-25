@@ -196,8 +196,8 @@ jobs:
 
       - name: Create work directory
         run: |
-          mkdir -p ${GITHUB_WORKSPACE}/work
-          chmod 777 ${GITHUB_WORKSPACE}/work
+          mkdir -p ${GITHUB_WORKSPACE}/work/tmp
+          chmod -R 777 ${GITHUB_WORKSPACE}/work
 
       - name: Free up disk space
         run: |
@@ -221,11 +221,11 @@ jobs:
           docker run --rm \
             --entrypoint="" \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+            -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e REPO \
             -e REF \
-            -e TMPDIR=/work \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
@@ -238,6 +238,7 @@ jobs:
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
+            -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
@@ -251,6 +252,7 @@ jobs:
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
+            -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
@@ -267,6 +269,7 @@ jobs:
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
+            -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
@@ -277,6 +280,7 @@ jobs:
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
+            -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
@@ -287,6 +291,7 @@ jobs:
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
+            -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
@@ -297,6 +302,7 @@ jobs:
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
+            -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e REPO_TOKEN \
