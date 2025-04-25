@@ -1,7 +1,7 @@
 import hashlib
 import hmac
-import uuid
 import logging
+import uuid
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Request, status
@@ -109,6 +109,7 @@ async def receive_github_webhook(
     ignored_repos = [
         "flathub/flathub",
         "flathub/org.freedesktop.Platform.GL.nvidia",
+        "flathub/shared-modules",
     ]
     is_pr_event = "pull_request" in payload and payload.get("action") in [
         "opened",
