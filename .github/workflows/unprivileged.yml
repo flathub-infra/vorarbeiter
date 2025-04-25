@@ -253,8 +253,22 @@ jobs:
           sudo systemctl disable --now apparmor.service
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          sudo sysctl -w kernel.unprivileged_userns_clone=1
-          sudo sysctl -w user.max_user_namespaces=49152
+
+          docker run --rm \
+            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+            --security-opt apparmor=unconfined \
+            --entrypoint="" \
+            -e TMPDIR=/work/tmp \
+            -v /proc:/host/proc \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -w /work \
+            -e APP_ID \
+            -e BRANCH \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+            /bin/bash -c '
+              cat /proc/self/status
+            '
+
 
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
