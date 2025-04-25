@@ -259,6 +259,7 @@ jobs:
             --security-opt apparmor=unconfined \
             --entrypoint="" \
             -e TMPDIR=/work/tmp \
+            -v /proc:/host/proc \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
