@@ -106,6 +106,20 @@ async def receive_github_webhook(
             detail=f"Missing expected key in GitHub payload: {e}",
         )
 
+    ignored_repos = [
+        "flathub/flathub",
+        "flathub/org.freedesktop.Platform.GL.nvidia",
+    ]
+    is_pr_event = "pull_request" in payload and payload.get("action") in [
+        "opened",
+        "synchronize",
+        "reopened",
+    ]
+    is_push_event = "commits" in payload and payload.get("ref", "")
+
+    if repo_name in ignored_repos and (is_pr_event or is_push_event):
+        return {"message": "Webhook received but ignored due to repository filter."}
+
     event = WebhookEvent(
         id=delivery_id,
         source=WebhookSource.GITHUB,
