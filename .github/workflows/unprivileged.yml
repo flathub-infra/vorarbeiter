@@ -251,6 +251,7 @@ jobs:
         run: |
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+            --security-opt apparmor=unconfined \
             --entrypoint="" \
             -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
