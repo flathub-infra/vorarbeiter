@@ -249,6 +249,9 @@ jobs:
 
       - name: Build flatpak
         run: |
+          sudo aa-teardown || true
+          sudo systemctl disable --now apparmor.service
+
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --security-opt apparmor=unconfined \
