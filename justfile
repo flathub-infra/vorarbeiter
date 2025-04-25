@@ -106,6 +106,7 @@ prepare-env:
 validate-manifest app_id:
     #!/usr/bin/env bash
     set -euxo pipefail
+    git config --global --add safe.directory "*"
     manifest=$(just _get_manifest {{app_id}})
     flatpak-builder-lint --exceptions manifest "$manifest"
 
