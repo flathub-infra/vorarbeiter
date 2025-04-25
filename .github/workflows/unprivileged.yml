@@ -257,22 +257,7 @@ jobs:
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --security-opt apparmor=unconfined \
-            --entrypoint="" \
-            -e TMPDIR=/work/tmp \
-            -v /proc:/host/proc \
-            -v "${GITHUB_WORKSPACE}/work:/work" \
-            -w /work \
-            -e APP_ID \
-            -e BRANCH \
-            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            /bin/bash -c '
-              cat /proc/self/status
-            '
-
-
-          docker run --rm \
-            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
-            --security-opt apparmor=unconfined \
+            --cap-drop all \
             --entrypoint="" \
             -e TMPDIR=/work/tmp \
             -v /proc:/host/proc \
