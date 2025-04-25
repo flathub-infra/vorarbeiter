@@ -79,14 +79,14 @@ jobs:
 
       - name: Checkout repository
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --entrypoint="" \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e REPO \
             -e REF \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
               just checkout $REPO $REF
@@ -95,13 +95,13 @@ jobs:
       - name: Detect app ID of the new submission
         if: ${{ github.event.inputs.app_id == 'flathub' }}
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --entrypoint="" \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just detect-appid /work > app_id
 
           echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
@@ -116,13 +116,13 @@ jobs:
 
       - name: Validate manifest
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --entrypoint="" \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just validate-manifest $APP_ID
 
   setup-matrix:
@@ -218,14 +218,14 @@ jobs:
 
       - name: Checkout repository
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e REPO \
             -e REF \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
               just checkout $REPO $REF
@@ -234,27 +234,27 @@ jobs:
       - name: Detect app ID of the new submission
         if: ${{ github.event.inputs.app_id == 'flathub' }}
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just detect-appid /work > app_id
 
           echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
 
       - name: Build flatpak
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
             -e BRANCH \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
               just prepare-env
@@ -263,43 +263,43 @@ jobs:
 
       - name: Commit screenshots
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just commit-screenshots
 
       - name: Validate build
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just validate-build
 
       - name: Generate deltas
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just generate-deltas
 
       - name: Upload build
         run: |
-          docker run --rm --privileged \
+          docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e REPO_TOKEN \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just upload $BUILD_URL
 
   callback:
