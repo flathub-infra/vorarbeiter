@@ -219,12 +219,13 @@ jobs:
       - name: Checkout repository
         run: |
           docker run --rm \
-            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
+            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e REPO \
             -e REF \
+            -e TMPDIR=/work \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
