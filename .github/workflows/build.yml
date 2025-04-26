@@ -249,8 +249,8 @@ jobs:
 
       - name: Build flatpak
         run: |
-          sudo aa-teardown || true
-          sudo systemctl disable --now apparmor.service
+          sudo aa-teardown >/dev/null 2>&1 || true
+          sudo systemctl disable --now apparmor.service >/dev/null 2>&1
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
