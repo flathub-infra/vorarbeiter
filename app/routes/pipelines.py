@@ -340,30 +340,6 @@ async def pipeline_callback(
                                 f"Pipeline {pipeline_id} succeeded but has no build_id, skipping commit."
                             )
 
-                    if status_value != "success":
-                        if build_id := updated_pipeline.build_id:
-                            try:
-                                flat_manager = FlatManagerClient(
-                                    url=settings.flat_manager_url,
-                                    token=settings.flat_manager_token,
-                                )
-                                await flat_manager.purge(build_id)
-                                logging.info(
-                                    f"Purged build {build_id} (status: {status_value}) for pipeline {pipeline_id}"
-                                )
-                            except httpx.HTTPStatusError as e:
-                                logging.error(
-                                    f"Failed to purge build {build_id} for pipeline {pipeline_id}. Status: {e.response.status_code}, Response: {e.response.text}"
-                                )
-                            except Exception as e:
-                                logging.error(
-                                    f"An unexpected error occurred while purging build {build_id} for pipeline {pipeline_id}: {e}"
-                                )
-                        else:
-                            logging.warning(
-                                f"Pipeline {pipeline_id} finished with status '{status_value}' but has no build_id, skipping purge."
-                            )
-
                     pr_number_str = updated_pipeline.params.get("pr_number")
                     if pr_number_str and git_repo:
                         try:
