@@ -110,6 +110,29 @@ validate-manifest app_id:
     manifest=$(just _get_manifest {{app_id}})
     flatpak-builder-lint --exceptions manifest "$manifest"
 
+download-sources app_id:
+    #!/usr/bin/env bash
+    set -euxo pipefail
+
+    manifest=$(just _get_manifest {{app_id}})
+
+    max_retries=5
+    sleep_seconds=7
+
+    for (( retry_count=0; retry_count<$max_retries; retry_count++ )); do
+        if flatpak-builder --force-clean --sandbox --download-only builddir "$manifest"; then
+            exit 0
+        fi
+
+        if [[ $retry_count -lt $((max_retries - 1)) ]]; then
+            echo "Attempt $((retry_count + 1)) failed. Retrying in $sleep_seconds seconds..."
+            sleep $sleep_seconds
+        fi
+    done
+
+    echo "Failed after $max_retries attempts"
+    exit 1
+
 build app_id branch="stable":
     #!/usr/bin/env bash
     set -euxo pipefail
@@ -128,7 +151,6 @@ build app_id branch="stable":
         --disable-rofiles-fuse \
         --mirror-screenshots-url=https://dl.flathub.org/media \
         --repo repo \
-        --extra-sources=./downloads \
         --default-branch "{{branch}}" \
         --subject "${subject}" \
         builddir "$manifest"

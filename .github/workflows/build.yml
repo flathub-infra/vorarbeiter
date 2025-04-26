@@ -269,6 +269,7 @@ jobs:
             /bin/bash -c '
               git config --global --add safe.directory "*"
               just prepare-env
+              just download-sources $APP_ID
               just build $APP_ID $BRANCH
             '
 
