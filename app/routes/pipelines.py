@@ -260,8 +260,6 @@ async def pipeline_callback(
         if "status" in data:
             if pipeline.status in [
                 PipelineStatus.SUCCEEDED,
-                PipelineStatus.FAILED,
-                PipelineStatus.CANCELLED,
                 PipelineStatus.PUBLISHED,
             ]:
                 raise HTTPException(
