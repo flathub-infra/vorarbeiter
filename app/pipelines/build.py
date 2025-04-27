@@ -9,6 +9,12 @@ from app.providers import github_provider
 from app.providers.base import ProviderType  # Kept for backward compatibility
 from app.utils.flat_manager import FlatManagerClient
 
+large_build_app_ids = {
+    "io.github.ungoogled_software.ungoogled_chromium",
+    "org.chromium.Chromium",
+    "org.libreoffice.LibreOffice",
+}
+
 
 class BuildPipeline:
     def __init__(self):
@@ -84,11 +90,6 @@ class BuildPipeline:
 
             workflow_id = pipeline.params.get("workflow_id", "build.yml")
 
-            large_build_app_ids = {
-                "io.github.ungoogled_software.ungoogled_chromium",
-                "org.chromium.Chromium",
-                "org.libreoffice.LibreOffice",
-            }
             if pipeline.app_id in large_build_app_ids:
                 build_type = "large"
             else:
