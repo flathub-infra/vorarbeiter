@@ -169,9 +169,9 @@ jobs:
               if build_type == 'large':
                   match arch:
                       case "x86_64":
-                          runner = "runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/disk=large/tag=arch-amd64"
+                          runner = "runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/disk=large/tag=arch-amd64/spot=lowest-price"
                       case "aarch64":
-                          runner = "runs-on=${{ github.run_id }}/runner=8cpu-linux-arm64/disk=large/tag=arch-arm64"
+                          runner = "runs-on=${{ github.run_id }}/runner=8cpu-linux-arm64/disk=large/tag=arch-arm64/spot=lowest-price"
                       case _:
                           print(f"Error: Unsupported architecture: {arch}")
                           exit(1)
