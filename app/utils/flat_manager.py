@@ -48,7 +48,7 @@ class FlatManagerClient:
                     "sub": f"build/{build_id}",
                     "scope": ["upload"],
                     "prefix": [app_id],
-                    "duration": 12 * 60 * 60,
+                    "duration": 24 * 60 * 60,
                 },
                 headers=self.headers,
                 timeout=self.timeout,
