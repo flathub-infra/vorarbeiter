@@ -149,6 +149,8 @@ jobs:
           import os
 
           arches = ["x86_64", "aarch64"]
+          build_type = ""
+
 
           if os.path.exists("repo/flathub.json"):
               with open("repo/flathub.json") as f:
@@ -163,14 +165,26 @@ jobs:
           matrix = {"include": []}
           for arch in arches:
               arch = arch.strip()
-              match arch:
-                  case "x86_64":
-                      runner = "ubuntu-24.04"
-                  case "aarch64":
-                      runner = "ubuntu-24.04-arm"
-                  case _:
-                      print(f"Error: Unsupported architecture: {arch}")
-                      exit(1)
+              runner = ""
+
+              if build_type == 'large':
+                  match arch:
+                      case "x86_64":
+                          runner = "runs-on=${{ github.run_id }}/runner=4cpu-linux-x64/tag=arch-amd64"
+                      case "aarch64":
+                          runner = "runs-on=${{ github.run_id }}/runner=4cpu-linux-arm64/tag=arch-arm64"
+                      case _:
+                          print(f"Error: Unsupported architecture: {arch}")
+                          exit(1)
+              else:
+                  match arch:
+                      case "x86_64":
+                          runner = "ubuntu-24.04"
+                      case "aarch64":
+                          runner = "ubuntu-24.04-arm"
+                      case _:
+                          print(f"Error: Unsupported architecture: {arch}")
+                          exit(1)
 
               matrix["include"].append({"arch": arch, "runner": runner})
 
