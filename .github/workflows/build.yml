@@ -149,7 +149,7 @@ jobs:
           import os
 
           arches = ["x86_64", "aarch64"]
-          build_type = ""
+          build_type = "${{ inputs.build_type }}"
 
 
           if os.path.exists("repo/flathub.json"):
@@ -165,7 +165,6 @@ jobs:
           matrix = {"include": []}
           for arch in arches:
               arch = arch.strip()
-              runner = ""
 
               if build_type == 'large':
                   match arch:
