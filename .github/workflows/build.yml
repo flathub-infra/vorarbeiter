@@ -29,6 +29,10 @@ on:
       callback_token:
         description: 'Callback token'
         required: true
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'default'
 
 jobs:
   check-event-type:
