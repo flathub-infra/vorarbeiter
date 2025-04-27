@@ -8,7 +8,7 @@ runners:
 
   large-arm64:
     cpu: [8, 32]
-    ram: [4, 512]
+    ram: [4, 64]
     disk: large
-    spot: price-capacity-optimized
+    spot: lowest-price
     family: ["m7g", "m6g", "r7g", "r6g", "c7g", "c6g"]
