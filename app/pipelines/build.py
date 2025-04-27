@@ -2,7 +2,6 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
@@ -101,6 +100,7 @@ class BuildPipeline:
                         "flat_manager_token": upload_token,
                         "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
                         "callback_token": pipeline.callback_token,
+                        "build_type": pipeline.params.get("build_type", "default"),
                     },
                 },
             }
