@@ -166,12 +166,12 @@ jobs:
           for arch in arches:
               arch = arch.strip()
 
-              if build_type != 'default':
+              if build_type == 'large':
                   match arch:
                       case "x86_64":
-                          runner = f"runs-on=${{ github.run_id }}/runner={build_type}-amd64/tag=arch-amd64"
+                          runner = "runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/disk=large/tag=arch-amd64"
                       case "aarch64":
-                          runner = f"runs-on=${{ github.run_id }}/runner={build_type}-arm64/tag=arch-arm64"
+                          runner = "runs-on=${{ github.run_id }}/runner=8cpu-linux-arm64/disk=large/tag=arch-arm64"
                       case _:
                           print(f"Error: Unsupported architecture: {arch}")
                           exit(1)
