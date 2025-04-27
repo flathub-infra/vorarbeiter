@@ -84,6 +84,16 @@ class BuildPipeline:
 
             workflow_id = pipeline.params.get("workflow_id", "build.yml")
 
+            large_build_app_ids = {
+                "io.github.ungoogled_software.ungoogled_chromium",
+                "org.chromium.Chromium",
+                "org.libreoffice.LibreOffice",
+            }
+            if pipeline.app_id in large_build_app_ids:
+                build_type = "large"
+            else:
+                build_type = pipeline.params.get("build_type", "default")
+
             job_data = {
                 "app_id": pipeline.app_id,
                 "job_type": "build",
@@ -100,7 +110,7 @@ class BuildPipeline:
                         "flat_manager_token": upload_token,
                         "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
                         "callback_token": pipeline.callback_token,
-                        "build_type": pipeline.params.get("build_type", "default"),
+                        "build_type": build_type,
                     },
                 },
             }
