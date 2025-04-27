@@ -12,3 +12,4 @@ runners:
     disk: large
     spot: lowest-price
     family: ["m7g", "m6g", "r7g", "r6g", "c7g", "c6g"]
+    image: ubuntu24-full-arm64
