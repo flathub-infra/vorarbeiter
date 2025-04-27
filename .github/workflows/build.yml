@@ -169,9 +169,9 @@ jobs:
               if build_type != 'default':
                   match arch:
                       case "x86_64":
-                          runner = "runs-on=${{ github.run_id }}/runner={build_type}-amd64/tag=arch-amd64"
+                          runner = f"runs-on=${{ github.run_id }}/runner={build_type}-amd64/tag=arch-amd64"
                       case "aarch64":
-                          runner = "runs-on=${{ github.run_id }}/runner={build_type}-arm64/tag=arch-arm64"
+                          runner = f"runs-on=${{ github.run_id }}/runner={build_type}-arm64/tag=arch-arm64"
                       case _:
                           print(f"Error: Unsupported architecture: {arch}")
                           exit(1)
