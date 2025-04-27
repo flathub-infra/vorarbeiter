@@ -1,12 +1,14 @@
 runners:
   large-amd64:
     cpu: [8, 32]
+    ram: [4, 512]
     disk: large
-    spot: capacity-optimized
+    spot: price-capacity-optimized
     family: ["m7a", "m7i", "r7i", "c7i", "c7a", "r7a", "t3", "t3a"]
 
   large-arm64:
     cpu: [8, 32]
+    ram: [4, 512]
     disk: large
-    spot: capacity-optimized
+    spot: price-capacity-optimized
     family: ["m7g", "m6g", "r7g", "r6g", "c7g", "c6g"]
