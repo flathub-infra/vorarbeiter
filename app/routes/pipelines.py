@@ -16,7 +16,11 @@ from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines import BuildPipeline
 from app.utils.flat_manager import FlatManagerClient
-from app.utils.github import create_pr_comment, update_commit_status
+from app.utils.github import (
+    create_pr_comment,
+    update_commit_status,
+    create_github_issue,
+)
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
@@ -329,6 +333,31 @@ async def pipeline_callback(
                         logging.error(
                             f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot update commit status."
                         )
+
+                    if (
+                        status_value == "failure"
+                        and updated_pipeline.flat_manager_repo == "stable"
+                    ):
+                        if git_repo:
+                            try:
+                                title = "Stable build failed"
+                                body = f"The stable build pipeline for `{app_id}` failed.\n\nCommit SHA: `{sha}`\n"
+                                if target_url:
+                                    body += f"Build log: {target_url}"
+                                else:
+                                    body += "Build log URL not available."
+                                body += "\n\ncc @flathub/build-moderation"
+                                await create_github_issue(
+                                    git_repo=git_repo, title=title, body=body
+                                )
+                            except Exception as e_issue:
+                                logging.error(
+                                    f"Failed to create GitHub issue for failed stable build pipeline {pipeline_id}: {e_issue}"
+                                )
+                        else:
+                            logging.error(
+                                f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot create issue for failed stable build."
+                            )
 
                     if status_value == "success":
                         if build_id := updated_pipeline.build_id:

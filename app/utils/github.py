@@ -121,3 +121,37 @@ async def create_pr_comment(git_repo: str, pr_number: int, comment: str) -> None
         logger.error(
             f"Unexpected error creating comment on PR #{pr_number} in {git_repo}: {e}"
         )
+
+
+async def create_github_issue(git_repo: str, title: str, body: str) -> None:
+    if not git_repo:
+        logger.error("Missing git_repo for GitHub issue. Skipping issue creation.")
+        return
+
+    url = f"https://api.github.com/repos/{git_repo}/issues"
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {settings.github_status_token}",
+    }
+    payload = {"title": title, "body": body}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            issue_url = response.json().get("html_url", "unknown URL")
+            logger.info(f"Successfully created issue in {git_repo}: {issue_url}")
+    except httpx.RequestError as e:
+        logger.error(f"Request error creating issue in {git_repo}: {e}")
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"HTTP error creating issue in {git_repo}: "
+            f"{e.response.status_code} - {e.response.text}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error creating issue in {git_repo}: {e}")
