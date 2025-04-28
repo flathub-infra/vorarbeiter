@@ -8,8 +8,8 @@ runners:
 
   large-arm64:
     cpu: [8, 32]
-    ram: [4, 64]
+    ram: [4, 512]
     disk: large
-    spot: lowest-price
+    spot: price-capacity-optimized
     family: ["m7g", "m6g", "r7g", "r6g", "c7g", "c6g"]
     image: ubuntu24-full-arm64
