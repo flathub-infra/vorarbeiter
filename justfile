@@ -153,6 +153,7 @@ build app_id branch="stable":
         --repo repo \
         --default-branch "{{branch}}" \
         --subject "${subject}" \
+        --disable-download \
         builddir "$manifest"
 
 commit-screenshots:
