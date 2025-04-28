@@ -3,7 +3,7 @@ runners:
     cpu: [8, 32]
     ram: [4, 512]
     disk: large
-    spot: price-capacity-optimized
+    spot: lowest-price
     family: ["m7a", "m7i", "r7i", "c7i", "c7a", "r7a", "t3", "t3a"]
 
   large-arm64:
