@@ -245,17 +245,31 @@ async def pipeline_callback(
                 detail="Invalid callback token",
             )
 
+        app_id_updated = False
         if pipeline.app_id == "flathub" and "app_id" in data:
             app_id = data.get("app_id")
             if isinstance(app_id, str) and app_id:
                 pipeline.app_id = app_id
-                await db.commit()
+                app_id_updated = True
 
-                return {
-                    "status": "ok",
-                    "pipeline_id": str(pipeline_id),
-                    "app_id": app_id,
-                }
+        is_extra_data_updated = False
+        if "is_extra_data" in data:
+            is_extra_data = data.get("is_extra_data")
+            if isinstance(is_extra_data, bool):
+                pipeline.is_extra_data = is_extra_data
+                is_extra_data_updated = True
+
+        if app_id_updated or is_extra_data_updated:
+            await db.commit()
+            response_data: dict[str, Any] = {
+                "status": "ok",
+                "pipeline_id": str(pipeline_id),
+            }
+            if app_id_updated:
+                response_data["app_id"] = pipeline.app_id
+            if is_extra_data_updated:
+                response_data["is_extra_data"] = pipeline.is_extra_data
+            return response_data
 
         if "status" in data:
             if pipeline.status in [
@@ -479,7 +493,7 @@ async def pipeline_callback(
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Request must contain either 'status', 'log_url', or 'app_id' field",
+                detail="Request must contain either 'status', 'log_url', 'app_id', or 'is_extra_data' field",
             )
 
 
