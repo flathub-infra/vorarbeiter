@@ -9,7 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from app.config import settings
 from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
-from app.pipelines.build import BuildPipeline, large_build_app_ids
+from app.pipelines.build import BuildPipeline, app_build_types
 from app.utils.github import create_pr_comment, update_commit_status
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
@@ -121,7 +121,7 @@ async def receive_github_webhook(
     if repo_name in ignored_repos and (is_pr_event or is_push_event):
         return {"message": "Webhook received but ignored due to repository filter."}
 
-    if repo_name.split("/")[1] in large_build_app_ids and is_pr_event:
+    if repo_name.split("/")[1] in app_build_types and is_pr_event:
         return {
             "message": "Pull request webhook received but ignored due to large app."
         }
