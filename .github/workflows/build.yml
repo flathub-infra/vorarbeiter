@@ -76,55 +76,8 @@ jobs:
           mkdir -p ${GITHUB_WORKSPACE}/work
           chmod 777 ${GITHUB_WORKSPACE}/work
 
-      - name: Download justfile and seccomp profile
-        shell: python
-        run: |
-          import urllib3
-          import time
-          import random
-          import os
-          import sys
-
-          http = urllib3.PoolManager()
-          base_url = "https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/"
-          files_to_download = {
-              f"{base_url}justfile": os.path.join(os.environ["GITHUB_WORKSPACE"], "work/justfile"),
-              f"{base_url}flatpak.seccomp.json": os.path.join(os.environ["GITHUB_WORKSPACE"], "flatpak.seccomp.json")
-          }
-
-          for url, target_path in files_to_download.items():
-              print(f"Downloading {url} to {target_path}")
-              success = False
-              attempts = 0
-              max_attempts = 5
-              
-              while not success and attempts < max_attempts:
-                  attempts += 1
-                  try:
-                      response = http.request('GET', url)
-                      if response.status == 200:
-                          os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                          # Write the content to the file
-                          with open(target_path, 'wb') as f:
-                              f.write(response.data)
-                          print(f"Successfully downloaded {url} on attempt {attempts}")
-                          success = True
-                      elif response.status == 429:
-                          sleep_time = random.uniform(1, 5)
-                          print(f"Received 429 status code (Rate limiting). Retrying after {sleep_time:.2f} seconds...")
-                          time.sleep(sleep_time)
-                      else:
-                          print(f"Failed with status code: {response.status}")
-                          time.sleep(random.uniform(1, 3))
-                  except Exception as e:
-                      print(f"Error occurred: {str(e)}")
-                      time.sleep(random.uniform(1, 3))
-                      
-              if not success:
-                  print(f"Failed to download {url} after {max_attempts} attempts")
-                  sys.exit(1)
-
-          print("All files downloaded successfully")
+      - name: Setup justpak
+        uses: ./.github/actions/setup-justpak
 
       - name: Checkout repository
         run: |
@@ -273,55 +226,8 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
-      - name: Download justfile and seccomp profile
-        shell: python
-        run: |
-          import urllib3
-          import time
-          import random
-          import os
-          import sys
-
-          http = urllib3.PoolManager()
-          base_url = "https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/"
-          files_to_download = {
-              f"{base_url}justfile": os.path.join(os.environ["GITHUB_WORKSPACE"], "work/justfile"),
-              f"{base_url}flatpak.seccomp.json": os.path.join(os.environ["GITHUB_WORKSPACE"], "flatpak.seccomp.json")
-          }
-
-          for url, target_path in files_to_download.items():
-              print(f"Downloading {url} to {target_path}")
-              success = False
-              attempts = 0
-              max_attempts = 5
-              
-              while not success and attempts < max_attempts:
-                  attempts += 1
-                  try:
-                      response = http.request('GET', url)
-                      if response.status == 200:
-                          os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                          # Write the content to the file
-                          with open(target_path, 'wb') as f:
-                              f.write(response.data)
-                          print(f"Successfully downloaded {url} on attempt {attempts}")
-                          success = True
-                      elif response.status == 429:
-                          sleep_time = random.uniform(1, 5)
-                          print(f"Received 429 status code (Rate limiting). Retrying after {sleep_time:.2f} seconds...")
-                          time.sleep(sleep_time)
-                      else:
-                          print(f"Failed with status code: {response.status}")
-                          time.sleep(random.uniform(1, 3))
-                  except Exception as e:
-                      print(f"Error occurred: {str(e)}")
-                      time.sleep(random.uniform(1, 3))
-                      
-              if not success:
-                  print(f"Failed to download {url} after {max_attempts} attempts")
-                  sys.exit(1)
-
-          print("All files downloaded successfully")
+      - name: Setup justpak
+        uses: ./.github/actions/setup-justpak
 
       - name: Checkout repository
         run: |
