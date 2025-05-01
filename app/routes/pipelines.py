@@ -145,7 +145,7 @@ async def list_pipelines(
         stmt = select(Pipeline).order_by(Pipeline.created_at.desc())
 
         if app_id is not None:
-            stmt = stmt.where(Pipeline.app_id == app_id)
+            stmt = stmt.where(Pipeline.app_id.startswith(app_id))
 
         if status_filter is not None:
             try:
