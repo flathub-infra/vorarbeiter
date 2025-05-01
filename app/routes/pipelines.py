@@ -1,10 +1,10 @@
-import logging
 import secrets
 import uuid
 from datetime import datetime
 from typing import Any
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
@@ -21,6 +21,7 @@ from app.utils.github import (
     update_commit_status,
 )
 
+logger = structlog.get_logger(__name__)
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
 api_security = HTTPBearer()
@@ -317,8 +318,9 @@ async def pipeline_callback(
 
                     target_url = updated_pipeline.log_url
                     if not target_url:
-                        logging.warning(
-                            f"Pipeline {pipeline_id}: log_url is unexpectedly None when setting final commit status."
+                        logger.warning(
+                            "log_url is unexpectedly None when setting final commit status",
+                            pipeline_id=str(pipeline_id),
                         )
                         target_url = ""
 
@@ -331,8 +333,9 @@ async def pipeline_callback(
                             target_url=target_url,
                         )
                     else:
-                        logging.error(
-                            f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot update commit status."
+                        logger.error(
+                            "Missing git_repo in params. Cannot update commit status",
+                            pipeline_id=str(pipeline_id),
                         )
 
                     if (
@@ -352,12 +355,15 @@ async def pipeline_callback(
                                     git_repo=git_repo, title=title, body=body
                                 )
                             except Exception as e_issue:
-                                logging.error(
-                                    f"Failed to create GitHub issue for failed stable build pipeline {pipeline_id}: {e_issue}"
+                                logger.error(
+                                    "Failed to create GitHub issue for failed stable build",
+                                    pipeline_id=str(pipeline_id),
+                                    error=str(e_issue),
                                 )
                         else:
-                            logging.error(
-                                f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot create issue for failed stable build."
+                            logger.error(
+                                "Missing git_repo in params. Cannot create issue for failed stable build",
+                                pipeline_id=str(pipeline_id),
                             )
 
                     if status_value == "success":
@@ -368,20 +374,30 @@ async def pipeline_callback(
                                     token=settings.flat_manager_token,
                                 )
                                 await flat_manager.commit(build_id)
-                                logging.info(
-                                    f"Committed build {build_id} for pipeline {pipeline_id}"
+                                logger.info(
+                                    "Committed build",
+                                    build_id=build_id,
+                                    pipeline_id=str(pipeline_id),
                                 )
                             except httpx.HTTPStatusError as e:
-                                logging.error(
-                                    f"Failed to commit build {build_id} for pipeline {pipeline_id}. Status: {e.response.status_code}, Response: {e.response.text}"
+                                logger.error(
+                                    "Failed to commit build",
+                                    build_id=build_id,
+                                    pipeline_id=str(pipeline_id),
+                                    status_code=e.response.status_code,
+                                    response_text=e.response.text,
                                 )
                             except Exception as e:
-                                logging.error(
-                                    f"An unexpected error occurred while committing build {build_id} for pipeline {pipeline_id}: {e}"
+                                logger.error(
+                                    "Unexpected error while committing build",
+                                    build_id=build_id,
+                                    pipeline_id=str(pipeline_id),
+                                    error=str(e),
                                 )
                         else:
-                            logging.warning(
-                                f"Pipeline {pipeline_id} succeeded but has no build_id, skipping commit."
+                            logger.warning(
+                                "Pipeline succeeded but has no build_id, skipping commit",
+                                pipeline_id=str(pipeline_id),
                             )
 
                     pr_number_str = updated_pipeline.params.get("pr_number")
@@ -414,16 +430,21 @@ async def pipeline_callback(
                                     comment=comment,
                                 )
                         except ValueError:
-                            logging.error(
-                                f"Invalid pr_number '{pr_number_str}' for pipeline {pipeline_id}. Skipping final PR comment."
+                            logger.error(
+                                "Invalid PR number. Skipping final PR comment.",
+                                pr_number=pr_number_str,
+                                pipeline_id=str(pipeline_id),
                             )
                         except Exception as e:
-                            logging.error(
-                                f"Error creating final PR comment for pipeline {pipeline_id}: {e}"
+                            logger.error(
+                                "Error creating final PR comment",
+                                pipeline_id=str(pipeline_id),
+                                error=str(e),
                             )
                     elif not git_repo:
-                        logging.error(
-                            f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot create PR comment."
+                        logger.error(
+                            "Missing git_repo in params. Cannot create PR comment",
+                            pipeline_id=str(pipeline_id),
                         )
 
             return {
@@ -483,8 +504,9 @@ async def pipeline_callback(
                             target_url=target_url,
                         )
                     else:
-                        logging.error(
-                            f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot update commit status."
+                        logger.error(
+                            "Missing git_repo in params. Cannot update commit status",
+                            pipeline_id=str(pipeline_id),
                         )
 
                     if pr_number_str and git_repo:
@@ -497,21 +519,28 @@ async def pipeline_callback(
                                 comment=comment,
                             )
                         except ValueError:
-                            logging.error(
-                                f"Invalid pr_number '{pr_number_str}' for pipeline {pipeline_id}. Skipping PR comment."
+                            logger.error(
+                                "Invalid PR number. Skipping PR comment",
+                                pr_number=pr_number_str,
+                                pipeline_id=str(pipeline_id),
                             )
                         except Exception as e_pr:
-                            logging.error(
-                                f"Error creating 'Started' PR comment for pipeline {pipeline_id}: {e_pr}"
+                            logger.error(
+                                "Error creating 'Started' PR comment",
+                                pipeline_id=str(pipeline_id),
+                                error=str(e_pr),
                             )
                     elif not git_repo:
-                        logging.error(
-                            f"Pipeline {pipeline_id}: Missing git_repo in params. Cannot create PR comment."
+                        logger.error(
+                            "Missing git_repo in params. Cannot create PR comment",
+                            pipeline_id=str(pipeline_id),
                         )
 
                 except Exception as e_status:
-                    logging.error(
-                        f"Error processing GitHub updates after saving log_url for pipeline {pipeline_id}: {e_status}"
+                    logger.error(
+                        "Error processing GitHub updates after saving log_url",
+                        pipeline_id=str(pipeline_id),
+                        error=str(e_status),
                     )
 
             return {
@@ -566,7 +595,7 @@ class PublishSummary(BaseModel):
 async def publish_pipelines(
     token: str = Depends(verify_token),
 ):
-    logging.info("Starting pipeline publishing process")
+    logger.info("Starting pipeline publishing process")
 
     published_ids = []
     superseded_ids = []
@@ -584,8 +613,9 @@ async def publish_pipelines(
         pipeline_groups: dict[tuple[str, str | None], list[Pipeline]] = {}
         for pipeline in pipelines:
             if pipeline.flat_manager_repo is None:
-                logging.warning(
-                    f"Pipeline {pipeline.id} has null flat_manager_repo, skipping."
+                logger.warning(
+                    "Pipeline has null flat_manager_repo, skipping",
+                    pipeline_id=str(pipeline.id),
                 )
                 continue
             key = (pipeline.app_id, pipeline.flat_manager_repo)
@@ -610,8 +640,11 @@ async def publish_pipelines(
             for dup in duplicates:
                 if dup.status != PipelineStatus.SUPERSEDED:
                     dup.status = PipelineStatus.SUPERSEDED
-                    logging.info(
-                        f"Marked pipeline {dup.id} as SUPERSEDED (older version of {app_id} to {flat_manager_repo})"
+                    logger.info(
+                        "Marked pipeline as SUPERSEDED",
+                        pipeline_id=str(dup.id),
+                        app_id=app_id,
+                        repo=flat_manager_repo,
                     )
                 if str(dup.id) not in superseded_ids:
                     superseded_ids.append(str(dup.id))
@@ -619,21 +652,33 @@ async def publish_pipelines(
                 if dup.build_id:
                     try:
                         await flat_manager.purge(dup.build_id)
-                        logging.info(
-                            f"Purged build {dup.build_id} for superseded pipeline {dup.id}"
+                        logger.info(
+                            "Purged build for superseded pipeline",
+                            build_id=dup.build_id,
+                            pipeline_id=str(dup.id),
                         )
                     except httpx.HTTPStatusError as purge_e:
-                        logging.error(
-                            f"Failed to purge build {dup.build_id} for superseded pipeline {dup.id}. Status: {purge_e.response.status_code}, Response: {purge_e.response.text}"
+                        logger.error(
+                            "Failed to purge build for superseded pipeline",
+                            build_id=dup.build_id,
+                            pipeline_id=str(dup.id),
+                            status_code=purge_e.response.status_code,
+                            response_text=purge_e.response.text,
                         )
                     except Exception as purge_e:
-                        logging.error(
-                            f"An unexpected error occurred while purging build {dup.build_id} for superseded pipeline {dup.id}: {purge_e}"
+                        logger.error(
+                            "Unexpected error purging build for superseded pipeline",
+                            build_id=dup.build_id,
+                            pipeline_id=str(dup.id),
+                            error=str(purge_e),
                         )
 
             if not candidate.build_id:
-                logging.warning(
-                    f"Candidate Pipeline {candidate.id} ({app_id}/{flat_manager_repo}) has no build_id, skipping publish."
+                logger.warning(
+                    "Candidate Pipeline has no build_id, skipping publish",
+                    pipeline_id=str(candidate.id),
+                    app_id=app_id,
+                    repo=flat_manager_repo,
                 )
                 errors.append(
                     {
@@ -657,8 +702,10 @@ async def publish_pipelines(
                     )
 
             except httpx.RequestError as e:
-                logging.error(
-                    f"Failed to get build info for {build_id} from flat-manager: Request Error {e}"
+                logger.error(
+                    "Failed to get build info from flat-manager",
+                    build_id=build_id,
+                    error=str(e),
                 )
                 errors.append(
                     {
@@ -668,8 +715,11 @@ async def publish_pipelines(
                 )
                 continue
             except httpx.HTTPStatusError as e:
-                logging.error(
-                    f"Failed to get build info for {build_id} from flat-manager: HTTP {e.response.status_code} - {e.response.text}"
+                logger.error(
+                    "Failed to get build info from flat-manager",
+                    build_id=build_id,
+                    status_code=e.response.status_code,
+                    response_text=e.response.text,
                 )
                 errors.append(
                     {
@@ -679,7 +729,11 @@ async def publish_pipelines(
                 )
                 continue
             except ValueError as e:
-                logging.error(f"Failed to parse build info for {build_id}: {e}")
+                logger.error(
+                    "Failed to parse build info",
+                    build_id=build_id,
+                    error=str(e),
+                )
                 errors.append(
                     {
                         "pipeline_id": str(candidate.id),
@@ -688,8 +742,10 @@ async def publish_pipelines(
                 )
                 continue
             except Exception as e:
-                logging.error(
-                    f"Unexpected error getting build info for {build_id}: {e}"
+                logger.error(
+                    "Unexpected error getting build info",
+                    build_id=build_id,
+                    error=str(e),
                 )
                 errors.append(
                     {
@@ -701,8 +757,10 @@ async def publish_pipelines(
 
             if fm_published_state == 2:  # PublishedState::Published
                 if candidate.status != PipelineStatus.PUBLISHED:
-                    logging.info(
-                        f"Pipeline {candidate.id} (Build {build_id}) already marked as published in flat-manager. Updating Vorarbeiter DB."
+                    logger.info(
+                        "Pipeline already marked as published in flat-manager",
+                        pipeline_id=str(candidate.id),
+                        build_id=build_id,
                     )
                     candidate.status = PipelineStatus.PUBLISHED
                     candidate.published_at = now
@@ -711,8 +769,10 @@ async def publish_pipelines(
                 continue
 
             if fm_repo_state == 3:  # RepoState::Failed
-                logging.warning(
-                    f"Pipeline {candidate.id} (Build {build_id}) failed flat-manager validation (repo_state 3). Marking as failed."
+                logger.warning(
+                    "Pipeline failed flat-manager validation (repo_state 3)",
+                    pipeline_id=str(candidate.id),
+                    build_id=build_id,
                 )
                 candidate.status = PipelineStatus.FAILED
                 candidate.finished_at = now
@@ -727,22 +787,33 @@ async def publish_pipelines(
             if (
                 fm_repo_state == 0 and fm_published_state == 0
             ):  # RepoState::Uploading and not published
-                logging.info(
-                    f"Pipeline {candidate.id} (Build {build_id}) is in Uploading state (repo_state 0). Attempting to commit."
+                logger.info(
+                    "Pipeline is in Uploading state (repo_state 0), attempting to commit",
+                    pipeline_id=str(candidate.id),
+                    build_id=build_id,
                 )
                 try:
                     await flat_manager.commit(build_id)
-                    logging.info(
-                        f"Successfully committed build {build_id} for pipeline {candidate.id}"
+                    logger.info(
+                        "Successfully committed build",
+                        build_id=build_id,
+                        pipeline_id=str(candidate.id),
                     )
                     continue
                 except httpx.HTTPStatusError as e_commit:
-                    logging.error(
-                        f"Failed to commit build {build_id} for pipeline {candidate.id}. Status: {e_commit.response.status_code}, Response: {e_commit.response.text}"
+                    logger.error(
+                        "Failed to commit build",
+                        build_id=build_id,
+                        pipeline_id=str(candidate.id),
+                        status_code=e_commit.response.status_code,
+                        response_text=e_commit.response.text,
                     )
                 except Exception as e_commit:
-                    logging.error(
-                        f"An unexpected error occurred while committing build {build_id} for pipeline {candidate.id}: {e_commit}"
+                    logger.error(
+                        "Unexpected error while committing build",
+                        build_id=build_id,
+                        pipeline_id=str(candidate.id),
+                        error=str(e_commit),
                     )
 
             if fm_repo_state in [
@@ -750,27 +821,38 @@ async def publish_pipelines(
                 1,
                 6,
             ]:  # RepoState::{Uploading, Committing, Validating}
-                logging.info(
-                    f"Pipeline {candidate.id} (Build {build_id}) is still processing in flat-manager (repo_state {fm_repo_state}). Skipping for this run."
+                logger.info(
+                    "Pipeline is still processing in flat-manager, skipping for this run",
+                    pipeline_id=str(candidate.id),
+                    build_id=build_id,
+                    repo_state=fm_repo_state,
                 )
                 continue
 
             if fm_repo_state == 2:  # RepoState::Ready
-                logging.info(
-                    f"Attempting to publish Pipeline {candidate.id} (Build {build_id}) - RepoState is Ready."
+                logger.info(
+                    "Attempting to publish pipeline - RepoState is Ready",
+                    pipeline_id=str(candidate.id),
+                    build_id=build_id,
                 )
                 try:
                     await flat_manager.publish(build_id)
-                    logging.info(
-                        f"Successfully published build {build_id} via flat-manager for pipeline {candidate.id}."
+                    logger.info(
+                        "Successfully published build via flat-manager",
+                        build_id=build_id,
+                        pipeline_id=str(candidate.id),
                     )
                     candidate.status = PipelineStatus.PUBLISHED
                     candidate.published_at = now
                     published_ids.append(str(candidate.id))
 
                 except httpx.HTTPStatusError as e_pub:
-                    logging.error(
-                        f"Failed to publish build {build_id} for pipeline {candidate.id}. Status: {e_pub.response.status_code}, Response: {e_pub.response.text}"
+                    logger.error(
+                        "Failed to publish build",
+                        build_id=build_id,
+                        pipeline_id=str(candidate.id),
+                        status_code=e_pub.response.status_code,
+                        response_text=e_pub.response.text,
                     )
                     errors.append(
                         {
@@ -779,8 +861,11 @@ async def publish_pipelines(
                         }
                     )
                 except Exception as e_pub:
-                    logging.error(
-                        f"An unexpected error occurred while publishing build {build_id} for pipeline {candidate.id}: {e_pub}"
+                    logger.error(
+                        "Unexpected error while publishing build",
+                        build_id=build_id,
+                        pipeline_id=str(candidate.id),
+                        error=str(e_pub),
                     )
                     errors.append(
                         {
@@ -791,8 +876,11 @@ async def publish_pipelines(
                 continue
 
             else:
-                logging.warning(
-                    f"Pipeline {candidate.id} (Build {build_id}) has unexpected flat-manager repo_state {fm_repo_state}. Skipping publish."
+                logger.warning(
+                    "Pipeline has unexpected flat-manager repo_state, skipping publish",
+                    pipeline_id=str(candidate.id),
+                    build_id=build_id,
+                    repo_state=fm_repo_state,
                 )
                 errors.append(
                     {
@@ -804,8 +892,11 @@ async def publish_pipelines(
 
         await db.commit()
 
-    logging.info(
-        f"Pipeline publishing completed: {len(published_ids)} published, {len(superseded_ids)} superseded, {len(errors)} errors"
+    logger.info(
+        "Pipeline publishing completed",
+        published_count=len(published_ids),
+        superseded_count=len(superseded_ids),
+        error_count=len(errors),
     )
     return PublishSummary(
         published=published_ids, superseded=superseded_ids, errors=errors

@@ -1,9 +1,9 @@
 import hashlib
 import hmac
-import logging
 import uuid
 
 import httpx
+import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from app.config import settings
@@ -11,6 +11,8 @@ from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types
 from app.utils.github import create_pr_comment, update_commit_status
+
+logger = structlog.get_logger(__name__)
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
@@ -144,7 +146,7 @@ async def receive_github_webhook(
             pipeline_id = await create_pipeline(event)
 
         except Exception as e:
-            print(f"Database error: {e}")
+            logger.error("Database error", error=str(e))
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Database error occurred while saving webhook event: {e}",
@@ -215,9 +217,13 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 pr_data = response.json()
                 sha = pr_data.get("head", {}).get("sha")
         except httpx.RequestError as e:
-            print(f"Error fetching PR details from GitHub: {e}")
+            logger.error("Error fetching PR details from GitHub", error=str(e))
         except httpx.HTTPStatusError as e:
-            print(f"GitHub API error: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                "GitHub API error",
+                status_code=e.response.status_code,
+                response_text=e.response.text,
+            )
 
         params.update(
             {
@@ -249,8 +255,9 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             target_url=target_url,
         )
     elif commit_sha and not git_repo:
-        logging.error(
-            f"Pipeline {pipeline.id}: Missing git_repo in params. Cannot update commit status."
+        logger.error(
+            "Missing git_repo in params. Cannot update commit status.",
+            pipeline_id=str(pipeline.id),
         )
 
     pipeline = await pipeline_service.start_pipeline(pipeline_id=pipeline.id)
@@ -265,14 +272,21 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 comment="🚧 Test build enqueued.",
             )
         except ValueError:
-            print(
-                f"Invalid pr_number '{pr_number_str}' for pipeline {pipeline.id}. Skipping PR comment."
+            logger.error(
+                "Invalid PR number. Skipping PR comment.",
+                pr_number=pr_number_str,
+                pipeline_id=str(pipeline.id),
             )
         except Exception as e:
-            print(f"Error creating initial PR comment for pipeline {pipeline.id}: {e}")
+            logger.error(
+                "Error creating initial PR comment",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
     elif pr_number_str and not git_repo:
-        logging.error(
-            f"Pipeline {pipeline.id}: Missing git_repo in params. Cannot create PR comment."
+        logger.error(
+            "Missing git_repo in params. Cannot create PR comment.",
+            pipeline_id=str(pipeline.id),
         )
 
     return pipeline.id

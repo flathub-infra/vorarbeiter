@@ -2,6 +2,9 @@ from typing import Any, NotRequired, TypedDict
 from urllib.parse import urlparse
 
 import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 class BuildResponse(TypedDict):
@@ -25,19 +28,41 @@ class FlatManagerClient:
         self.timeout = timeout
 
     async def create_build(self, repo: str, build_log_url: str) -> BuildResponse:
+        logger.debug("Creating build in flat-manager", repo=repo)
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.url}/api/v1/build",
-                json={
-                    "repo": repo,
-                    "build-log-url": build_log_url,
-                },
-                headers=self.headers,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            data: BuildResponse = response.json()
-            return data
+            try:
+                response = await client.post(
+                    f"{self.url}/api/v1/build",
+                    json={
+                        "repo": repo,
+                        "build-log-url": build_log_url,
+                    },
+                    headers=self.headers,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                data: BuildResponse = response.json()
+                logger.info(
+                    "Successfully created build in flat-manager",
+                    build_id=data["id"],
+                    repo=repo,
+                )
+                return data
+            except httpx.HTTPStatusError as e:
+                logger.error(
+                    "Failed to create build in flat-manager",
+                    repo=repo,
+                    status_code=e.response.status_code,
+                    response_text=e.response.text,
+                )
+                raise
+            except Exception as e:
+                logger.error(
+                    "Unexpected error creating build in flat-manager",
+                    repo=repo,
+                    error=str(e),
+                )
+                raise
 
     async def create_token_subset(self, build_id: str, app_id: str) -> str:
         async with httpx.AsyncClient() as client:

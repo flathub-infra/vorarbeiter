@@ -1,10 +1,10 @@
-import logging
+import structlog
 
 import httpx
 
 from app.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def update_commit_status(
@@ -59,20 +59,32 @@ async def update_commit_status(
             )
             response.raise_for_status()
             logger.info(
-                f"Successfully updated status for {git_repo} commit {sha} to {state}"
+                "Successfully updated GitHub status",
+                git_repo=git_repo,
+                commit=sha,
+                state=state,
             )
     except httpx.RequestError as e:
         logger.error(
-            f"Request error updating GitHub status for {git_repo} commit {sha}: {e}"
+            "Request error updating GitHub status",
+            git_repo=git_repo,
+            commit=sha,
+            error=str(e),
         )
     except httpx.HTTPStatusError as e:
         logger.error(
-            f"HTTP error updating GitHub status for {git_repo} commit {sha}: "
-            f"{e.response.status_code} - {e.response.text}"
+            "HTTP error updating GitHub status",
+            git_repo=git_repo,
+            commit=sha,
+            status_code=e.response.status_code,
+            response_text=e.response.text,
         )
     except Exception as e:
         logger.error(
-            f"Unexpected error updating GitHub status for {git_repo} commit {sha}: {e}"
+            "Unexpected error updating GitHub status",
+            git_repo=git_repo,
+            commit=sha,
+            error=str(e),
         )
 
 
@@ -106,20 +118,31 @@ async def create_pr_comment(git_repo: str, pr_number: int, comment: str) -> None
             )
             response.raise_for_status()
             logger.info(
-                f"Successfully created comment on PR #{pr_number} in {git_repo}"
+                "Successfully created PR comment",
+                git_repo=git_repo,
+                pr_number=pr_number,
             )
     except httpx.RequestError as e:
         logger.error(
-            f"Request error creating comment on PR #{pr_number} in {git_repo}: {e}"
+            "Request error creating PR comment",
+            git_repo=git_repo,
+            pr_number=pr_number,
+            error=str(e),
         )
     except httpx.HTTPStatusError as e:
         logger.error(
-            f"HTTP error creating comment on PR #{pr_number} in {git_repo}: "
-            f"{e.response.status_code} - {e.response.text}"
+            "HTTP error creating PR comment",
+            git_repo=git_repo,
+            pr_number=pr_number,
+            status_code=e.response.status_code,
+            response_text=e.response.text,
         )
     except Exception as e:
         logger.error(
-            f"Unexpected error creating comment on PR #{pr_number} in {git_repo}: {e}"
+            "Unexpected error creating PR comment",
+            git_repo=git_repo,
+            pr_number=pr_number,
+            error=str(e),
         )
 
 
@@ -145,13 +168,27 @@ async def create_github_issue(git_repo: str, title: str, body: str) -> None:
             )
             response.raise_for_status()
             issue_url = response.json().get("html_url", "unknown URL")
-            logger.info(f"Successfully created issue in {git_repo}: {issue_url}")
+            logger.info(
+                "Successfully created GitHub issue",
+                git_repo=git_repo,
+                issue_url=issue_url,
+            )
     except httpx.RequestError as e:
-        logger.error(f"Request error creating issue in {git_repo}: {e}")
+        logger.error(
+            "Request error creating GitHub issue",
+            git_repo=git_repo,
+            error=str(e),
+        )
     except httpx.HTTPStatusError as e:
         logger.error(
-            f"HTTP error creating issue in {git_repo}: "
-            f"{e.response.status_code} - {e.response.text}"
+            "HTTP error creating GitHub issue",
+            git_repo=git_repo,
+            status_code=e.response.status_code,
+            response_text=e.response.text,
         )
     except Exception as e:
-        logger.error(f"Unexpected error creating issue in {git_repo}: {e}")
+        logger.error(
+            "Unexpected error creating GitHub issue",
+            git_repo=git_repo,
+            error=str(e),
+        )
