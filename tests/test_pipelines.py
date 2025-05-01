@@ -343,6 +343,7 @@ def test_list_pipelines_endpoint(mock_get_db):
             status=PipelineStatus.RUNNING,
             flat_manager_repo="stable",
             triggered_by=PipelineTrigger.MANUAL,
+            build_id="build-123",
             created_at=datetime.now(),
             started_at=datetime.now(),
             finished_at=None,
@@ -354,6 +355,7 @@ def test_list_pipelines_endpoint(mock_get_db):
             status=PipelineStatus.SUCCEEDED,
             flat_manager_repo="beta",
             triggered_by=PipelineTrigger.WEBHOOK,
+            build_id="build-456",
             created_at=datetime.now(),
             started_at=datetime.now(),
             finished_at=datetime.now(),
@@ -372,9 +374,11 @@ def test_list_pipelines_endpoint(mock_get_db):
     assert response.json()[0]["app_id"] == "org.flathub.Test1"
     assert response.json()[0]["status"] == "running"
     assert response.json()[0]["triggered_by"] == "manual"
+    assert "build_id" in response.json()[0]
     assert response.json()[1]["app_id"] == "org.flathub.Test2"
     assert response.json()[1]["status"] == "succeeded"
     assert response.json()[1]["triggered_by"] == "webhook"
+    assert "build_id" in response.json()[1]
 
 
 def test_get_pipeline_endpoint(mock_get_db, sample_pipeline):

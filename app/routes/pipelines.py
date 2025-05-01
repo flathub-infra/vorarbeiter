@@ -48,6 +48,7 @@ class PipelineSummary(BaseModel):
     status: str
     repo: str | None = None
     triggered_by: str
+    build_id: str | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -181,6 +182,7 @@ async def list_pipelines(
                 if pipeline.flat_manager_repo is not None
                 else None,
                 triggered_by=pipeline.triggered_by.value,
+                build_id=pipeline.build_id,
                 created_at=pipeline.created_at,
                 started_at=pipeline.started_at,
                 finished_at=pipeline.finished_at,
