@@ -619,12 +619,40 @@ async def publish_pipelines(
                     token=settings.flat_manager_token,
                 )
 
-                # Mark builds which failed server-side validation as failed
                 build_info = await flat_manager.get_build_info(build_id)
-                repo_state = build_info.get("build", {}).get("repo_state")
-                if repo_state == 3:
+                fm_published_state = build_info.get("build", {}).get("published_state")
+                fm_repo_state = build_info.get("build", {}).get("repo_state")
+
+                # If the build has been already published in flat-manager, update the pipeline status and skip the publish call
+                if fm_published_state == 2:
+                    if candidate.status != PipelineStatus.PUBLISHED:
+                        candidate.status = PipelineStatus.PUBLISHED
+                        candidate.published_at = datetime.now()
+                    if str(candidate.id) not in published_ids:
+                        published_ids.append(str(candidate.id))
+
+                    for dup in duplicates:
+                        if dup.status != PipelineStatus.SUPERSEDED:
+                            dup.status = PipelineStatus.SUPERSEDED
+                            superseded_ids.append(str(dup.id))
+                            logging.info(
+                                f"Marked pipeline {dup.id} as SUPERSEDED (older version of {app_id} to {flat_manager_repo})"
+                            )
+                        elif str(dup.id) not in superseded_ids:
+                            superseded_ids.append(str(dup.id))
+
+                    continue
+
+                # Mark builds which failed server-side validation (state 3) as failed
+                if fm_repo_state == 3:
                     candidate.status = PipelineStatus.FAILED
                     candidate.finished_at = datetime.now()
+                    errors.append(
+                        {
+                            "pipeline_id": str(candidate.id),
+                            "error": "Build failed in Flat-Manager: repo_state 3",
+                        }
+                    )
                     continue
 
                 await flat_manager.publish(build_id)
