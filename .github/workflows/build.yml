@@ -236,6 +236,7 @@ jobs:
               f.write(f"matrix={json.dumps(matrix)}\\n")
 
   build:
+    timeout-minutes: ${{ inputs.build_type == 'default' && 360 || 540 }}
     name: build-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     needs: [validate-manifest, setup-matrix]
