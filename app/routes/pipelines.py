@@ -9,6 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 from sqlalchemy.future import select
+from tenacity import (
+    RetryError,
+    retry,
+    stop_after_attempt,
+    wait_fixed,
+    retry_if_exception,
+)
 
 from app.config import settings
 from app.database import get_db
@@ -362,18 +369,47 @@ async def pipeline_callback(
 
                     if status_value == "success":
                         if build_id := updated_pipeline.build_id:
+
+                            def is_retryable_exception(e: BaseException) -> bool:
+                                if isinstance(e, httpx.RequestError):
+                                    return True
+                                if isinstance(e, httpx.HTTPStatusError):
+                                    return e.response.status_code >= 500
+                                return False
+
+                            @retry(
+                                stop=stop_after_attempt(3),
+                                wait=wait_fixed(5),
+                                retry=retry_if_exception(is_retryable_exception),
+                                reraise=True,
+                            )
+                            async def attempt_commit(fm_client, build_id_to_commit):
+                                logging.info(
+                                    f"Attempting to commit build {build_id_to_commit} for pipeline {pipeline_id} via flat-manager."
+                                )
+                                await fm_client.commit(build_id_to_commit)
+                                logging.info(
+                                    f"Successfully committed build {build_id_to_commit} for pipeline {pipeline_id}."
+                                )
+
                             try:
                                 flat_manager = FlatManagerClient(
                                     url=settings.flat_manager_url,
                                     token=settings.flat_manager_token,
                                 )
-                                await flat_manager.commit(build_id)
-                                logging.info(
-                                    f"Committed build {build_id} for pipeline {pipeline_id}"
-                                )
-                            except httpx.HTTPStatusError as e:
+                                await attempt_commit(flat_manager, build_id)
+
+                            except (
+                                RetryError
+                            ) as e_retry:  # Specifically catch RetryError from tenacity
                                 logging.error(
-                                    f"Failed to commit build {build_id} for pipeline {pipeline_id}. Status: {e.response.status_code}, Response: {e.response.text}"
+                                    f"Failed to commit build {build_id} for pipeline {pipeline_id} after multiple retries: {e_retry}"
+                                )
+                                # Original exception is available via e_retry.cause
+                            except httpx.HTTPStatusError as e_http:
+                                # Catch non-retryable HTTP errors (e.g., 4xx client errors)
+                                logging.error(
+                                    f"Failed to commit build {build_id} for pipeline {pipeline_id}. Status: {e_http.response.status_code}, Response: {e_http.response.text}"
                                 )
                             except Exception as e:
                                 logging.error(

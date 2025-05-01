@@ -15,6 +15,7 @@ dependencies = [
     "sentry-sdk>=2.25.1",
     "sqlalchemy>=2.0.40",
     "uvicorn>=0.34.0",
+    "tenacity>=8.2.3",
 ]
 
 [dependency-groups]
