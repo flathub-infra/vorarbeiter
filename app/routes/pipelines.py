@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines import BuildPipeline
+from app.providers.base import ProviderType
 from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
     create_github_issue,
@@ -46,9 +47,9 @@ class PipelineTriggerRequest(BaseModel):
 class PipelineSummary(BaseModel):
     id: str
     app_id: str
-    status: str
+    status: PipelineStatus
     repo: str | None = None
-    triggered_by: str
+    triggered_by: PipelineTrigger
     build_id: str | None = None
     created_at: datetime
     started_at: datetime | None = None
@@ -59,11 +60,11 @@ class PipelineSummary(BaseModel):
 class PipelineResponse(BaseModel):
     id: str
     app_id: str
-    status: str
+    status: PipelineStatus
     repo: str | None = None
     params: dict[str, Any]
-    triggered_by: str
-    provider: str | None = None
+    triggered_by: PipelineTrigger
+    provider: ProviderType | None = None
     log_url: str | None = None
     build_id: str | None = None
     created_at: datetime
@@ -134,8 +135,8 @@ async def trigger_pipeline(
 )
 async def list_pipelines(
     app_id: str | None = None,
-    status_filter: str | None = None,
-    triggered_by: str | None = None,
+    status_filter: PipelineStatus | None = None,
+    triggered_by: PipelineTrigger | None = None,
     target_repo: str | None = None,
     limit: int | None = 10,
 ):
@@ -178,11 +179,11 @@ async def list_pipelines(
             PipelineSummary(
                 id=str(pipeline.id),
                 app_id=pipeline.app_id,
-                status=pipeline.status.value,
+                status=pipeline.status,
                 repo=str(pipeline.flat_manager_repo)
                 if pipeline.flat_manager_repo is not None
                 else None,
-                triggered_by=pipeline.triggered_by.value,
+                triggered_by=pipeline.triggered_by,
                 build_id=pipeline.build_id,
                 created_at=pipeline.created_at,
                 started_at=pipeline.started_at,
@@ -212,13 +213,13 @@ async def get_pipeline(
         return PipelineResponse(
             id=str(pipeline.id),
             app_id=pipeline.app_id,
-            status=pipeline.status.value,
+            status=pipeline.status,
             repo=str(pipeline.flat_manager_repo)
             if pipeline.flat_manager_repo is not None
             else None,
             params=pipeline.params,
-            triggered_by=pipeline.triggered_by.value,
-            provider=pipeline.provider,
+            triggered_by=pipeline.triggered_by,
+            provider=ProviderType(pipeline.provider) if pipeline.provider else None,
             log_url=pipeline.log_url,
             build_id=pipeline.build_id,
             created_at=pipeline.created_at,
