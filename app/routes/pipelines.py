@@ -724,6 +724,27 @@ async def publish_pipelines(
                 )
                 continue
 
+            if (
+                fm_repo_state == 0 and fm_published_state == 0
+            ):  # RepoState::Uploading and not published
+                logging.info(
+                    f"Pipeline {candidate.id} (Build {build_id}) is in Uploading state (repo_state 0). Attempting to commit."
+                )
+                try:
+                    await flat_manager.commit(build_id)
+                    logging.info(
+                        f"Successfully committed build {build_id} for pipeline {candidate.id}"
+                    )
+                    continue
+                except httpx.HTTPStatusError as e_commit:
+                    logging.error(
+                        f"Failed to commit build {build_id} for pipeline {candidate.id}. Status: {e_commit.response.status_code}, Response: {e_commit.response.text}"
+                    )
+                except Exception as e_commit:
+                    logging.error(
+                        f"An unexpected error occurred while committing build {build_id} for pipeline {candidate.id}: {e_commit}"
+                    )
+
             if fm_repo_state in [
                 0,
                 1,
