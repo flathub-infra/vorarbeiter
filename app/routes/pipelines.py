@@ -1,4 +1,3 @@
-import json
 import logging
 import secrets
 import uuid
@@ -17,9 +16,9 @@ from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines import BuildPipeline
 from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
+    create_github_issue,
     create_pr_comment,
     update_commit_status,
-    create_github_issue,
 )
 
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
@@ -570,6 +569,7 @@ async def publish_pipelines(
     published_ids = []
     superseded_ids = []
     errors = []
+    now = datetime.now()
 
     async with get_db() as db:
         query = select(Pipeline).where(
@@ -581,27 +581,57 @@ async def publish_pipelines(
 
         pipeline_groups: dict[tuple[str, str | None], list[Pipeline]] = {}
         for pipeline in pipelines:
+            if pipeline.flat_manager_repo is None:
+                logging.warning(
+                    f"Pipeline {pipeline.id} has null flat_manager_repo, skipping."
+                )
+                continue
             key = (pipeline.app_id, pipeline.flat_manager_repo)
             if key not in pipeline_groups:
                 pipeline_groups[key] = []
             pipeline_groups[key].append(pipeline)
 
         for (app_id, flat_manager_repo), group in pipeline_groups.items():
-            if flat_manager_repo is None:
-                continue
-
             sorted_pipelines = sorted(
                 group,
                 key=lambda p: p.started_at if p.started_at else datetime.min,
                 reverse=True,
             )
-
             candidate = sorted_pipelines[0]
             duplicates = sorted_pipelines[1:]
 
+            flat_manager = FlatManagerClient(
+                url=settings.flat_manager_url,
+                token=settings.flat_manager_token,
+            )
+
+            for dup in duplicates:
+                if dup.status != PipelineStatus.SUPERSEDED:
+                    dup.status = PipelineStatus.SUPERSEDED
+                    logging.info(
+                        f"Marked pipeline {dup.id} as SUPERSEDED (older version of {app_id} to {flat_manager_repo})"
+                    )
+                if str(dup.id) not in superseded_ids:
+                    superseded_ids.append(str(dup.id))
+
+                if dup.build_id:
+                    try:
+                        await flat_manager.purge(dup.build_id)
+                        logging.info(
+                            f"Purged build {dup.build_id} for superseded pipeline {dup.id}"
+                        )
+                    except httpx.HTTPStatusError as purge_e:
+                        logging.error(
+                            f"Failed to purge build {dup.build_id} for superseded pipeline {dup.id}. Status: {purge_e.response.status_code}, Response: {purge_e.response.text}"
+                        )
+                    except Exception as purge_e:
+                        logging.error(
+                            f"An unexpected error occurred while purging build {dup.build_id} for superseded pipeline {dup.id}: {purge_e}"
+                        )
+
             if not candidate.build_id:
                 logging.warning(
-                    f"Pipeline {candidate.id} has no build_id, skipping publish"
+                    f"Candidate Pipeline {candidate.id} ({app_id}/{flat_manager_repo}) has no build_id, skipping publish."
                 )
                 errors.append(
                     {
@@ -614,168 +644,146 @@ async def publish_pipelines(
             build_id = candidate.build_id
 
             try:
-                flat_manager = FlatManagerClient(
-                    url=settings.flat_manager_url,
-                    token=settings.flat_manager_token,
-                )
-
                 build_info = await flat_manager.get_build_info(build_id)
-                fm_published_state = build_info.get("build", {}).get("published_state")
-                fm_repo_state = build_info.get("build", {}).get("repo_state")
+                fm_build_data = build_info.get("build", {})
+                fm_published_state = fm_build_data.get("published_state")
+                fm_repo_state = fm_build_data.get("repo_state")
 
-                # If the build has been already published in flat-manager, update the pipeline status and skip the publish call
-                if fm_published_state == 2:
-                    if candidate.status != PipelineStatus.PUBLISHED:
-                        candidate.status = PipelineStatus.PUBLISHED
-                        candidate.published_at = datetime.now()
-                    if str(candidate.id) not in published_ids:
-                        published_ids.append(str(candidate.id))
-
-                    for dup in duplicates:
-                        if dup.status != PipelineStatus.SUPERSEDED:
-                            dup.status = PipelineStatus.SUPERSEDED
-                            superseded_ids.append(str(dup.id))
-                            logging.info(
-                                f"Marked pipeline {dup.id} as SUPERSEDED (older version of {app_id} to {flat_manager_repo})"
-                            )
-                        elif str(dup.id) not in superseded_ids:
-                            superseded_ids.append(str(dup.id))
-
-                    continue
-
-                # Mark builds which failed server-side validation (state 3) as failed
-                if fm_repo_state == 3:
-                    candidate.status = PipelineStatus.FAILED
-                    candidate.finished_at = datetime.now()
-                    errors.append(
-                        {
-                            "pipeline_id": str(candidate.id),
-                            "error": "Build failed in Flat-Manager: repo_state 3",
-                        }
-                    )
-                    continue
-
-                await flat_manager.publish(build_id)
-
-                candidate.status = PipelineStatus.PUBLISHED
-                candidate.published_at = datetime.now()
-                published_ids.append(str(candidate.id))
-                logging.info(
-                    f"Published build {build_id} for pipeline {candidate.id} ({app_id} to {flat_manager_repo})"
-                )
-
-                for dup in duplicates:
-                    dup.status = PipelineStatus.SUPERSEDED
-                    superseded_ids.append(str(dup.id))
-                    logging.info(
-                        f"Marked pipeline {dup.id} as SUPERSEDED (older version of {app_id} to {flat_manager_repo})"
+                if fm_published_state is None or fm_repo_state is None:
+                    raise ValueError(
+                        "Missing state information in flat-manager response"
                     )
 
-                    if dup.build_id:
-                        try:
-                            await flat_manager.purge(dup.build_id)
-                            logging.info(
-                                f"Purged build {dup.build_id} for superseded pipeline {dup.id}"
-                            )
-                        except httpx.HTTPStatusError as purge_e:
-                            logging.error(
-                                f"Failed to purge build {dup.build_id} for superseded pipeline {dup.id}. Status: {purge_e.response.status_code}, Response: {purge_e.response.text}"
-                            )
-                        except Exception as purge_e:
-                            logging.error(
-                                f"An unexpected error occurred while purging build {dup.build_id} for superseded pipeline {dup.id}: {purge_e}"
-                            )
-                    else:
-                        logging.warning(
-                            f"Superseded pipeline {dup.id} has no build_id, cannot purge."
-                        )
-
-            except httpx.HTTPStatusError as e:
-                try:
-                    error_data = json.loads(e.response.text)
-                    error_type = error_data.get("error-type")
-                    current_state = error_data.get("current-state")
-
-                    if (
-                        e.response.status_code == 400
-                        and error_type == "wrong-published-state"
-                    ):
-                        logging.warning(
-                            f"Pipeline {candidate.id} (Build {build_id}) already published. Marking as published."
-                        )
-                        if candidate.status != PipelineStatus.PUBLISHED:
-                            candidate.status = PipelineStatus.PUBLISHED
-                            candidate.published_at = datetime.now()
-                        if str(candidate.id) not in published_ids:
-                            published_ids.append(str(candidate.id))
-
-                    elif (
-                        e.response.status_code == 400
-                        and error_type == "wrong-repo-state"
-                        and current_state == "validating"
-                    ):
-                        logging.info(
-                            f"Pipeline {candidate.id} (Build {build_id}) is still validating. Skipping for this publish run."
-                        )
-                    elif (
-                        e.response.status_code == 400
-                        and error_type == "wrong-repo-state"
-                        and current_state == "uploading"
-                    ):
-                        logging.info(
-                            f"Pipeline {candidate.id} (Build {build_id}) is still uploading. Skipping for this publish run."
-                        )
-                    elif current_state == "failed":
-                        logging.warning(
-                            f"Pipeline {candidate.id} (Build {build_id}) has failed checks in Flat-Manager. Marking as failed."
-                        )
-                        candidate.status = PipelineStatus.FAILED
-                        candidate.finished_at = datetime.now()
-                        errors.append(
-                            {
-                                "pipeline_id": str(candidate.id),
-                                "error": f"Build failed in Flat-Manager: {error_data.get('message', 'No details available')}",
-                            }
-                        )
-                    else:
-                        logging.error(
-                            f"Failed to publish build {build_id} for pipeline {candidate.id}. Status: {e.response.status_code}, Response: {e.response.text}"
-                        )
-                        errors.append(
-                            {
-                                "pipeline_id": str(candidate.id),
-                                "error": f"HTTP error: {e.response.status_code} - {e.response.text}",
-                            }
-                        )
-
-                except (json.JSONDecodeError, AttributeError):
-                    logging.error(
-                        f"Failed to publish build {build_id} for pipeline {candidate.id}. Status: {e.response.status_code}, Response: {e.response.text} (Could not parse error details)"
-                    )
-                    errors.append(
-                        {
-                            "pipeline_id": str(candidate.id),
-                            "error": f"HTTP error: {e.response.status_code} - {e.response.text}",
-                        }
-                    )
-
-            except Exception as e:
+            except httpx.RequestError as e:
                 logging.error(
-                    f"An unexpected error occurred while publishing build {build_id} for pipeline {candidate.id}: {e}"
+                    f"Failed to get build info for {build_id} from flat-manager: Request Error {e}"
                 )
                 errors.append(
                     {
                         "pipeline_id": str(candidate.id),
-                        "error": f"Unexpected error: {str(e)}",
+                        "error": f"flat-manager communication error: {e}",
                     }
                 )
+                continue
+            except httpx.HTTPStatusError as e:
+                logging.error(
+                    f"Failed to get build info for {build_id} from flat-manager: HTTP {e.response.status_code} - {e.response.text}"
+                )
+                errors.append(
+                    {
+                        "pipeline_id": str(candidate.id),
+                        "error": f"flat-manager API error: {e.response.status_code}",
+                    }
+                )
+                continue
+            except ValueError as e:
+                logging.error(f"Failed to parse build info for {build_id}: {e}")
+                errors.append(
+                    {
+                        "pipeline_id": str(candidate.id),
+                        "error": f"flat-manager response error: {e}",
+                    }
+                )
+                continue
+            except Exception as e:
+                logging.error(
+                    f"Unexpected error getting build info for {build_id}: {e}"
+                )
+                errors.append(
+                    {
+                        "pipeline_id": str(candidate.id),
+                        "error": f"Unexpected error: {e}",
+                    }
+                )
+                continue
+
+            if fm_published_state == 2:  # PublishedState::Published
+                if candidate.status != PipelineStatus.PUBLISHED:
+                    logging.info(
+                        f"Pipeline {candidate.id} (Build {build_id}) already marked as published in flat-manager. Updating Vorarbeiter DB."
+                    )
+                    candidate.status = PipelineStatus.PUBLISHED
+                    candidate.published_at = now
+                if str(candidate.id) not in published_ids:
+                    published_ids.append(str(candidate.id))
+                continue
+
+            if fm_repo_state == 3:  # RepoState::Failed
+                logging.warning(
+                    f"Pipeline {candidate.id} (Build {build_id}) failed flat-manager validation (repo_state 3). Marking as failed."
+                )
+                candidate.status = PipelineStatus.FAILED
+                candidate.finished_at = now
+                errors.append(
+                    {
+                        "pipeline_id": str(candidate.id),
+                        "error": "Build failed in flat-manager: repo_state 3",
+                    }
+                )
+                continue
+
+            if fm_repo_state in [
+                0,
+                1,
+                6,
+            ]:  # RepoState::{Uploading, Committing, Validating}
+                logging.info(
+                    f"Pipeline {candidate.id} (Build {build_id}) is still processing in flat-manager (repo_state {fm_repo_state}). Skipping for this run."
+                )
+                continue
+
+            if fm_repo_state == 2:  # RepoState::Ready
+                logging.info(
+                    f"Attempting to publish Pipeline {candidate.id} (Build {build_id}) - RepoState is Ready."
+                )
+                try:
+                    await flat_manager.publish(build_id)
+                    logging.info(
+                        f"Successfully published build {build_id} via flat-manager for pipeline {candidate.id}."
+                    )
+                    candidate.status = PipelineStatus.PUBLISHED
+                    candidate.published_at = now
+                    published_ids.append(str(candidate.id))
+
+                except httpx.HTTPStatusError as e_pub:
+                    logging.error(
+                        f"Failed to publish build {build_id} for pipeline {candidate.id}. Status: {e_pub.response.status_code}, Response: {e_pub.response.text}"
+                    )
+                    errors.append(
+                        {
+                            "pipeline_id": str(candidate.id),
+                            "error": f"Publish failed: HTTP {e_pub.response.status_code} - {e_pub.response.text}",
+                        }
+                    )
+                except Exception as e_pub:
+                    logging.error(
+                        f"An unexpected error occurred while publishing build {build_id} for pipeline {candidate.id}: {e_pub}"
+                    )
+                    errors.append(
+                        {
+                            "pipeline_id": str(candidate.id),
+                            "error": f"Unexpected error during publish: {str(e_pub)}",
+                        }
+                    )
+                continue
+
+            else:
+                logging.warning(
+                    f"Pipeline {candidate.id} (Build {build_id}) has unexpected flat-manager repo_state {fm_repo_state}. Skipping publish."
+                )
+                errors.append(
+                    {
+                        "pipeline_id": str(candidate.id),
+                        "error": f"Unexpected flat-manager repo_state: {fm_repo_state}",
+                    }
+                )
+                continue
 
         await db.commit()
 
     logging.info(
         f"Pipeline publishing completed: {len(published_ids)} published, {len(superseded_ids)} superseded, {len(errors)} errors"
     )
-
     return PublishSummary(
         published=published_ids, superseded=superseded_ids, errors=errors
     )
