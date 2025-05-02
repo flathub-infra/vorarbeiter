@@ -88,7 +88,7 @@ jobs:
           http = urllib3.PoolManager()
           base_url = "https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/"
           files_to_download = {
-              f"{base_url}justfile": os.path.join(os.environ["GITHUB_WORKSPACE"], "work/justfile"),
+              f"{base_url}justfile": os.path.join(os.environ["GITHUB_WORKSPACE"], "work/.flathub.justfile"),
               f"{base_url}flatpak.seccomp.json": os.path.join(os.environ["GITHUB_WORKSPACE"], "flatpak.seccomp.json")
           }
 
@@ -138,7 +138,7 @@ jobs:
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
-              just checkout $REPO $REF
+              just -f .flathub.justfile checkout $REPO $REF
             '
 
       - name: Detect app ID of the new submission
@@ -151,7 +151,7 @@ jobs:
             -w /work \
             -e APP_ID \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just detect-appid /work > app_id
+            just -f .flathub.justfile detect-appid /work > app_id
 
           echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
 
@@ -172,7 +172,7 @@ jobs:
             -w /work \
             -e APP_ID \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just validate-manifest $APP_ID
+            just -f .flathub.justfile validate-manifest $APP_ID
 
   setup-matrix:
     runs-on: ubuntu-latest
@@ -288,7 +288,7 @@ jobs:
           http = urllib3.PoolManager()
           base_url = "https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/"
           files_to_download = {
-              f"{base_url}justfile": os.path.join(os.environ["GITHUB_WORKSPACE"], "work/justfile"),
+              f"{base_url}justfile": os.path.join(os.environ["GITHUB_WORKSPACE"], "work/.flathub.justfile"),
               f"{base_url}flatpak.seccomp.json": os.path.join(os.environ["GITHUB_WORKSPACE"], "flatpak.seccomp.json")
           }
 
@@ -339,7 +339,7 @@ jobs:
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
-              just checkout $REPO $REF
+              just -f .flathub.justfile checkout $REPO $REF
             '
 
       - name: Detect app ID of the new submission
@@ -353,7 +353,7 @@ jobs:
             -w /work \
             -e APP_ID \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just detect-appid /work > app_id
+            just -f .flathub.justfile detect-appid /work > app_id
 
           echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
 
@@ -378,9 +378,9 @@ jobs:
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
-              just prepare-env
-              just download-sources $APP_ID
-              just build $APP_ID $BRANCH
+              just -f .flathub.justfile prepare-env
+              just -f .flathub.justfile download-sources $APP_ID
+              just -f .flathub.justfile build $APP_ID $BRANCH
             '
 
       - name: Commit screenshots
@@ -392,7 +392,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just commit-screenshots
+            just -f .flathub.justfile commit-screenshots
 
       - name: Validate build
         run: |
@@ -403,7 +403,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just validate-build
+            just -f .flathub.justfile validate-build
 
       - name: Generate deltas
         run: |
@@ -414,7 +414,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just generate-deltas
+            just -f .flathub.justfile generate-deltas
 
       - name: Upload build
         run: |
@@ -426,7 +426,7 @@ jobs:
             -w /work \
             -e REPO_TOKEN \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just upload $BUILD_URL
+            just -f .flathub.justfile upload $BUILD_URL
 
   callback:
     runs-on: ubuntu-latest

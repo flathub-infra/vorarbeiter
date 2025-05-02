@@ -107,14 +107,14 @@ validate-manifest app_id:
     #!/usr/bin/env bash
     set -euxo pipefail
     git config --global --add safe.directory "*"
-    manifest=$(just _get_manifest {{app_id}})
+    manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
     flatpak-builder-lint --exceptions manifest "$manifest"
 
 download-sources app_id:
     #!/usr/bin/env bash
     set -euxo pipefail
 
-    manifest=$(just _get_manifest {{app_id}})
+    manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
 
     max_retries=5
     sleep_seconds=7
@@ -137,8 +137,8 @@ build app_id branch="stable":
     #!/usr/bin/env bash
     set -euxo pipefail
 
-    manifest=$(just _get_manifest {{app_id}})
-    subject=$(just _get_build_subject)
+    manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
+    subject=$(just -f .flathub.justfile _get_build_subject)
 
     deps_args="--install-deps-from=flathub"
     if [ "{{branch}}" = "beta" ] || [ "{{branch}}" = "test" ]; then
