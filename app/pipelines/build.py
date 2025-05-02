@@ -13,6 +13,7 @@ app_build_types = {
     "io.github.ungoogled_software.ungoogled_chromium": "2xlarge",
     "org.chromium.Chromium": "2xlarge",
     "org.libreoffice.LibreOffice": "large",
+    "org.mamedev.MAME": "medium",
 }
 
 
