@@ -212,6 +212,7 @@ jobs:
               arch = arch.strip()
 
               if build_type != 'default':
+                  timeout = 60*9
                   match arch:
                       case "x86_64":
                           runner = f"runs-on=${{ github.run_id }}/runner={build_type}-amd64/tag=arch-amd64"
@@ -221,6 +222,7 @@ jobs:
                           print(f"Error: Unsupported architecture: {arch}")
                           exit(1)
               else:
+                  timeout = 60*6
                   match arch:
                       case "x86_64":
                           runner = "ubuntu-24.04"
@@ -230,15 +232,16 @@ jobs:
                           print(f"Error: Unsupported architecture: {arch}")
                           exit(1)
 
-              matrix["include"].append({"arch": arch, "runner": runner})
+              matrix["include"].append({"arch": arch, "runner": runner, "timeout-minutes": timeout})
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"matrix={json.dumps(matrix)}\\n")
 
   build:
+    needs: [validate-manifest, setup-matrix]
     name: build-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    needs: [validate-manifest, setup-matrix]
+    timeout-minutes: ${{ matrix.timeout-minutes }}
     strategy:
       fail-fast: true
       matrix:
