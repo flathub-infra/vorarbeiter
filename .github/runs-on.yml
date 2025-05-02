@@ -1,4 +1,17 @@
 runners:
+  medium-amd64:
+    cpu: 4
+    disk: large
+    spot: price-capacity-optimized
+    family: ["m7a", "m7i", "r7i", "c7i", "c7a", "r7a", "t3", "t3a"]
+
+  medium-arm64:
+    cpu: 4
+    disk: large
+    spot: price-capacity-optimized
+    family: ["m7g", "m6g", "r7g", "r6g", "c7g", "c6g"]
+    image: ubuntu24-full-arm64
+
   large-amd64:
     cpu: 8
     disk: large
