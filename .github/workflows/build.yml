@@ -448,6 +448,7 @@ jobs:
           rm -rf .flatpak-builder/ccache/bin
 
           app_id_lc=${APP_ID,,}
+          oras login ghcr.io --password "${{ secrets.GITHUB_TOKEN }}" -u "${{ github.actor }}" || exit 0
           oras push ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/stable-${{ matrix.arch }}:latest .flatpak-builder || exit 0
 
   callback:
