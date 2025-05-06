@@ -246,6 +246,8 @@ jobs:
       fail-fast: true
       matrix:
         include: ${{ fromJSON(needs.setup-matrix.outputs.matrix).include }}
+    permissions:
+      packages: ${{ inputs.flat_manager_repo == 'stable' && 'write' || 'read' }}
     steps:
       - name: Set variables
         run: |
@@ -366,7 +368,7 @@ jobs:
         run: |
           app_id_lc=${APP_ID,,}
           cd "${GITHUB_WORKSPACE}/work"
-          oras pull ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/${{ inputs.flat_manager_repo }}-${{ matrix.arch }} || exit 0
+          oras pull ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/stable-${{ matrix.arch }}:push || exit 0
 
       - name: Build flatpak
         run: |
@@ -438,6 +440,16 @@ jobs:
             -e REPO_TOKEN \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile upload $BUILD_URL
+
+      - name: Upload build cache
+        if: ${{ inputs.flat_manager_repo }} == "stable"
+        run: |
+          cd "${GITHUB_WORKSPACE}/work"
+          rm -rf .flatpak-builder/cache
+          rm -rf .flatpak-builder/ccache/bin
+
+          app_id_lc=${APP_ID,,}
+          oras push ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/stable-${{ matrix.arch }}:latest .flatpak-builder || exit 0
 
   callback:
     runs-on: ubuntu-latest
