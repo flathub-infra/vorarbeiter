@@ -195,7 +195,7 @@ jobs:
 
           arches = ["x86_64", "aarch64"]
           build_type = "${{ inputs.build_type }}"
-          target_repo = "${{ inputs.flat_manager_repo }}"
+
 
           if os.path.exists("repo/flathub.json"):
               with open("repo/flathub.json") as f:
@@ -210,11 +210,6 @@ jobs:
           matrix = {"include": []}
           for arch in arches:
               arch = arch.strip()
-
-              if target_repo == "stable":
-                packages_permission = "write"
-              else:
-                packages_permission = "read"
 
               if build_type != 'default':
                   timeout = 60*9
@@ -237,7 +232,7 @@ jobs:
                           print(f"Error: Unsupported architecture: {arch}")
                           exit(1)
 
-          matrix["include"].append({"arch": arch, "runner": runner, "timeout-minutes": timeout, "packages_permission": packages_permission})
+              matrix["include"].append({"arch": arch, "runner": runner, "timeout-minutes": timeout})
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"matrix={json.dumps(matrix)}\\n")
@@ -251,8 +246,6 @@ jobs:
       fail-fast: true
       matrix:
         include: ${{ fromJSON(needs.setup-matrix.outputs.matrix).include }}
-    permissions:
-      packages: ${{ matrix.packages_permission }}
     steps:
       - name: Set variables
         run: |
@@ -373,7 +366,7 @@ jobs:
         run: |
           app_id_lc=${APP_ID,,}
           cd "${GITHUB_WORKSPACE}/work"
-          oras pull ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/stable-${{ matrix.arch }}:push || exit 0
+          oras pull ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/${{ inputs.flat_manager_repo }}-${{ matrix.arch }} || exit 0
 
       - name: Build flatpak
         run: |
@@ -445,16 +438,6 @@ jobs:
             -e REPO_TOKEN \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile upload $BUILD_URL
-
-      - name: Upload build cache
-        if: ${{ inputs.flat_manager_repo }} == "stable"
-        run: |
-          cd "${GITHUB_WORKSPACE}/work"
-          rm -rf .flatpak-builder/cache
-          rm -rf .flatpak-builder/ccache/bin
-
-          app_id_lc=${APP_ID,,}
-          oras push ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/stable-${{ matrix.arch }}:latest .flatpak-builder || exit 0
 
   callback:
     runs-on: ubuntu-latest
