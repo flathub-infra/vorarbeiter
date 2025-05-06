@@ -367,7 +367,7 @@ jobs:
         run: |
           app_id_lc=${APP_ID,,}
           cd "${GITHUB_WORKSPACE}/work"
-          oras pull ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/stable-${{ matrix.arch }}:push || exit 0
+          oras pull ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/stable-${{ matrix.arch }}:latest || exit 0
 
       - name: Build flatpak
         run: |
