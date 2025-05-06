@@ -441,7 +441,7 @@ jobs:
             just -f .flathub.justfile upload $BUILD_URL
 
       - name: Upload build cache
-        if: ${{ inputs.flat_manager_repo }} == "stable"
+        if: ${{ inputs.flat_manager_repo == 'stable' && inputs.git_ref == 'refs/heads/master' }}
         run: |
           cd "${GITHUB_WORKSPACE}/work"
           rm -rf .flatpak-builder/cache
