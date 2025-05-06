@@ -97,7 +97,7 @@ jobs:
               success = False
               attempts = 0
               max_attempts = 5
-              
+
               while not success and attempts < max_attempts:
                   attempts += 1
                   try:
@@ -119,7 +119,7 @@ jobs:
                   except Exception as e:
                       print(f"Error occurred: {str(e)}")
                       time.sleep(random.uniform(1, 3))
-                      
+
               if not success:
                   print(f"Failed to download {url} after {max_attempts} attempts")
                   sys.exit(1)
@@ -297,7 +297,7 @@ jobs:
               success = False
               attempts = 0
               max_attempts = 5
-              
+
               while not success and attempts < max_attempts:
                   attempts += 1
                   try:
@@ -319,7 +319,7 @@ jobs:
                   except Exception as e:
                       print(f"Error occurred: {str(e)}")
                       time.sleep(random.uniform(1, 3))
-                      
+
               if not success:
                   print(f"Failed to download {url} after {max_attempts} attempts")
                   sys.exit(1)
