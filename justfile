@@ -154,6 +154,7 @@ build app_id branch="stable":
         --default-branch "{{branch}}" \
         --subject "${subject}" \
         --disable-download \
+        --ccache \
         builddir "$manifest"
 
 commit-screenshots:
