@@ -177,3 +177,10 @@ upload url:
     #!/usr/bin/env bash
     set -euxo pipefail
     flat-manager-client push "{{url}}" repo
+
+show-runtime app_id:
+    #!/usr/bin/env bash
+    set -euxo pipefail
+    git config --global --add safe.directory "*"
+    manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
+    flatpak-builder --show-manifest "$manifest" | jq '"\(.runtime)//\(."runtime-version")"'
