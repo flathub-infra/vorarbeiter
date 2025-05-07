@@ -411,13 +411,28 @@ jobs:
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile show-runtime $APP_ID > runtime
 
+          docker run --rm \
+            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+            --security-opt apparmor=unconfined \
+            --cap-drop all \
+            --entrypoint="" \
+            -e TMPDIR=/work/tmp \
+            -v /proc:/host/proc \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -v "${GITHUB_WORKSPACE}/flatpak:/home/flatbld/.local/share/flatpak" \
+            -w /work \
+            -e APP_ID \
+            -e BRANCH \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+            just -f .flathub.justfile prepare-env || exit 0
+
           RUNTIME=$(<runtime)
           RUNTIME=${RUNTIME,,}
           RUNTIME=${RUNTIME//./-}
           RUNTIME=${RUNTIME/sdk/platform}
 
           cd ${GITHUB_WORKSPACE}/flatpak
-          #oras pull ghcr.io/flathub-infra/vorarbeiter/cache/runtime/${RUNTIME}:${{ matrix.arch }} || exit 0
+          oras pull ghcr.io/flathub-infra/vorarbeiter/cache/runtime/${RUNTIME}:${{ matrix.arch }} || exit 0
 
       - name: Build
         run: |
