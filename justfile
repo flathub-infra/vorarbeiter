@@ -183,4 +183,4 @@ show-runtime app_id:
     set -euxo pipefail
     git config --global --add safe.directory "*"
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
-    flatpak-builder --show-manifest "$manifest" | jq '"\(.runtime)//\(."runtime-version")"'
+    flatpak-builder --show-manifest "$manifest" | jq -r '"\(.runtime)-\(."runtime-version")"'
