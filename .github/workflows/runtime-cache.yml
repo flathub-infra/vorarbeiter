@@ -1,0 +1,47 @@
+name: "Cache runtimes to GHCR"
+on:
+  schedule:
+  - cron: "0 5 * * 0"
+  workflow_dispatch:
+
+jobs:
+  runtime-cache:
+    strategy:
+      matrix:
+        runtime:
+          - org.freedesktop.Platform//24.08
+          - org.freedesktop.Platform//23.08
+          - org.gnome.Platform//48
+          - org.gnome.Platform//47
+          - org.kde.Platform//6.8
+          - org.kde.Platform//6.7
+          - org.kde.Platform//5.15-24.08
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.runtime }} on ${{ matrix.runner }}
+    steps:
+      - name: Setup flatpak
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Fetch runtime
+        run: |
+          flatpak install --user flathub --no-deploy --include-sdk --noninteractive ${{ matrix.runtime }}
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Cache objects to GHCR
+        run: |
+          registry=ghcr.io/flathub-infra/vorarbeiter/cache/runtime
+          image_name="$(echo ${{ matrix.runtime }} | sed 's,//,-,;s,\.,-,g'):$(uname -m)"
+          image_name="${image_name,,}"
+
+          oras login ghcr.io --password "${{ secrets.GITHUB_TOKEN }}" -u "${{ github.actor }}"
+
+          cd ~/.local/share/flatpak
+          oras push "${registry}/${image_name}" repo/objects
