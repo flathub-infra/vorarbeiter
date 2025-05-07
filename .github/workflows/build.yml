@@ -369,13 +369,15 @@ jobs:
           cd "${GITHUB_WORKSPACE}/work"
           oras pull ghcr.io/flathub-infra/vorarbeiter/flatpak-builder-cache/${app_id_lc}/stable-${{ matrix.arch }}:latest || exit 0
 
-      - name: Build flatpak
+      - name: Enable unprivileged user namespaces
         run: |
           sudo aa-teardown >/dev/null 2>&1 || true
           sudo systemctl disable --now apparmor.service >/dev/null 2>&1
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      - name: Download sources
+        run: |
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --security-opt apparmor=unconfined \
@@ -389,9 +391,26 @@ jobs:
             -e BRANCH \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
-              git config --global --add safe.directory "*"
               just -f .flathub.justfile prepare-env || exit 1
               just -f .flathub.justfile download-sources $APP_ID || exit 1
+            '
+
+      - name: Build
+        run: |
+          docker run --rm \
+            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+            --security-opt apparmor=unconfined \
+            --cap-drop all \
+            --entrypoint="" \
+            -e TMPDIR=/work/tmp \
+            -v /proc:/host/proc \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -w /work \
+            -e APP_ID \
+            -e BRANCH \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+            /bin/bash -c '
+              just -f .flathub.justfile prepare-env || exit 1
               just -f .flathub.justfile build $APP_ID $BRANCH || exit 1
             '
 
