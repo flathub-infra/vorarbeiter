@@ -417,7 +417,7 @@ jobs:
           RUNTIME=${RUNTIME/sdk/platform}
 
           cd ${GITHUB_WORKSPACE}/flatpak
-          oras pull ghcr.io/flathub-infra/vorarbeiter/cache/runtime/${RUNTIME}:${{ matrix.arch }} || exit 0
+          #oras pull ghcr.io/flathub-infra/vorarbeiter/cache/runtime/${RUNTIME}:${{ matrix.arch }} || exit 0
 
       - name: Build
         run: |
