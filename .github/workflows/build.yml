@@ -390,9 +390,9 @@ jobs:
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
-              just -f .flathub.justfile prepare-env
-              just -f .flathub.justfile download-sources $APP_ID
-              just -f .flathub.justfile build $APP_ID $BRANCH
+              just -f .flathub.justfile prepare-env || exit 1
+              just -f .flathub.justfile download-sources $APP_ID || exit 1
+              just -f .flathub.justfile build $APP_ID $BRANCH || exit 1
             '
 
       - name: Commit screenshots
