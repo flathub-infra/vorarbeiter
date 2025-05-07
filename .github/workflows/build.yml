@@ -419,7 +419,9 @@ jobs:
             just -f .flathub.justfile show-runtime $APP_ID > runtime
 
           RUNTIME=$(<runtime)
-          SDK="${RUNTIME/Platform/SDK}"
+          RUNTIME=${RUNTIME,,}
+          RUNTIME=${RUNTIME//./-}
+          SDK="${RUNTIME/platform/sdk}"
 
           cd ${GITHUB_WORKSPACE}/flatpak
           oras pull ghcr.io/flathub-infra/vorarbeiter/runtime-cache/${RUNTIME}:${{ matrix.arch }} || exit 0
