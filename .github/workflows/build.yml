@@ -395,6 +395,23 @@ jobs:
               just -f .flathub.justfile download-sources $APP_ID || exit 1
             '
 
+      - name: Show runtime
+        run: |
+          docker run --rm \
+            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+            --security-opt apparmor=unconfined \
+            --cap-drop all \
+            --entrypoint="" \
+            -e TMPDIR=/work/tmp \
+            -v /proc:/host/proc \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -w /work \
+            -e APP_ID \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+            /bin/bash -c '
+              just -f .flathub.justfile show-runtime $APP_ID || exit 0
+            '
+
       - name: Build
         run: |
           docker run --rm \
