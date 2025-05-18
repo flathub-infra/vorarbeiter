@@ -133,15 +133,31 @@ download-sources app_id:
     echo "Failed after $max_retries attempts"
     exit 1
 
-build app_id branch="stable":
+build app_id git_ref:
     #!/usr/bin/env bash
     set -euxo pipefail
+
+    case "{{git_ref}}" in
+        "refs/heads/master")
+            ref_branch="stable"
+            ;;
+        "refs/heads/beta")
+            ref_branch="beta"
+            ;;
+        refs/heads/branch/*)
+            ref_branch_tmp="{{git_ref}}"
+            ref_branch="${ref_branch_tmp##refs/heads/branch/}"
+            ;;
+        *)
+            ref_branch="test"
+            ;;
+    esac
 
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
     subject=$(just -f .flathub.justfile _get_build_subject)
 
     deps_args="--install-deps-from=flathub"
-    if [ "{{branch}}" = "beta" ] || [ "{{branch}}" = "test" ]; then
+    if [ "$ref_branch" = "beta" ] || [ "$ref_branch" = "test" ]; then
         deps_args="$deps_args --install-deps-from=flathub-beta"
     fi
 
@@ -151,7 +167,7 @@ build app_id branch="stable":
         --disable-rofiles-fuse \
         --mirror-screenshots-url=https://dl.flathub.org/media \
         --repo repo \
-        --default-branch "{{branch}}" \
+        --default-branch "$ref_branch" \
         --subject "${subject}" \
         --disable-download \
         --ccache \

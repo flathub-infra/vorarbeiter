@@ -453,11 +453,11 @@ jobs:
             -v "${GITHUB_WORKSPACE}/flatpak:/home/flatbld/.local/share/flatpak" \
             -w /work \
             -e APP_ID \
-            -e BRANCH \
+            -e REF \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               just -f .flathub.justfile prepare-env || exit 1
-              just -f .flathub.justfile build $APP_ID $BRANCH || exit 1
+              just -f .flathub.justfile build $APP_ID $REF || exit 1
             '
 
       - name: Commit screenshots
