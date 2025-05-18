@@ -111,6 +111,12 @@ jobs:
                           success = True
                       elif response.status == 429:
                           sleep_time = random.uniform(1, 5)
+                          retry_after = response.headers.get("Retry-After")
+                          if retry_after:
+                            try:
+                              sleep_time = int(retry_after)
+                            except Exception:
+                              pass
                           print(f"Received 429 status code (Rate limiting). Retrying after {sleep_time:.2f} seconds...")
                           time.sleep(sleep_time)
                       else:
