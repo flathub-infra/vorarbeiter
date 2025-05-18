@@ -14,6 +14,7 @@ app_build_types = {
     "org.chromium.Chromium": "2xlarge",
     "org.libreoffice.LibreOffice": "large",
     "org.mamedev.MAME": "medium",
+    "org.freecad.FreeCAD": "medium",
 }
 
 
