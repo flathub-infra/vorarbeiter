@@ -15,6 +15,7 @@ app_build_types = {
     "org.libreoffice.LibreOffice": "large",
     "org.mamedev.MAME": "medium",
     "org.freecad.FreeCAD": "medium",
+    "net.mkiol.SpeechNote": "medium",
 }
 
 
