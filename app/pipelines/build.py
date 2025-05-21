@@ -13,9 +13,9 @@ app_build_types = {
     "io.github.ungoogled_software.ungoogled_chromium": "2xlarge",
     "org.chromium.Chromium": "2xlarge",
     "org.libreoffice.LibreOffice": "large",
-    "org.mamedev.MAME": "medium",
-    "org.freecad.FreeCAD": "medium",
+    "org.freecad.FreeCAD": "large",
     "net.mkiol.SpeechNote": "medium",
+    "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "medium",
 }
 
 
