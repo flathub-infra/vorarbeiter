@@ -289,6 +289,8 @@ jobs:
           sudo rm -rf /usr/lib/mono
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
+          timeout 10 df -hHl || true
+          timeout 5 free -h --giga || true
 
       - name: Download justfile and seccomp profile
         shell: python
@@ -521,6 +523,11 @@ jobs:
           app_id_lc=${APP_ID,,}
           oras login ghcr.io --password "${{ secrets.GITHUB_TOKEN }}" -u "${{ github.actor }}" || exit 0
           oras push ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest .flatpak-builder || exit 0
+
+      - name: Get free space
+        if: always()
+        run: |
+          timeout 10 df -hHl || true
 
   callback:
     runs-on: ubuntu-latest
