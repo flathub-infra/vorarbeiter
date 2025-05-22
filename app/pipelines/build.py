@@ -13,10 +13,11 @@ app_build_types = {
     "io.github.ungoogled_software.ungoogled_chromium": "2xlarge",
     "org.chromium.Chromium": "2xlarge",
     "org.libreoffice.LibreOffice": "large",
-    "org.freecad.FreeCAD": "2xlarge",
+    "org.freecad.FreeCAD": "4xlarge",
     "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "2xlarge",
     "net.mkiol.SpeechNote.Addon.amd": "medium",
     "net.mkiol.SpeechNote.Addon.nvidia": "medium",
+    "net.mkiol.SpeechNote": "medium",
 }
 
 
