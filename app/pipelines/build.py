@@ -14,7 +14,6 @@ app_build_types = {
     "org.chromium.Chromium": "2xlarge",
     "org.libreoffice.LibreOffice": "large",
     "org.freecad.FreeCAD": "large",
-    "net.mkiol.SpeechNote": "medium",
     "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "2xlarge",
 }
 
