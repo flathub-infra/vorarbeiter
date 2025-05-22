@@ -15,6 +15,8 @@ app_build_types = {
     "org.libreoffice.LibreOffice": "large",
     "org.freecad.FreeCAD": "2xlarge",
     "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "2xlarge",
+    "net.mkiol.SpeechNote.Addon.amd": "medium",
+    "net.mkiol.SpeechNote.Addon.nvidia": "medium",
 }
 
 
