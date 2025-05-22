@@ -13,7 +13,7 @@ app_build_types = {
     "io.github.ungoogled_software.ungoogled_chromium": "2xlarge",
     "org.chromium.Chromium": "2xlarge",
     "org.libreoffice.LibreOffice": "large",
-    "org.freecad.FreeCAD": "large",
+    "org.freecad.FreeCAD": "2xlarge",
     "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "2xlarge",
 }
 
