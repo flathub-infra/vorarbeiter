@@ -277,6 +277,13 @@ jobs:
           sudo swapoff -a || true
           sudo rm -rf /opt/ghc /usr/local/.ghcup || true
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/local/julia*
+          sudo rm -rf /opt/hostedtoolcache/go /opt/az /opt/microsoft
+          sudo rm -rf /usr/share/miniconda /home/runner/.rustup /home/packer/.rustup /home/runneradmin/.rustup
+          sudo rm -rf /etc/skel/.rustup /opt/hostedtoolcache/node /opt/google-cloud-sdk
+          sudo rm -rf /usr/share/az_* /opt/google /usr/lib/firefox /usr/local/aws-*
+          sudo rm -rf /usr/libexec/gcc /opt/actionarchivecache /opt/hostedtoolcache/Ruby 
+          sudo rm -rf /var/lib/mysql /usr/local/n
           sudo rm -rf /swapfile || true
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /usr/share/dotnet /usr/share/swift
@@ -287,10 +294,11 @@ jobs:
           sudo rm -rf /usr/lib/dotnet /usr/lib/php /usr/share/mysql
           sudo rm -rf /usr/lib/llvm-*
           sudo rm -rf /usr/lib/mono
-          sudo apt-get clean
+          sudo apt-get clean || true
           sudo rm -rf /var/lib/apt/lists/*
-          timeout 10 df -hHl || true
+          timeout 5 df -hHl | grep "/dev/root" || true
           timeout 5 free -h --giga || true
+          timeout 120 sudo du -xh --max-depth=3 / 2>/dev/null | sort -rh | head -40 || true
 
       - name: Download justfile and seccomp profile
         shell: python
@@ -527,7 +535,7 @@ jobs:
       - name: Get free space
         if: always()
         run: |
-          timeout 10 df -hHl || true
+          timeout 5 df -hHl | grep "/dev/root" || true
 
   callback:
     runs-on: ubuntu-latest
