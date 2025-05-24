@@ -262,7 +262,7 @@ jobs:
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
           # sync this env var name with linter
           echo "BUILD_URL=${{ inputs.build_url }}" >> $GITHUB_ENV
-
+          echo "BUILD_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           REPO_TOKEN="$(jq -r '.inputs.flat_manager_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$REPO_TOKEN"
           echo "REPO_TOKEN=$REPO_TOKEN" >> $GITHUB_ENV
@@ -471,10 +471,11 @@ jobs:
             -w /work \
             -e APP_ID \
             -e REF \
+            -e BUILD_ARCH \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               just -f .flathub.justfile prepare-env || exit 1
-              just -f .flathub.justfile build $APP_ID $REF || exit 1
+              just -f .flathub.justfile build $APP_ID $REF $BUILD_ARCH || exit 1
             '
 
       - name: Commit screenshots

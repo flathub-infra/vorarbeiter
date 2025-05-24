@@ -133,7 +133,7 @@ download-sources app_id:
     echo "Failed after $max_retries attempts"
     exit 1
 
-build app_id git_ref:
+build app_id git_ref build_arch:
     #!/usr/bin/env bash
     set -euxo pipefail
 
@@ -159,6 +159,10 @@ build app_id git_ref:
     deps_args="--install-deps-from=flathub"
     if [ "$ref_branch" = "beta" ] || [ "$ref_branch" = "test" ]; then
         deps_args="$deps_args --install-deps-from=flathub-beta"
+    fi
+
+    if [ "{{build_arch}}" = "x86_64" ]; then
+        deps_args="$deps_args --bundle-sources"
     fi
 
     flatpak-builder -v \
