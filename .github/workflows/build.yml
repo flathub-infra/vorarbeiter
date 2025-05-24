@@ -297,7 +297,7 @@ jobs:
           sudo rm -rf /usr/lib/mono
           sudo apt-get clean || true
           sudo rm -rf /var/lib/apt/lists/*
-          timeout 5 df -hHl | grep "/dev/root" || true
+          timeout 5 df -hHl || true
           timeout 5 free -h --giga || true
           timeout 120 sudo du -xh --max-depth=3 / 2>/dev/null | sort -rh | head -40 || true
 
@@ -537,7 +537,7 @@ jobs:
       - name: Get free space
         if: always()
         run: |
-          timeout 5 df -hHl | grep "/dev/root" || true
+          timeout 5 df -hHl || true
 
   callback:
     runs-on: ubuntu-latest
