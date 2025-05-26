@@ -269,7 +269,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             await create_pr_comment(
                 git_repo=git_repo,
                 pr_number=pr_number,
-                comment="🚧 Test build enqueued.",
+                comment="🚧 Test build [enqueued](https://github.com/flathub-infra/vorarbeiter/actions/workflows/build.yml).",
             )
         except ValueError:
             logger.error(
