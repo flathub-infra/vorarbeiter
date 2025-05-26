@@ -175,6 +175,7 @@ build app_id git_ref build_arch:
         --subject "${subject}" \
         --disable-download \
         --ccache \
+        --override-source-date-epoch 1321009871 \
         builddir "$manifest"
 
 commit-screenshots:
