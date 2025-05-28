@@ -12,6 +12,7 @@ from app.utils.flat_manager import FlatManagerClient
 app_build_types = {
     "io.github.ungoogled_software.ungoogled_chromium": "2xlarge",
     "org.chromium.Chromium": "2xlarge",
+    "com.adamcake.Bolt": "2xlarge",
     "org.libreoffice.LibreOffice": "large",
     "org.freecad.FreeCAD": "4xlarge",
     "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "2xlarge",
