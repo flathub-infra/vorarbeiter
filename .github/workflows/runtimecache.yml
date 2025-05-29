@@ -466,10 +466,12 @@ jobs:
           docker pull $IMAGE_NAME || true
           docker create --name runtimecache $IMAGE_NAME bash || true
           docker cp runtimecache:/var/lib/flatpak/repo/objects objects || true
+          docker rm -f runtimecache || true
+          docker rmi $IMAGE_NAME || true
 
           rm -rf ${GITHUB_WORKSPACE}/flatpak/repo/objects
           mv objects ${GITHUB_WORKSPACE}/flatpak/repo/objects
-          chown -R 1001:1001 ${GITHUB_WORKSPACE}/flatpak/repo/objects
+          sudo chown -R 1001:1001 ${GITHUB_WORKSPACE}/flatpak/repo/objects
 
       - name: Build
         run: |
