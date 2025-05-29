@@ -285,7 +285,7 @@ jobs:
           sudo rm -rf /usr/share/miniconda /home/runner/.rustup /home/packer/.rustup /home/runneradmin/.rustup
           sudo rm -rf /etc/skel/.rustup /opt/hostedtoolcache/node /opt/google-cloud-sdk
           sudo rm -rf /usr/share/az_* /opt/google /usr/lib/firefox /usr/local/aws-*
-          sudo rm -rf /usr/libexec/gcc /opt/actionarchivecache /opt/hostedtoolcache/Ruby
+          sudo rm -rf /usr/libexec/gcc /opt/actionarchivecache /opt/hostedtoolcache/Ruby 
           sudo rm -rf /var/lib/mysql /usr/local/n
           sudo rm -rf /swapfile || true
           sudo rm -rf /usr/local/lib/android
@@ -426,6 +426,52 @@ jobs:
               just -f .flathub.justfile prepare-env || exit 1
               just -f .flathub.justfile download-sources $APP_ID || exit 1
             '
+
+      - name: Fetch runtime and SDK cache
+        run: |
+          docker run --rm \
+            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+            --security-opt apparmor=unconfined \
+            --cap-drop all \
+            --entrypoint="" \
+            -e TMPDIR=/work/tmp \
+            -v /proc:/host/proc \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -w /work \
+            -e APP_ID \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+            just -f .flathub.justfile show-runtime $APP_ID > runtime
+
+          docker run --rm \
+            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+            --security-opt apparmor=unconfined \
+            --cap-drop all \
+            --entrypoint="" \
+            -e TMPDIR=/work/tmp \
+            -v /proc:/host/proc \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -v "${GITHUB_WORKSPACE}/flatpak:/home/flatbld/.local/share/flatpak" \
+            -w /work \
+            -e APP_ID \
+            -e BRANCH \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+            just -f .flathub.justfile prepare-env || exit 0
+
+          RUNTIME=$(<runtime)
+          RUNTIME=${RUNTIME,,}
+          RUNTIME_NAME=$(echo $RUNTIME | cut -d. -f2)
+          RUNTIME_VERSION=$(echo $RUNTIME | cut -d- -f2)
+          IMAGE_NAME=ghcr.io/flathub-infra/flatpak-github-actions:${RUNTIME_NAME}-${RUNTIME_VERSION}
+
+          docker pull $IMAGE_NAME || true
+          docker create --name runtimecache $IMAGE_NAME bash || true
+          docker cp runtimecache:/var/lib/flatpak/repo/objects objects || true
+          docker rm -f runtimecache || true
+          docker rmi $IMAGE_NAME || true
+
+          rm -rf ${GITHUB_WORKSPACE}/flatpak/repo/objects || true
+          mv objects ${GITHUB_WORKSPACE}/flatpak/repo/objects || true
+          sudo chown -R 1001:1001 ${GITHUB_WORKSPACE}/flatpak/repo/objects || true
 
       - name: Build
         run: |
