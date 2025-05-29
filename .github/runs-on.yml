@@ -13,39 +13,13 @@ runners:
     image: ubuntu24-full-arm64
 
   large-amd64:
-    cpu: 8
+    cpu: 16
+    ram: [33, 64]
     disk: large
     spot: price-capacity-optimized
     family: ["m7a", "m7i", "r7i", "c7i", "c7a", "r7a"]
 
   large-arm64:
-    cpu: 8
-    disk: large
-    spot: price-capacity-optimized
-    family: ["m7g", "m6g", "r7g", "r6g", "c7g", "c6g"]
-    image: ubuntu24-full-arm64
-
-  2xlarge-amd64:
-    cpu: 16
-    disk: large
-    spot: lowest-price
-    family: ["m7a", "m7i", "r7i", "c7i", "c7a", "r7a"]
-
-  2xlarge-arm64:
-    cpu: 16
-    disk: large
-    spot: price-capacity-optimized
-    family: ["m7g", "m6g", "r7g", "r6g", "c7g", "c6g"]
-    image: ubuntu24-full-arm64
-
-  4xlarge-amd64:
-    cpu: 16
-    ram: [33, 64]
-    disk: large
-    spot: lowest-price
-    family: ["m7a", "m7i", "r7i", "c7i", "c7a", "r7a"]
-
-  4xlarge-arm64:
     cpu: 16
     ram: [33, 64]
     disk: large

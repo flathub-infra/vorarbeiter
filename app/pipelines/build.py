@@ -10,12 +10,12 @@ from app.providers.base import ProviderType  # Kept for backward compatibility
 from app.utils.flat_manager import FlatManagerClient
 
 app_build_types = {
-    "io.github.ungoogled_software.ungoogled_chromium": "2xlarge",
-    "org.chromium.Chromium": "2xlarge",
-    "com.adamcake.Bolt": "2xlarge",
+    "io.github.ungoogled_software.ungoogled_chromium": "large",
+    "org.chromium.Chromium": "large",
+    "com.adamcake.Bolt": "large",
     "org.libreoffice.LibreOffice": "large",
-    "org.freecad.FreeCAD": "4xlarge",
-    "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "2xlarge",
+    "org.freecad.FreeCAD": "large",
+    "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "large",
 }
 
 
