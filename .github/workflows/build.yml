@@ -278,8 +278,10 @@ jobs:
           sudo swapoff -a || true
           sudo rm -rf /opt/ghc /usr/local/.ghcup || true
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-          sudo rm -rf /usr/local/julia*
-          sudo rm -rf /opt/hostedtoolcache/go /opt/az /opt/microsoft
+          sudo rm -rf /opt/hostedtoolcache/PyPy
+          sudo rm -rf /usr/share/gradle-*
+          sudo rm -rf /usr/local/julia* /usr/share/java /usr/share/kotlinc
+          sudo rm -rf /opt/hostedtoolcache/go /opt/az /opt/microsoft /opt/pipx
           sudo rm -rf /usr/share/miniconda /home/runner/.rustup /home/packer/.rustup /home/runneradmin/.rustup
           sudo rm -rf /etc/skel/.rustup /opt/hostedtoolcache/node /opt/google-cloud-sdk
           sudo rm -rf /usr/share/az_* /opt/google /usr/lib/firefox /usr/local/aws-*
