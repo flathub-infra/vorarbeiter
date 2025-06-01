@@ -16,6 +16,7 @@ app_build_types = {
     "org.libreoffice.LibreOffice": "large",
     "org.freecad.FreeCAD": "large",
     "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "large",
+    "org.paraview.ParaView": "large",
 }
 
 
