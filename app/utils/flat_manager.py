@@ -1,3 +1,4 @@
+from enum import IntEnum
 from typing import Any, NotRequired, TypedDict
 from urllib.parse import urlparse
 
@@ -5,6 +6,22 @@ import httpx
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+
+class JobStatus(IntEnum):
+    NEW = 0
+    STARTED = 1
+    ENDED = 2
+    BROKEN = 3
+
+
+class JobKind(IntEnum):
+    COMMIT = 0
+    PUBLISH = 1
+    UPDATE_REPO = 2
+    REPUBLISH = 3
+    CHECK = 4
+    PRUNE = 5
 
 
 class BuildResponse(TypedDict):
@@ -18,6 +35,16 @@ class TokenResponse(TypedDict):
     token: str
     sub: str
     scope: list[str]
+
+
+class JobResponse(TypedDict):
+    id: int
+    kind: JobKind
+    status: JobStatus
+    repo: str
+    contents: str
+    results: str
+    log: str
 
 
 class FlatManagerClient:
@@ -145,6 +172,18 @@ class FlatManagerClient:
             response = await client.get(
                 f"{build_url}/extended",
                 headers=self.headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def get_job(self, job_id: int) -> JobResponse:
+        async with httpx.AsyncClient() as client:
+            response = await client.request(
+                "GET",
+                f"{self.url}/api/v1/job/{job_id}",
+                headers=self.headers,
+                json={"log_offset": None},
                 timeout=self.timeout,
             )
             response.raise_for_status()
