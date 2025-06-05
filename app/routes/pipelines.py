@@ -266,7 +266,18 @@ async def pipeline_callback(
                 pipeline.is_extra_data = is_extra_data
                 is_extra_data_updated = True
 
-        if app_id_updated or is_extra_data_updated:
+        if end_of_life := data.get("end_of_life"):
+            pipeline.end_of_life = end_of_life
+
+        if end_of_life_rebase := data.get("end_of_life_rebase"):
+            pipeline.end_of_life_rebase = end_of_life_rebase
+
+        if (
+            app_id_updated
+            or is_extra_data_updated
+            or pipeline.end_of_life
+            or pipeline.end_of_life_rebase
+        ):
             await db.commit()
             response_data: dict[str, Any] = {
                 "status": "ok",
@@ -276,6 +287,10 @@ async def pipeline_callback(
                 response_data["app_id"] = pipeline.app_id
             if is_extra_data_updated:
                 response_data["is_extra_data"] = pipeline.is_extra_data
+            if pipeline.end_of_life:
+                response_data["end_of_life"] = pipeline.end_of_life
+            if pipeline.end_of_life_rebase:
+                response_data["end_of_life_rebase"] = pipeline.end_of_life_rebase
             return response_data
 
         if "status" in data:
@@ -374,7 +389,11 @@ async def pipeline_callback(
                                     url=settings.flat_manager_url,
                                     token=settings.flat_manager_token,
                                 )
-                                await flat_manager.commit(build_id)
+                                await flat_manager.commit(
+                                    build_id,
+                                    end_of_life=updated_pipeline.end_of_life,
+                                    end_of_life_rebase=updated_pipeline.end_of_life_rebase,
+                                )
                                 logger.info(
                                     "Committed build",
                                     build_id=build_id,
@@ -553,7 +572,7 @@ async def pipeline_callback(
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Request must contain either 'status', 'log_url', 'app_id', or 'is_extra_data' field",
+                detail="Request must contain either 'status', 'log_url', 'app_id', 'is_extra_data', 'end_of_life', or 'end_of_life_rebase' field",
             )
 
 
@@ -794,7 +813,11 @@ async def publish_pipelines(
                     build_id=build_id,
                 )
                 try:
-                    await flat_manager.commit(build_id)
+                    await flat_manager.commit(
+                        build_id,
+                        end_of_life=candidate.end_of_life,
+                        end_of_life_rebase=candidate.end_of_life_rebase,
+                    )
                     logger.info(
                         "Successfully committed build",
                         build_id=build_id,

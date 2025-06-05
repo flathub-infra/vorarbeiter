@@ -489,7 +489,7 @@ def test_pipeline_callback_invalid_data(mock_get_db, sample_pipeline):
 
     assert response.status_code == 400
     assert (
-        "Request must contain either 'status', 'log_url', 'app_id', or 'is_extra_data' field"
+        "Request must contain either 'status', 'log_url', 'app_id', 'is_extra_data', 'end_of_life', or 'end_of_life_rebase' field"
         in response.json()["detail"]
     )
 
