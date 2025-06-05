@@ -27,7 +27,6 @@ class Job(Base):
     job_type: Mapped[str] = mapped_column(String(255), index=True)
     position: Mapped[int] = mapped_column(Integer, index=True)
 
-    provider: Mapped[str] = mapped_column(String(255), index=True)
     provider_data: Mapped[dict[str, Any]] = mapped_column(JSON)
 
     result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

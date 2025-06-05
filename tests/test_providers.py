@@ -2,9 +2,7 @@ import pytest
 import uuid
 from unittest.mock import patch, MagicMock
 
-from app.providers import (
-    GitHubProvider,
-)
+from app.services import GitHubActionsService
 
 
 @pytest.fixture
@@ -24,7 +22,7 @@ def mock_httpx_post():
 
 @pytest.mark.asyncio
 async def test_github_provider_dispatch(github_token, mock_httpx_post):
-    provider = GitHubProvider()
+    provider = GitHubActionsService()
     provider.token = github_token
 
     job_id = str(uuid.uuid4())
@@ -58,7 +56,7 @@ async def test_github_provider_dispatch(github_token, mock_httpx_post):
 
 @pytest.mark.asyncio
 async def test_github_provider_cancel(github_token, mock_httpx_post):
-    provider = GitHubProvider()
+    provider = GitHubActionsService()
     provider.token = github_token
 
     job_id = str(uuid.uuid4())
@@ -77,7 +75,7 @@ async def test_github_provider_cancel(github_token, mock_httpx_post):
 
 @pytest.mark.asyncio
 async def test_github_provider_cancel_missing_run_id(github_token, mock_httpx_post):
-    provider = GitHubProvider()
+    provider = GitHubActionsService()
     provider.token = github_token
 
     job_id = str(uuid.uuid4())

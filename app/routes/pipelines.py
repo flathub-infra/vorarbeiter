@@ -14,7 +14,6 @@ from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines import BuildPipeline
-from app.providers.base import ProviderType
 from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
     create_github_issue,
@@ -104,7 +103,6 @@ class PipelineResponse(BaseModel):
     repo: str | None = None
     params: dict[str, Any]
     triggered_by: PipelineTrigger
-    provider: ProviderType | None = None
     log_url: str | None = None
     build_id: str | None = None
     commit_job_id: int | None = None
@@ -280,7 +278,6 @@ async def get_pipeline(
             else None,
             params=pipeline.params,
             triggered_by=pipeline.triggered_by,
-            provider=ProviderType(pipeline.provider) if pipeline.provider else None,
             log_url=pipeline.log_url,
             build_id=pipeline.build_id,
             commit_job_id=pipeline.commit_job_id,

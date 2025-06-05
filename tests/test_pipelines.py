@@ -9,8 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.providers import GitHubProvider
-from app.providers.base import ProviderType
+from app.services import GitHubActionsService
 from app.pipelines.build import BuildPipeline
 
 
@@ -21,13 +20,13 @@ def mock_db():
 
 @pytest.fixture
 def mock_provider():
-    provider = AsyncMock(spec=GitHubProvider)
+    provider = AsyncMock(spec=GitHubActionsService)
     return provider
 
 
 @pytest.fixture
 def build_pipeline(mock_provider):
-    with patch("app.providers.github_provider", mock_provider):
+    with patch("app.services.github_actions_service", mock_provider):
         pipeline = BuildPipeline()
         return pipeline
 
@@ -41,7 +40,6 @@ def sample_pipeline():
         params={"branch": "main"},
         created_at=datetime.now(),
         triggered_by=PipelineTrigger.MANUAL,
-        provider=ProviderType.GITHUB.value,
         provider_data={},
         callback_token="test_token_12345",
     )
@@ -121,7 +119,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
 @pytest.mark.asyncio
 @patch("app.pipelines.build.get_db")
-@patch("app.providers.github_provider")
+@patch("app.services.github_actions_service")
 @patch("httpx.AsyncClient")
 @pytest.mark.parametrize(
     "source_branch, expected_branch, expected_flat_manager_repo",
@@ -155,7 +153,6 @@ async def test_start_pipeline_branch_mapping(
         app_id=app_id,
         params=params,
         status=PipelineStatus.PENDING,
-        provider=ProviderType.GITHUB.value,
         provider_data={},
         callback_token=str(uuid.uuid4()),
     )
@@ -394,7 +391,6 @@ def test_get_pipeline_endpoint(mock_get_db, sample_pipeline):
     assert response.json()["id"] == str(pipeline_id)
     assert response.json()["app_id"] == sample_pipeline.app_id
     assert response.json()["status"] == sample_pipeline.status.value
-    assert response.json()["provider"] == sample_pipeline.provider
 
 
 def test_get_pipeline_not_found(mock_get_db):

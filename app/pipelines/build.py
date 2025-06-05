@@ -5,8 +5,7 @@ from typing import Any
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
-from app.providers import github_provider
-from app.providers.base import ProviderType  # Kept for backward compatibility
+from app.services import github_actions_service
 from app.utils.flat_manager import FlatManagerClient
 
 app_build_types = {
@@ -23,7 +22,7 @@ app_build_types = {
 
 class BuildPipeline:
     def __init__(self):
-        self.provider = github_provider
+        self.provider = github_actions_service
         self.flat_manager = FlatManagerClient(
             url=settings.flat_manager_url, token=settings.flat_manager_token
         )
@@ -39,7 +38,6 @@ class BuildPipeline:
                 app_id=app_id,
                 params=params,
                 webhook_event_id=webhook_event_id,
-                provider=ProviderType.GITHUB.value,
                 provider_data={},
             )
             db.add(pipeline)

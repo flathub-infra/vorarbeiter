@@ -6,7 +6,7 @@ import httpx
 from app.config import settings
 
 
-class GitHubProvider:
+class GitHubActionsService:
     base_url = "https://api.github.com"
 
     def __init__(self) -> None:
