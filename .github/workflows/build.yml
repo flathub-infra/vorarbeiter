@@ -105,7 +105,6 @@ jobs:
                       response = http.request('GET', url)
                       if response.status == 200:
                           os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                          # Write the content to the file
                           with open(target_path, 'wb') as f:
                               f.write(response.data)
                           print(f"Successfully downloaded {url} on attempt {attempts}")
@@ -183,6 +182,26 @@ jobs:
             -e TMPDIR=/work/tmp \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-manifest $APP_ID
+
+      - name: Store end-of-life fields
+        run: |
+          cd "${GITHUB_WORKSPACE}/work"
+
+          if [[ -f "flathub.json" ]]; then
+            END_OF_LIFE=$(jq -r '.["end-of-life"] // empty' flathub.json 2>/dev/null)
+            END_OF_LIFE_REBASE=$(jq -r '.["end-of-life-rebase"] // empty' flathub.json 2>/dev/null)
+
+            if [[ -n "$END_OF_LIFE" || -n "$END_OF_LIFE_REBASE" ]]; then
+              CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+              echo "::add-mask::$CALLBACK_TOKEN"
+
+              JSON_DATA="{}"
+              [[ -n "$END_OF_LIFE" ]] && JSON_DATA=$(jq -n --arg eol "$END_OF_LIFE" '{"end_of_life": $eol}')
+              [[ -n "$END_OF_LIFE_REBASE" ]] && JSON_DATA=$(echo "$JSON_DATA" | jq --arg eolr "$END_OF_LIFE_REBASE" '. + {"end_of_life_rebase": $eolr}')
+
+              curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $CALLBACK_TOKEN" -d "$JSON_DATA" "${{ inputs.callback_url }}"
+            fi
+          fi
 
   setup-matrix:
     runs-on: ubuntu-latest
@@ -289,7 +308,7 @@ jobs:
           sudo rm -rf /usr/share/miniconda /home/runner/.rustup /home/packer/.rustup /home/runneradmin/.rustup
           sudo rm -rf /etc/skel/.rustup /opt/hostedtoolcache/node /opt/google-cloud-sdk
           sudo rm -rf /usr/share/az_* /opt/google /usr/lib/firefox /usr/local/aws-*
-          sudo rm -rf /usr/libexec/gcc /opt/actionarchivecache /opt/hostedtoolcache/Ruby 
+          sudo rm -rf /usr/libexec/gcc /opt/actionarchivecache /opt/hostedtoolcache/Ruby
           sudo rm -rf /var/lib/mysql /usr/local/n
           sudo rm -rf /swapfile || true
           sudo rm -rf /usr/local/lib/android
@@ -335,7 +354,6 @@ jobs:
                       response = http.request('GET', url)
                       if response.status == 200:
                           os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                          # Write the content to the file
                           with open(target_path, 'wb') as f:
                               f.write(response.data)
                           print(f"Successfully downloaded {url} on attempt {attempts}")
