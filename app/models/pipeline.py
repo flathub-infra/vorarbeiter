@@ -67,6 +67,8 @@ class Pipeline(Base):
 
     log_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     build_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    commit_job_id: Mapped[int | None] = mapped_column(nullable=True)
+    publish_job_id: Mapped[int | None] = mapped_column(nullable=True)
     is_extra_data: Mapped[bool | None] = mapped_column(nullable=True)
     callback_token: Mapped[str] = mapped_column(
         String(32), default=lambda: secrets.token_hex(16)

@@ -28,6 +28,44 @@ security = HTTPBearer()
 api_security = HTTPBearer()
 
 
+async def update_pipeline_job_ids(pipeline: Pipeline) -> bool:
+    if pipeline.commit_job_id is not None and pipeline.publish_job_id is not None:
+        return False
+
+    if not pipeline.build_id:
+        return False
+
+    try:
+        flat_manager = FlatManagerClient(
+            url=settings.flat_manager_url,
+            token=settings.flat_manager_token,
+        )
+        build_info = await flat_manager.get_build_info(pipeline.build_id)
+        build_data = build_info.get("build", {})
+
+        commit_job_id = build_data.get("commit_job_id")
+        publish_job_id = build_data.get("publish_job_id")
+
+        updated = False
+        if commit_job_id is not None and pipeline.commit_job_id is None:
+            pipeline.commit_job_id = commit_job_id
+            updated = True
+
+        if publish_job_id is not None and pipeline.publish_job_id is None:
+            pipeline.publish_job_id = publish_job_id
+            updated = True
+
+        return updated
+    except Exception as e:
+        logger.error(
+            "Failed to fetch job IDs from flat-manager",
+            pipeline_id=str(pipeline.id),
+            build_id=pipeline.build_id,
+            error=str(e),
+        )
+        return False
+
+
 async def verify_token(
     credentials: HTTPAuthorizationCredentials = Depends(api_security),
 ):
@@ -51,6 +89,8 @@ class PipelineSummary(BaseModel):
     repo: str | None = None
     triggered_by: PipelineTrigger
     build_id: str | None = None
+    commit_job_id: int | None = None
+    publish_job_id: int | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -67,6 +107,8 @@ class PipelineResponse(BaseModel):
     provider: ProviderType | None = None
     log_url: str | None = None
     build_id: str | None = None
+    commit_job_id: int | None = None
+    publish_job_id: int | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -175,6 +217,17 @@ async def list_pipelines(
         result = await db.execute(stmt)
         pipelines = list(result.scalars().all())
 
+        updated_job_ids = False
+        for pipeline in pipelines:
+            if (
+                pipeline.commit_job_id is None or pipeline.publish_job_id is None
+            ) and pipeline.build_id:
+                if await update_pipeline_job_ids(pipeline):
+                    updated_job_ids = True
+
+        if updated_job_ids:
+            await db.commit()
+
         return [
             PipelineSummary(
                 id=str(pipeline.id),
@@ -185,6 +238,8 @@ async def list_pipelines(
                 else None,
                 triggered_by=pipeline.triggered_by,
                 build_id=pipeline.build_id,
+                commit_job_id=pipeline.commit_job_id,
+                publish_job_id=pipeline.publish_job_id,
                 created_at=pipeline.created_at,
                 started_at=pipeline.started_at,
                 finished_at=pipeline.finished_at,
@@ -210,6 +265,12 @@ async def get_pipeline(
                 detail=f"Pipeline {pipeline_id} not found",
             )
 
+        if (
+            pipeline.commit_job_id is None or pipeline.publish_job_id is None
+        ) and pipeline.build_id:
+            if await update_pipeline_job_ids(pipeline):
+                await db.commit()
+
         return PipelineResponse(
             id=str(pipeline.id),
             app_id=pipeline.app_id,
@@ -222,6 +283,8 @@ async def get_pipeline(
             provider=ProviderType(pipeline.provider) if pipeline.provider else None,
             log_url=pipeline.log_url,
             build_id=pipeline.build_id,
+            commit_job_id=pipeline.commit_job_id,
+            publish_job_id=pipeline.publish_job_id,
             created_at=pipeline.created_at,
             started_at=pipeline.started_at,
             finished_at=pipeline.finished_at,
@@ -706,6 +769,15 @@ async def publish_pipelines(
                     raise ValueError(
                         "Missing state information in flat-manager response"
                     )
+
+                commit_job_id = fm_build_data.get("commit_job_id")
+                publish_job_id = fm_build_data.get("publish_job_id")
+
+                if commit_job_id is not None and candidate.commit_job_id is None:
+                    candidate.commit_job_id = commit_job_id
+
+                if publish_job_id is not None and candidate.publish_job_id is None:
+                    candidate.publish_job_id = publish_job_id
 
             except httpx.RequestError as e:
                 logger.error(
