@@ -1,3 +1,3 @@
-from app.pipelines.build import BuildPipeline
+from app.pipelines.build import BuildPipeline, CallbackData
 
-__all__ = ["BuildPipeline"]
+__all__ = ["BuildPipeline", "CallbackData"]

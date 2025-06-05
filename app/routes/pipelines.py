@@ -13,8 +13,7 @@ from sqlalchemy.future import select
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.pipelines import BuildPipeline
-from app.services.github_notifier import GitHubNotifier
+from app.pipelines import BuildPipeline, CallbackData
 from app.utils.flat_manager import FlatManagerClient
 
 logger = structlog.get_logger(__name__)
@@ -308,163 +307,62 @@ async def pipeline_callback(
                 detail="Invalid callback token",
             )
 
-        updates: dict[str, Any] = {}
+    if "status" in data:
+        try:
+            PipelineStatusCallback(**data)
+        except Exception:
+            raise
+    elif "log_url" in data:
+        try:
+            PipelineLogUrlCallback(**data)
+        except Exception:
+            raise
+    elif not any(
+        field in data
+        for field in ["app_id", "is_extra_data", "end_of_life", "end_of_life_rebase"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Request must contain either 'status', 'log_url', 'app_id', 'is_extra_data', 'end_of_life', or 'end_of_life_rebase' field",
+        )
 
-        if pipeline.app_id == "flathub" and "app_id" in data:
-            app_id = data.get("app_id")
-            if isinstance(app_id, str) and app_id:
-                pipeline.app_id = app_id
-                updates["app_id"] = pipeline.app_id
+    callback_data = CallbackData(
+        status=data.get("status"),
+        log_url=data.get("log_url"),
+        app_id=data.get("app_id"),
+        is_extra_data=data.get("is_extra_data"),
+        end_of_life=data.get("end_of_life"),
+        end_of_life_rebase=data.get("end_of_life_rebase"),
+    )
 
-        if "is_extra_data" in data:
-            is_extra_data = data.get("is_extra_data")
-            if isinstance(is_extra_data, bool):
-                pipeline.is_extra_data = is_extra_data
-                updates["is_extra_data"] = pipeline.is_extra_data
-
-        if end_of_life := data.get("end_of_life"):
-            pipeline.end_of_life = end_of_life
-            updates["end_of_life"] = pipeline.end_of_life
-
-        if end_of_life_rebase := data.get("end_of_life_rebase"):
-            pipeline.end_of_life_rebase = end_of_life_rebase
-            updates["end_of_life_rebase"] = pipeline.end_of_life_rebase
-
-        # Return early for field-only updates (no status change)
-        if updates and "status" not in data:
-            await db.commit()
-            return {"status": "ok", "pipeline_id": str(pipeline_id), **updates}
-
-        if "status" in data:
-            if pipeline.status in [
-                PipelineStatus.SUCCEEDED,
-                PipelineStatus.PUBLISHED,
-            ]:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Pipeline status already finalized",
-                )
-
-            status_callback = PipelineStatusCallback(**data)
-            status_value = status_callback.status.lower()
-
-            pipeline_service = BuildPipeline()
-
-            updated_pipeline = await pipeline_service.handle_callback(
-                pipeline_id=pipeline_id, status=status_value
+    pipeline_service = BuildPipeline()
+    try:
+        updated_pipeline, updates = await pipeline_service.handle_callback(
+            pipeline_id=pipeline_id,
+            callback_data=callback_data,
+        )
+    except ValueError as e:
+        if "Log URL already set" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Log URL already set",
             )
-
-            if updated_pipeline:
-                flat_manager = None
-                if status_value == "success" and updated_pipeline.params.get(
-                    "pr_number"
-                ):
-                    flat_manager = FlatManagerClient(
-                        url=settings.flat_manager_url,
-                        token=settings.flat_manager_token,
-                    )
-
-                github_notifier = GitHubNotifier(flat_manager_client=flat_manager)
-                await github_notifier.handle_build_completion(
-                    updated_pipeline, status_value, flat_manager_client=flat_manager
-                )
-
-                if status_value == "success":
-                    if build_id := updated_pipeline.build_id:
-                        try:
-                            flat_manager = FlatManagerClient(
-                                url=settings.flat_manager_url,
-                                token=settings.flat_manager_token,
-                            )
-                            await flat_manager.commit(
-                                build_id,
-                                end_of_life=updated_pipeline.end_of_life,
-                                end_of_life_rebase=updated_pipeline.end_of_life_rebase,
-                            )
-                            logger.info(
-                                "Committed build",
-                                build_id=build_id,
-                                pipeline_id=str(pipeline_id),
-                            )
-                        except httpx.HTTPStatusError as e:
-                            logger.error(
-                                "Failed to commit build",
-                                build_id=build_id,
-                                pipeline_id=str(pipeline_id),
-                                status_code=e.response.status_code,
-                                response_text=e.response.text,
-                            )
-                        except Exception as e:
-                            logger.error(
-                                "Unexpected error while committing build",
-                                build_id=build_id,
-                                pipeline_id=str(pipeline_id),
-                                error=str(e),
-                            )
-                    else:
-                        logger.warning(
-                            "Pipeline succeeded but has no build_id, skipping commit",
-                            pipeline_id=str(pipeline_id),
-                        )
-
-            return {
-                "status": "ok",
-                "pipeline_id": str(pipeline_id),
-                "pipeline_status": status_value,
-            }
-
-        elif "log_url" in data:
-            app_id = None
-            sha = None
-            saved_log_url = None
-
-            async with get_db() as db:
-                pipeline = await db.get(Pipeline, pipeline_id)
-                if not pipeline:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Pipeline {pipeline_id} not found",
-                    )
-
-                if not secrets.compare_digest(
-                    credentials.credentials, pipeline.callback_token
-                ):
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Invalid callback token",
-                    )
-
-                if pipeline.log_url:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail="Log URL already set",
-                    )
-
-                log_url_callback = PipelineLogUrlCallback(**data)
-                pipeline.log_url = log_url_callback.log_url
-                await db.commit()
-
-                saved_log_url = pipeline.log_url
-                app_id = pipeline.app_id
-                sha = pipeline.params.get("sha")
-                pipeline.params.get("pr_number")
-                pipeline.params.get("repo")
-
-            if app_id and sha and saved_log_url:
-                github_notifier = GitHubNotifier()
-                await github_notifier.handle_build_started(pipeline, saved_log_url)
-
-            return {
-                "status": "ok",
-                "pipeline_id": str(pipeline_id),
-                "log_url": saved_log_url,
-            }
-
+        elif "Pipeline status already finalized" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Pipeline status already finalized",
+            )
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Request must contain either 'status', 'log_url', 'app_id', 'is_extra_data', 'end_of_life', or 'end_of_life_rebase' field",
+                detail=str(e),
             )
+
+    return {
+        "status": "ok",
+        "pipeline_id": str(pipeline_id),
+        **updates,
+    }
 
 
 @pipelines_router.get(

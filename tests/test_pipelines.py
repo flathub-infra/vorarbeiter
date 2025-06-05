@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.services import GitHubActionsService
-from app.pipelines.build import BuildPipeline
+from app.pipelines.build import BuildPipeline, CallbackData
 
 
 @pytest.fixture
@@ -214,10 +214,12 @@ async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline)
     async def mock_get_db():
         yield mock_db
 
-    status = "success"
+    callback_data = CallbackData(status="success")
 
     with patch("app.pipelines.build.get_db", mock_get_db):
-        pipeline = await build_pipeline.handle_callback(sample_pipeline.id, status)
+        pipeline, updates = await build_pipeline.handle_callback(
+            sample_pipeline.id, callback_data
+        )
 
     assert pipeline.status == PipelineStatus.SUCCEEDED
     assert pipeline.finished_at is not None
@@ -231,10 +233,12 @@ async def test_handle_callback_failure(build_pipeline, mock_db, sample_pipeline)
     async def mock_get_db():
         yield mock_db
 
-    status = "failure"
+    callback_data = CallbackData(status="failure")
 
     with patch("app.pipelines.build.get_db", mock_get_db):
-        pipeline = await build_pipeline.handle_callback(sample_pipeline.id, status)
+        pipeline, updates = await build_pipeline.handle_callback(
+            sample_pipeline.id, callback_data
+        )
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at is not None
@@ -809,8 +813,8 @@ def test_pipeline_callback_end_of_life_with_status(mock_get_db, sample_pipeline)
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
         patch("app.pipelines.build.get_db", mock_get_db_session),
-        patch("app.routes.pipelines.FlatManagerClient") as mock_fm_class,
-        patch("app.routes.pipelines.GitHubNotifier") as mock_github_notifier_class,
+        patch("app.pipelines.build.FlatManagerClient") as mock_fm_class,
+        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier_class,
     ):
         mock_fm_class.return_value = mock_flat_manager
         mock_get_db.get.return_value = sample_pipeline
@@ -833,9 +837,9 @@ def test_pipeline_callback_end_of_life_with_status(mock_get_db, sample_pipeline)
     assert response.json()["status"] == "ok"
     assert response.json()["pipeline_id"] == str(pipeline_id)
     assert response.json()["pipeline_status"] == "success"
-    # The end_of_life fields are not returned in the response for status updates
-    assert "end_of_life" not in response.json()
-    assert "end_of_life_rebase" not in response.json()
+    # The end_of_life fields are now returned in the response for status updates
+    assert response.json()["end_of_life"] == "This app is deprecated"
+    assert response.json()["end_of_life_rebase"] == "org.flathub.NewApp"
 
     # But they should be set on the pipeline object
     assert sample_pipeline.end_of_life == "This app is deprecated"
@@ -875,8 +879,8 @@ def test_pipeline_callback_status_update_preserves_existing_end_of_life(
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
         patch("app.pipelines.build.get_db", mock_get_db_session),
-        patch("app.routes.pipelines.FlatManagerClient") as mock_fm_class,
-        patch("app.routes.pipelines.GitHubNotifier") as mock_github_notifier_class,
+        patch("app.pipelines.build.FlatManagerClient") as mock_fm_class,
+        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier_class,
     ):
         mock_fm_class.return_value = mock_flat_manager
         mock_get_db.get.return_value = sample_pipeline
@@ -934,8 +938,8 @@ def test_pipeline_callback_early_exit_bug_regression(mock_get_db, sample_pipelin
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
         patch("app.pipelines.build.get_db", mock_get_db_session),
-        patch("app.routes.pipelines.FlatManagerClient") as mock_fm_class,
-        patch("app.routes.pipelines.GitHubNotifier") as mock_github_notifier_class,
+        patch("app.pipelines.build.FlatManagerClient") as mock_fm_class,
+        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier_class,
     ):
         mock_fm_class.return_value = mock_flat_manager
         mock_get_db.get.return_value = sample_pipeline

@@ -1,12 +1,29 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
+
+import httpx
+import structlog
+from pydantic import BaseModel
 
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
 from app.services import github_actions_service
+from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
+
+logger = structlog.get_logger(__name__)
+
+
+class CallbackData(BaseModel):
+    status: Optional[str] = None
+    log_url: Optional[str] = None
+    app_id: Optional[str] = None
+    is_extra_data: Optional[bool] = None
+    end_of_life: Optional[str] = None
+    end_of_life_rebase: Optional[str] = None
+
 
 app_build_types = {
     "io.github.ungoogled_software.ungoogled_chromium": "large",
@@ -131,33 +148,129 @@ class BuildPipeline:
     async def handle_callback(
         self,
         pipeline_id: uuid.UUID,
-        status: str,
-    ) -> Pipeline:
+        callback_data: CallbackData,
+    ) -> tuple[Pipeline, dict[str, Any]]:
+        """Handle all types of callbacks for a pipeline.
+
+        Returns:
+            tuple: (updated_pipeline, updates_dict)
+        """
         async with get_db() as db:
             pipeline = await db.get(Pipeline, pipeline_id)
             if not pipeline:
                 raise ValueError(f"Pipeline {pipeline_id} not found")
 
-            log_url = pipeline.log_url
+            updates: dict[str, Any] = {}
+            if pipeline.app_id == "flathub" and callback_data.app_id:
+                pipeline.app_id = callback_data.app_id
+                updates["app_id"] = pipeline.app_id
 
-            match status.lower():
-                case "success":
-                    pipeline.status = PipelineStatus.SUCCEEDED
-                    pipeline.finished_at = datetime.now()
-                case "failure":
-                    pipeline.status = PipelineStatus.FAILED
-                    pipeline.finished_at = datetime.now()
-                case "cancelled":
-                    pipeline.status = PipelineStatus.CANCELLED
-                    pipeline.finished_at = datetime.now()
-                case _:
-                    pipeline.status = PipelineStatus.PENDING
+            if callback_data.is_extra_data is not None:
+                pipeline.is_extra_data = callback_data.is_extra_data
+                updates["is_extra_data"] = pipeline.is_extra_data
 
-            if log_url and not pipeline.log_url:
-                pipeline.log_url = log_url
+            if callback_data.end_of_life:
+                pipeline.end_of_life = callback_data.end_of_life
+                updates["end_of_life"] = pipeline.end_of_life
 
+            if callback_data.end_of_life_rebase:
+                pipeline.end_of_life_rebase = callback_data.end_of_life_rebase
+                updates["end_of_life_rebase"] = pipeline.end_of_life_rebase
+            if callback_data.log_url:
+                if pipeline.log_url:
+                    raise ValueError("Log URL already set")
+                pipeline.log_url = callback_data.log_url
+                updates["log_url"] = pipeline.log_url
+                await db.commit()
+                github_notifier = GitHubNotifier()
+                await github_notifier.handle_build_started(
+                    pipeline, callback_data.log_url
+                )
+
+                return pipeline, updates
+            if callback_data.status:
+                if pipeline.status in [
+                    PipelineStatus.SUCCEEDED,
+                    PipelineStatus.PUBLISHED,
+                ]:
+                    raise ValueError("Pipeline status already finalized")
+
+                status_value = callback_data.status.lower()
+                if status_value not in ["success", "failure", "cancelled"]:
+                    raise ValueError(
+                        "status must be 'success', 'failure', or 'cancelled'"
+                    )
+
+                match status_value:
+                    case "success":
+                        pipeline.status = PipelineStatus.SUCCEEDED
+                        pipeline.finished_at = datetime.now()
+                    case "failure":
+                        pipeline.status = PipelineStatus.FAILED
+                        pipeline.finished_at = datetime.now()
+                    case "cancelled":
+                        pipeline.status = PipelineStatus.CANCELLED
+                        pipeline.finished_at = datetime.now()
+
+                await db.commit()
+                if status_value == "success":
+                    flat_manager = None
+                    if pipeline.params.get("pr_number"):
+                        flat_manager = FlatManagerClient(
+                            url=settings.flat_manager_url,
+                            token=settings.flat_manager_token,
+                        )
+                    github_notifier = GitHubNotifier(flat_manager_client=flat_manager)
+                    await github_notifier.handle_build_completion(
+                        pipeline, status_value, flat_manager_client=flat_manager
+                    )
+                    if pipeline.build_id:
+                        try:
+                            if not flat_manager:
+                                flat_manager = FlatManagerClient(
+                                    url=settings.flat_manager_url,
+                                    token=settings.flat_manager_token,
+                                )
+                            await flat_manager.commit(
+                                pipeline.build_id,
+                                end_of_life=pipeline.end_of_life,
+                                end_of_life_rebase=pipeline.end_of_life_rebase,
+                            )
+                            logger.info(
+                                "Committed build",
+                                build_id=pipeline.build_id,
+                                pipeline_id=str(pipeline_id),
+                            )
+                        except httpx.HTTPStatusError as e:
+                            logger.error(
+                                "Failed to commit build",
+                                build_id=pipeline.build_id,
+                                pipeline_id=str(pipeline_id),
+                                status_code=e.response.status_code,
+                                response_text=e.response.text,
+                            )
+                        except Exception as e:
+                            logger.error(
+                                "Unexpected error while committing build",
+                                build_id=pipeline.build_id,
+                                pipeline_id=str(pipeline_id),
+                                error=str(e),
+                            )
+                    else:
+                        logger.warning(
+                            "Pipeline succeeded but has no build_id, skipping commit",
+                            pipeline_id=str(pipeline_id),
+                        )
+                else:
+                    github_notifier = GitHubNotifier()
+                    await github_notifier.handle_build_completion(
+                        pipeline, status_value, flat_manager_client=None
+                    )
+
+                updates["pipeline_status"] = status_value
+                return pipeline, updates
             await db.commit()
-            return pipeline
+            return pipeline, updates
 
     async def get_pipeline(self, pipeline_id: uuid.UUID) -> Pipeline | None:
         async with get_db() as db:
