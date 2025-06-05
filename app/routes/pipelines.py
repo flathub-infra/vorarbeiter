@@ -252,50 +252,32 @@ async def pipeline_callback(
                 detail="Invalid callback token",
             )
 
-        app_id_updated = False
+        updates: dict[str, Any] = {}
+
         if pipeline.app_id == "flathub" and "app_id" in data:
             app_id = data.get("app_id")
             if isinstance(app_id, str) and app_id:
                 pipeline.app_id = app_id
-                app_id_updated = True
+                updates["app_id"] = pipeline.app_id
 
-        is_extra_data_updated = False
         if "is_extra_data" in data:
             is_extra_data = data.get("is_extra_data")
             if isinstance(is_extra_data, bool):
                 pipeline.is_extra_data = is_extra_data
-                is_extra_data_updated = True
+                updates["is_extra_data"] = pipeline.is_extra_data
 
-        end_of_life_updated = False
         if end_of_life := data.get("end_of_life"):
             pipeline.end_of_life = end_of_life
-            end_of_life_updated = True
+            updates["end_of_life"] = pipeline.end_of_life
 
-        end_of_life_rebase_updated = False
         if end_of_life_rebase := data.get("end_of_life_rebase"):
             pipeline.end_of_life_rebase = end_of_life_rebase
-            end_of_life_rebase_updated = True
+            updates["end_of_life_rebase"] = pipeline.end_of_life_rebase
 
-        if (
-            app_id_updated
-            or is_extra_data_updated
-            or end_of_life_updated
-            or end_of_life_rebase_updated
-        ) and "status" not in data:
+        # Return early for field-only updates (no status change)
+        if updates and "status" not in data:
             await db.commit()
-            response_data: dict[str, Any] = {
-                "status": "ok",
-                "pipeline_id": str(pipeline_id),
-            }
-            if app_id_updated:
-                response_data["app_id"] = pipeline.app_id
-            if is_extra_data_updated:
-                response_data["is_extra_data"] = pipeline.is_extra_data
-            if end_of_life_updated:
-                response_data["end_of_life"] = pipeline.end_of_life
-            if end_of_life_rebase_updated:
-                response_data["end_of_life_rebase"] = pipeline.end_of_life_rebase
-            return response_data
+            return {"status": "ok", "pipeline_id": str(pipeline_id), **updates}
 
         if "status" in data:
             if pipeline.status in [

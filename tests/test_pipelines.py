@@ -688,3 +688,295 @@ def test_redirect_to_log_url_not_found(mock_get_db):
 
     assert response.status_code == 404
     assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
+
+
+def test_pipeline_callback_end_of_life_only(mock_get_db, sample_pipeline):
+    """Test setting only the end_of_life field via callback."""
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"end_of_life": "This app is deprecated"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response.json()["end_of_life"] == "This app is deprecated"
+    assert sample_pipeline.end_of_life == "This app is deprecated"
+    assert sample_pipeline.end_of_life_rebase is None
+    # Ensure status was not changed
+    assert sample_pipeline.status == PipelineStatus.PENDING
+
+
+def test_pipeline_callback_end_of_life_rebase_only(mock_get_db, sample_pipeline):
+    """Test setting only the end_of_life_rebase field via callback."""
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"end_of_life_rebase": "org.flathub.NewApp"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response.json()["end_of_life_rebase"] == "org.flathub.NewApp"
+    assert sample_pipeline.end_of_life_rebase == "org.flathub.NewApp"
+    assert sample_pipeline.end_of_life is None
+    # Ensure status was not changed
+    assert sample_pipeline.status == PipelineStatus.PENDING
+
+
+def test_pipeline_callback_both_end_of_life_fields(mock_get_db, sample_pipeline):
+    """Test setting both end_of_life fields via callback."""
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {
+            "end_of_life": "This app is deprecated",
+            "end_of_life_rebase": "org.flathub.NewApp",
+        }
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response.json()["end_of_life"] == "This app is deprecated"
+    assert response.json()["end_of_life_rebase"] == "org.flathub.NewApp"
+    assert sample_pipeline.end_of_life == "This app is deprecated"
+    assert sample_pipeline.end_of_life_rebase == "org.flathub.NewApp"
+    # Ensure status was not changed
+    assert sample_pipeline.status == PipelineStatus.PENDING
+
+
+def test_pipeline_callback_end_of_life_with_status(mock_get_db, sample_pipeline):
+    """Test setting end_of_life fields along with status update."""
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    # Start with a running pipeline
+    sample_pipeline.status = PipelineStatus.RUNNING
+    sample_pipeline.build_id = "build-123"
+    sample_pipeline.params = {"sha": "abc123", "repo": "flathub/test-app"}
+
+    mock_flat_manager = MagicMock()
+    mock_flat_manager.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+        patch("app.routes.pipelines.FlatManagerClient") as mock_fm_class,
+        patch("app.routes.pipelines.update_commit_status") as mock_update_commit,
+    ):
+        mock_fm_class.return_value = mock_flat_manager
+        mock_get_db.get.return_value = sample_pipeline
+        mock_update_commit.return_value = None
+
+        data = {
+            "status": "success",
+            "end_of_life": "This app is deprecated",
+            "end_of_life_rebase": "org.flathub.NewApp",
+        }
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response.json()["pipeline_status"] == "success"
+    # The end_of_life fields are not returned in the response for status updates
+    assert "end_of_life" not in response.json()
+    assert "end_of_life_rebase" not in response.json()
+
+    # But they should be set on the pipeline object
+    assert sample_pipeline.end_of_life == "This app is deprecated"
+    assert sample_pipeline.end_of_life_rebase == "org.flathub.NewApp"
+    assert sample_pipeline.status == PipelineStatus.SUCCEEDED
+    assert sample_pipeline.finished_at is not None
+
+    # Verify that flat_manager.commit was called with the end_of_life parameters
+    mock_flat_manager.commit.assert_called_once_with(
+        "build-123",
+        end_of_life="This app is deprecated",
+        end_of_life_rebase="org.flathub.NewApp",
+    )
+
+
+def test_pipeline_callback_status_update_preserves_existing_end_of_life(
+    mock_get_db, sample_pipeline
+):
+    """Test that status update preserves existing end_of_life fields."""
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    # Start with a running pipeline that already has end_of_life fields set
+    sample_pipeline.status = PipelineStatus.RUNNING
+    sample_pipeline.build_id = "build-456"
+    sample_pipeline.end_of_life = "Already deprecated"
+    sample_pipeline.end_of_life_rebase = "org.flathub.ExistingApp"
+    sample_pipeline.params = {"sha": "def456", "repo": "flathub/test-app"}
+
+    mock_flat_manager = MagicMock()
+    mock_flat_manager.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+        patch("app.routes.pipelines.FlatManagerClient") as mock_fm_class,
+        patch("app.routes.pipelines.update_commit_status") as mock_update_commit,
+    ):
+        mock_fm_class.return_value = mock_flat_manager
+        mock_get_db.get.return_value = sample_pipeline
+        mock_update_commit.return_value = None
+
+        # Only send status update, no end_of_life fields
+        data = {"status": "success"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response.json()["pipeline_status"] == "success"
+
+    # Ensure existing end_of_life fields are preserved
+    assert sample_pipeline.end_of_life == "Already deprecated"
+    assert sample_pipeline.end_of_life_rebase == "org.flathub.ExistingApp"
+    assert sample_pipeline.status == PipelineStatus.SUCCEEDED
+
+    # Verify that flat_manager.commit was called with the existing end_of_life parameters
+    mock_flat_manager.commit.assert_called_once_with(
+        "build-456",
+        end_of_life="Already deprecated",
+        end_of_life_rebase="org.flathub.ExistingApp",
+    )
+
+
+def test_pipeline_callback_early_exit_bug_regression(mock_get_db, sample_pipeline):
+    """
+    Regression test for the early exit bug where setting end_of_life fields
+    would cause the callback to return early without processing the status update.
+    This ensures the bug fix is working correctly.
+    """
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    # Start with a running pipeline
+    sample_pipeline.status = PipelineStatus.RUNNING
+    sample_pipeline.build_id = "build-789"
+    sample_pipeline.params = {"sha": "xyz789", "repo": "flathub/test-app"}
+
+    mock_flat_manager = MagicMock()
+    mock_flat_manager.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def mock_get_db_session():
+        yield mock_get_db
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+        patch("app.routes.pipelines.FlatManagerClient") as mock_fm_class,
+        patch("app.routes.pipelines.update_commit_status") as mock_update_commit,
+    ):
+        mock_fm_class.return_value = mock_flat_manager
+        mock_get_db.get.return_value = sample_pipeline
+        mock_update_commit.return_value = None
+
+        # Send both status AND end_of_life fields - this used to cause early exit
+        data = {
+            "status": "success",
+            "end_of_life": "App renamed to: org.luanti.luanti. Read: https://blog.luanti.org/2024/10/13/Introducing-Our-New-Name/",
+            "end_of_life_rebase": "org.luanti.luanti",
+        }
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
+        )
+
+    # The response should indicate successful status update
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response.json()["pipeline_status"] == "success"
+
+    # CRITICAL: Verify that the pipeline status was actually updated
+    # This is what was broken before - the status remained "running"
+    assert sample_pipeline.status == PipelineStatus.SUCCEEDED
+    assert sample_pipeline.finished_at is not None
+
+    # Verify end_of_life fields were also set
+    assert (
+        sample_pipeline.end_of_life
+        == "App renamed to: org.luanti.luanti. Read: https://blog.luanti.org/2024/10/13/Introducing-Our-New-Name/"
+    )
+    assert sample_pipeline.end_of_life_rebase == "org.luanti.luanti"
+
+    # Verify that flat_manager.commit was called with all parameters
+    mock_flat_manager.commit.assert_called_once_with(
+        "build-789",
+        end_of_life="App renamed to: org.luanti.luanti. Read: https://blog.luanti.org/2024/10/13/Introducing-Our-New-Name/",
+        end_of_life_rebase="org.luanti.luanti",
+    )
+
+    # Verify that commit status was updated on GitHub
+    mock_update_commit.assert_called_once()
