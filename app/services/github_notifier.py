@@ -1,0 +1,270 @@
+import structlog
+from typing import Optional
+
+from app.models import Pipeline
+from app.utils.flat_manager import FlatManagerClient
+from app.utils.github import (
+    create_github_issue,
+    create_pr_comment,
+    update_commit_status,
+)
+
+logger = structlog.get_logger(__name__)
+
+
+class GitHubNotifier:
+    """Service for handling GitHub notifications related to pipelines."""
+
+    def __init__(self, flat_manager_client: Optional[FlatManagerClient] = None):
+        self.flat_manager = flat_manager_client
+
+    async def notify_build_status(
+        self,
+        pipeline: Pipeline,
+        status: str,
+        log_url: Optional[str] = None,
+    ) -> None:
+        """Update GitHub commit status based on build status."""
+        app_id = pipeline.app_id
+        sha = pipeline.params.get("sha")
+        git_repo = pipeline.params.get("repo")
+
+        if (
+            not all([app_id, sha, git_repo])
+            or not isinstance(sha, str)
+            or not isinstance(git_repo, str)
+        ):
+            logger.error(
+                "Missing required params for GitHub status update",
+                pipeline_id=str(pipeline.id),
+                has_app_id=bool(app_id),
+                has_sha=bool(sha),
+                has_git_repo=bool(git_repo),
+            )
+            return
+
+        match status:
+            case "success":
+                description = "Build succeeded."
+                github_state = "success"
+            case "failure":
+                description = "Build failed."
+                github_state = "failure"
+            case "cancelled":
+                description = "Build cancelled."
+                github_state = "failure"
+            case _:
+                description = f"Build status: {status}."
+                github_state = "failure"
+
+        target_url = log_url or pipeline.log_url
+        if not target_url:
+            logger.warning(
+                "log_url is unexpectedly None when setting final commit status",
+                pipeline_id=str(pipeline.id),
+            )
+            target_url = ""
+
+        await update_commit_status(
+            sha=sha,
+            state=github_state,
+            git_repo=git_repo,
+            description=description,
+            target_url=target_url,
+        )
+
+    async def notify_build_started(
+        self,
+        pipeline: Pipeline,
+        log_url: str,
+    ) -> None:
+        """Update GitHub status when build starts."""
+        sha = pipeline.params.get("sha")
+        git_repo = pipeline.params.get("repo")
+
+        if (
+            not all([sha, git_repo])
+            or not isinstance(sha, str)
+            or not isinstance(git_repo, str)
+        ):
+            logger.error(
+                "Missing required params for GitHub status update",
+                pipeline_id=str(pipeline.id),
+                has_sha=bool(sha),
+                has_git_repo=bool(git_repo),
+            )
+            return
+
+        await update_commit_status(
+            sha=sha,
+            state="pending",
+            git_repo=git_repo,
+            description="Build in progress",
+            target_url=log_url,
+        )
+
+    async def notify_pr_build_started(
+        self,
+        pipeline: Pipeline,
+        log_url: str,
+    ) -> None:
+        """Create PR comment when build starts."""
+        pr_number_str = pipeline.params.get("pr_number")
+        git_repo = pipeline.params.get("repo")
+
+        if not pr_number_str or not git_repo:
+            logger.error(
+                "Missing required params for PR comment",
+                pipeline_id=str(pipeline.id),
+                has_pr_number=bool(pr_number_str),
+                has_git_repo=bool(git_repo),
+            )
+            return
+
+        try:
+            pr_number = int(pr_number_str)
+            comment = f"🚧 Started [test build]({log_url})."
+            await create_pr_comment(
+                git_repo=git_repo,
+                pr_number=pr_number,
+                comment=comment,
+            )
+        except ValueError:
+            logger.error(
+                "Invalid PR number. Skipping PR comment",
+                pr_number=pr_number_str,
+                pipeline_id=str(pipeline.id),
+            )
+        except Exception as e:
+            logger.error(
+                "Error creating 'Started' PR comment",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
+
+    async def notify_pr_build_complete(
+        self,
+        pipeline: Pipeline,
+        status: str,
+    ) -> None:
+        """Create PR comment when build completes."""
+        pr_number_str = pipeline.params.get("pr_number")
+        git_repo = pipeline.params.get("repo")
+
+        if not pr_number_str or not git_repo:
+            logger.error(
+                "Missing required params for PR comment",
+                pipeline_id=str(pipeline.id),
+                has_pr_number=bool(pr_number_str),
+                has_git_repo=bool(git_repo),
+            )
+            return
+
+        try:
+            pr_number = int(pr_number_str)
+            log_url = pipeline.log_url
+            comment = ""
+
+            if status == "success":
+                if pipeline.build_id and self.flat_manager:
+                    download_url = self.flat_manager.get_flatpakref_url(
+                        pipeline.build_id, pipeline.app_id
+                    )
+                    comment = f"🚧 [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```"
+                else:
+                    comment = f"🚧 [Test build succeeded]({log_url})."
+            elif status == "failure":
+                comment = f"🚧 [Test build]({log_url}) failed."
+            elif status == "cancelled":
+                comment = f"🚧 [Test build]({log_url}) was cancelled."
+
+            if comment:
+                await create_pr_comment(
+                    git_repo=git_repo,
+                    pr_number=pr_number,
+                    comment=comment,
+                )
+        except ValueError:
+            logger.error(
+                "Invalid PR number. Skipping final PR comment.",
+                pr_number=pr_number_str,
+                pipeline_id=str(pipeline.id),
+            )
+        except Exception as e:
+            logger.error(
+                "Error creating final PR comment",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
+
+    async def create_stable_build_failure_issue(
+        self,
+        pipeline: Pipeline,
+    ) -> None:
+        """Create GitHub issue when stable build fails."""
+        if pipeline.flat_manager_repo != "stable":
+            return
+
+        git_repo = pipeline.params.get("repo")
+        if not git_repo:
+            logger.error(
+                "Missing git_repo in params. Cannot create issue for failed stable build",
+                pipeline_id=str(pipeline.id),
+            )
+            return
+
+        try:
+            app_id = pipeline.app_id
+            sha = pipeline.params.get("sha")
+            log_url = pipeline.log_url
+
+            title = "Stable build failed"
+            body = f"The stable build pipeline for `{app_id}` failed.\n\nCommit SHA: `{sha}`\n"
+
+            if log_url:
+                body += f"Build log: {log_url}"
+            else:
+                body += "Build log URL not available."
+
+            body += "\n\ncc @flathub/build-moderation"
+
+            await create_github_issue(
+                git_repo=git_repo,
+                title=title,
+                body=body,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to create GitHub issue for failed stable build",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
+
+    async def handle_build_completion(
+        self,
+        pipeline: Pipeline,
+        status: str,
+        flat_manager_client: Optional[FlatManagerClient] = None,
+    ) -> None:
+        """Handle all GitHub notifications when a build completes."""
+        if flat_manager_client:
+            self.flat_manager = flat_manager_client
+
+        await self.notify_build_status(pipeline, status)
+
+        if status == "failure":
+            await self.create_stable_build_failure_issue(pipeline)
+
+        if pipeline.params.get("pr_number"):
+            await self.notify_pr_build_complete(pipeline, status)
+
+    async def handle_build_started(
+        self,
+        pipeline: Pipeline,
+        log_url: str,
+    ) -> None:
+        """Handle all GitHub notifications when a build starts."""
+        await self.notify_build_started(pipeline, log_url)
+
+        if pipeline.params.get("pr_number"):
+            await self.notify_pr_build_started(pipeline, log_url)

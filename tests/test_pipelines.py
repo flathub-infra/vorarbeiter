@@ -810,11 +810,13 @@ def test_pipeline_callback_end_of_life_with_status(mock_get_db, sample_pipeline)
         patch("app.routes.pipelines.get_db", mock_get_db_session),
         patch("app.pipelines.build.get_db", mock_get_db_session),
         patch("app.routes.pipelines.FlatManagerClient") as mock_fm_class,
-        patch("app.routes.pipelines.update_commit_status") as mock_update_commit,
+        patch("app.routes.pipelines.GitHubNotifier") as mock_github_notifier_class,
     ):
         mock_fm_class.return_value = mock_flat_manager
         mock_get_db.get.return_value = sample_pipeline
-        mock_update_commit.return_value = None
+        mock_github_notifier = MagicMock()
+        mock_github_notifier.handle_build_completion = AsyncMock()
+        mock_github_notifier_class.return_value = mock_github_notifier
 
         data = {
             "status": "success",
@@ -874,11 +876,13 @@ def test_pipeline_callback_status_update_preserves_existing_end_of_life(
         patch("app.routes.pipelines.get_db", mock_get_db_session),
         patch("app.pipelines.build.get_db", mock_get_db_session),
         patch("app.routes.pipelines.FlatManagerClient") as mock_fm_class,
-        patch("app.routes.pipelines.update_commit_status") as mock_update_commit,
+        patch("app.routes.pipelines.GitHubNotifier") as mock_github_notifier_class,
     ):
         mock_fm_class.return_value = mock_flat_manager
         mock_get_db.get.return_value = sample_pipeline
-        mock_update_commit.return_value = None
+        mock_github_notifier = MagicMock()
+        mock_github_notifier.handle_build_completion = AsyncMock()
+        mock_github_notifier_class.return_value = mock_github_notifier
 
         # Only send status update, no end_of_life fields
         data = {"status": "success"}
@@ -931,11 +935,13 @@ def test_pipeline_callback_early_exit_bug_regression(mock_get_db, sample_pipelin
         patch("app.routes.pipelines.get_db", mock_get_db_session),
         patch("app.pipelines.build.get_db", mock_get_db_session),
         patch("app.routes.pipelines.FlatManagerClient") as mock_fm_class,
-        patch("app.routes.pipelines.update_commit_status") as mock_update_commit,
+        patch("app.routes.pipelines.GitHubNotifier") as mock_github_notifier_class,
     ):
         mock_fm_class.return_value = mock_flat_manager
         mock_get_db.get.return_value = sample_pipeline
-        mock_update_commit.return_value = None
+        mock_github_notifier = MagicMock()
+        mock_github_notifier.handle_build_completion = AsyncMock()
+        mock_github_notifier_class.return_value = mock_github_notifier
 
         # Send both status AND end_of_life fields - this used to cause early exit
         data = {
@@ -974,5 +980,5 @@ def test_pipeline_callback_early_exit_bug_regression(mock_get_db, sample_pipelin
         end_of_life_rebase="org.luanti.luanti",
     )
 
-    # Verify that commit status was updated on GitHub
-    mock_update_commit.assert_called_once()
+    # Verify that GitHub notifier was called
+    mock_github_notifier.handle_build_completion.assert_called_once()

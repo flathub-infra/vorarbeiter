@@ -14,12 +14,8 @@ from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines import BuildPipeline
+from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
-from app.utils.github import (
-    create_github_issue,
-    create_pr_comment,
-    update_commit_status,
-)
 
 logger = structlog.get_logger(__name__)
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
@@ -359,157 +355,55 @@ async def pipeline_callback(
             )
 
             if updated_pipeline:
-                app_id = updated_pipeline.app_id
-                sha = updated_pipeline.params.get("sha")
-                git_repo = updated_pipeline.params.get("repo")
+                flat_manager = None
+                if status_value == "success" and updated_pipeline.params.get(
+                    "pr_number"
+                ):
+                    flat_manager = FlatManagerClient(
+                        url=settings.flat_manager_url,
+                        token=settings.flat_manager_token,
+                    )
 
-                if app_id and sha and git_repo:
-                    match status_value:
-                        case "success":
-                            description = "Build succeeded."
-                            github_state = "success"
-                        case "failure":
-                            description = "Build failed."
-                            github_state = "failure"
-                        case "cancelled":
-                            description = "Build cancelled."
-                            github_state = "failure"
-                        case _:
-                            description = f"Build status: {status_value}."
-                            github_state = "failure"
+                github_notifier = GitHubNotifier(flat_manager_client=flat_manager)
+                await github_notifier.handle_build_completion(
+                    updated_pipeline, status_value, flat_manager_client=flat_manager
+                )
 
-                    target_url = updated_pipeline.log_url
-                    if not target_url:
-                        logger.warning(
-                            "log_url is unexpectedly None when setting final commit status",
-                            pipeline_id=str(pipeline_id),
-                        )
-                        target_url = ""
-
-                    if git_repo:
-                        await update_commit_status(
-                            sha=sha,
-                            state=github_state,
-                            git_repo=git_repo,
-                            description=description,
-                            target_url=target_url,
-                        )
-                    else:
-                        logger.error(
-                            "Missing git_repo in params. Cannot update commit status",
-                            pipeline_id=str(pipeline_id),
-                        )
-
-                    if (
-                        status_value == "failure"
-                        and updated_pipeline.flat_manager_repo == "stable"
-                    ):
-                        if git_repo:
-                            try:
-                                title = "Stable build failed"
-                                body = f"The stable build pipeline for `{app_id}` failed.\n\nCommit SHA: `{sha}`\n"
-                                if target_url:
-                                    body += f"Build log: {target_url}"
-                                else:
-                                    body += "Build log URL not available."
-                                body += "\n\ncc @flathub/build-moderation"
-                                await create_github_issue(
-                                    git_repo=git_repo, title=title, body=body
-                                )
-                            except Exception as e_issue:
-                                logger.error(
-                                    "Failed to create GitHub issue for failed stable build",
-                                    pipeline_id=str(pipeline_id),
-                                    error=str(e_issue),
-                                )
-                        else:
-                            logger.error(
-                                "Missing git_repo in params. Cannot create issue for failed stable build",
-                                pipeline_id=str(pipeline_id),
-                            )
-
-                    if status_value == "success":
-                        if build_id := updated_pipeline.build_id:
-                            try:
-                                flat_manager = FlatManagerClient(
-                                    url=settings.flat_manager_url,
-                                    token=settings.flat_manager_token,
-                                )
-                                await flat_manager.commit(
-                                    build_id,
-                                    end_of_life=updated_pipeline.end_of_life,
-                                    end_of_life_rebase=updated_pipeline.end_of_life_rebase,
-                                )
-                                logger.info(
-                                    "Committed build",
-                                    build_id=build_id,
-                                    pipeline_id=str(pipeline_id),
-                                )
-                            except httpx.HTTPStatusError as e:
-                                logger.error(
-                                    "Failed to commit build",
-                                    build_id=build_id,
-                                    pipeline_id=str(pipeline_id),
-                                    status_code=e.response.status_code,
-                                    response_text=e.response.text,
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    "Unexpected error while committing build",
-                                    build_id=build_id,
-                                    pipeline_id=str(pipeline_id),
-                                    error=str(e),
-                                )
-                        else:
-                            logger.warning(
-                                "Pipeline succeeded but has no build_id, skipping commit",
-                                pipeline_id=str(pipeline_id),
-                            )
-
-                    pr_number_str = updated_pipeline.params.get("pr_number")
-                    if pr_number_str and git_repo:
+                if status_value == "success":
+                    if build_id := updated_pipeline.build_id:
                         try:
-                            pr_number = int(pr_number_str)
-                            log_url = updated_pipeline.log_url
-                            comment = ""
-                            if status_value == "success":
-                                if build_id := updated_pipeline.build_id:
-                                    flat_manager = FlatManagerClient(
-                                        url=settings.flat_manager_url,
-                                        token=settings.flat_manager_token,
-                                    )
-                                    download_url = flat_manager.get_flatpakref_url(
-                                        build_id, updated_pipeline.app_id
-                                    )
-                                    comment = f"🚧 [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```"
-                                else:
-                                    comment = f"🚧 [Test build succeeded]({log_url})."
-                            elif status_value == "failure":
-                                comment = f"🚧 [Test build]({log_url}) failed."
-                            elif status_value == "cancelled":
-                                comment = f"🚧 [Test build]({log_url}) was cancelled."
-
-                            if comment:
-                                await create_pr_comment(
-                                    git_repo=git_repo,
-                                    pr_number=pr_number,
-                                    comment=comment,
-                                )
-                        except ValueError:
-                            logger.error(
-                                "Invalid PR number. Skipping final PR comment.",
-                                pr_number=pr_number_str,
+                            flat_manager = FlatManagerClient(
+                                url=settings.flat_manager_url,
+                                token=settings.flat_manager_token,
+                            )
+                            await flat_manager.commit(
+                                build_id,
+                                end_of_life=updated_pipeline.end_of_life,
+                                end_of_life_rebase=updated_pipeline.end_of_life_rebase,
+                            )
+                            logger.info(
+                                "Committed build",
+                                build_id=build_id,
                                 pipeline_id=str(pipeline_id),
+                            )
+                        except httpx.HTTPStatusError as e:
+                            logger.error(
+                                "Failed to commit build",
+                                build_id=build_id,
+                                pipeline_id=str(pipeline_id),
+                                status_code=e.response.status_code,
+                                response_text=e.response.text,
                             )
                         except Exception as e:
                             logger.error(
-                                "Error creating final PR comment",
+                                "Unexpected error while committing build",
+                                build_id=build_id,
                                 pipeline_id=str(pipeline_id),
                                 error=str(e),
                             )
-                    elif not git_repo:
-                        logger.error(
-                            "Missing git_repo in params. Cannot create PR comment",
+                    else:
+                        logger.warning(
+                            "Pipeline succeeded but has no build_id, skipping commit",
                             pipeline_id=str(pipeline_id),
                         )
 
@@ -522,9 +416,7 @@ async def pipeline_callback(
         elif "log_url" in data:
             app_id = None
             sha = None
-            pr_number_str = None
             saved_log_url = None
-            git_repo = None
 
             async with get_db() as db:
                 pipeline = await db.get(Pipeline, pipeline_id)
@@ -555,59 +447,12 @@ async def pipeline_callback(
                 saved_log_url = pipeline.log_url
                 app_id = pipeline.app_id
                 sha = pipeline.params.get("sha")
-                pr_number_str = pipeline.params.get("pr_number")
-                git_repo = pipeline.params.get("repo")
+                pipeline.params.get("pr_number")
+                pipeline.params.get("repo")
 
             if app_id and sha and saved_log_url:
-                try:
-                    target_url = saved_log_url
-                    if git_repo:
-                        await update_commit_status(
-                            sha=sha,
-                            state="pending",
-                            git_repo=git_repo,
-                            description="Build in progress",
-                            target_url=target_url,
-                        )
-                    else:
-                        logger.error(
-                            "Missing git_repo in params. Cannot update commit status",
-                            pipeline_id=str(pipeline_id),
-                        )
-
-                    if pr_number_str and git_repo:
-                        try:
-                            pr_number = int(pr_number_str)
-                            comment = f"🚧 Started [test build]({saved_log_url})."
-                            await create_pr_comment(
-                                git_repo=git_repo,
-                                pr_number=pr_number,
-                                comment=comment,
-                            )
-                        except ValueError:
-                            logger.error(
-                                "Invalid PR number. Skipping PR comment",
-                                pr_number=pr_number_str,
-                                pipeline_id=str(pipeline_id),
-                            )
-                        except Exception as e_pr:
-                            logger.error(
-                                "Error creating 'Started' PR comment",
-                                pipeline_id=str(pipeline_id),
-                                error=str(e_pr),
-                            )
-                    elif not git_repo:
-                        logger.error(
-                            "Missing git_repo in params. Cannot create PR comment",
-                            pipeline_id=str(pipeline_id),
-                        )
-
-                except Exception as e_status:
-                    logger.error(
-                        "Error processing GitHub updates after saving log_url",
-                        pipeline_id=str(pipeline_id),
-                        error=str(e_status),
-                    )
+                github_notifier = GitHubNotifier()
+                await github_notifier.handle_build_started(pipeline, saved_log_url)
 
             return {
                 "status": "ok",
