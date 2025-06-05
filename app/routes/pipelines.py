@@ -266,18 +266,22 @@ async def pipeline_callback(
                 pipeline.is_extra_data = is_extra_data
                 is_extra_data_updated = True
 
+        end_of_life_updated = False
         if end_of_life := data.get("end_of_life"):
             pipeline.end_of_life = end_of_life
+            end_of_life_updated = True
 
+        end_of_life_rebase_updated = False
         if end_of_life_rebase := data.get("end_of_life_rebase"):
             pipeline.end_of_life_rebase = end_of_life_rebase
+            end_of_life_rebase_updated = True
 
         if (
             app_id_updated
             or is_extra_data_updated
-            or pipeline.end_of_life
-            or pipeline.end_of_life_rebase
-        ):
+            or end_of_life_updated
+            or end_of_life_rebase_updated
+        ) and "status" not in data:
             await db.commit()
             response_data: dict[str, Any] = {
                 "status": "ok",
@@ -287,9 +291,9 @@ async def pipeline_callback(
                 response_data["app_id"] = pipeline.app_id
             if is_extra_data_updated:
                 response_data["is_extra_data"] = pipeline.is_extra_data
-            if pipeline.end_of_life:
+            if end_of_life_updated:
                 response_data["end_of_life"] = pipeline.end_of_life
-            if pipeline.end_of_life_rebase:
+            if end_of_life_rebase_updated:
                 response_data["end_of_life_rebase"] = pipeline.end_of_life_rebase
             return response_data
 
