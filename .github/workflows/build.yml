@@ -74,7 +74,8 @@ jobs:
       - name: Create work directory
         run: |
           mkdir -p ${GITHUB_WORKSPACE}/work
-          chmod 777 ${GITHUB_WORKSPACE}/work
+          mkdir -p ${GITHUB_WORKSPACE}/work/tmp
+          chmod -R 777 ${GITHUB_WORKSPACE}/work
 
       - name: Download justfile and seccomp profile
         shell: python
@@ -141,6 +142,7 @@ jobs:
             -w /work \
             -e REPO \
             -e REF \
+            -e TMPDIR=/work/tmp \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             /bin/bash -c '
               git config --global --add safe.directory "*"
@@ -156,6 +158,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
+            -e TMPDIR=/work/tmp \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile detect-appid /work > app_id
 
@@ -177,6 +180,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
+            -e TMPDIR=/work/tmp \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-manifest $APP_ID
 
