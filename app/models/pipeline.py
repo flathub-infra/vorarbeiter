@@ -71,6 +71,8 @@ class Pipeline(Base):
     callback_token: Mapped[str] = mapped_column(
         String(32), default=lambda: secrets.token_hex(16)
     )
+    end_of_life: Mapped[str | None] = mapped_column(String, nullable=True)
+    end_of_life_rebase: Mapped[str | None] = mapped_column(String, nullable=True)
 
     def __repr__(self):
         return f"<Pipeline(id={self.id}, status='{self.status.name}', app_id='{self.app_id}')>"
