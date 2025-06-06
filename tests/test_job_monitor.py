@@ -20,7 +20,7 @@ def mock_pipeline():
         app_id="org.test.App",
         status=PipelineStatus.SUCCEEDED,
         commit_job_id=12345,
-        build_id="build-123",
+        build_id=123,
         params={"pr_number": "42", "repo": "flathub/org.test.App"},
     )
 

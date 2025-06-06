@@ -27,7 +27,7 @@ def mock_pipeline():
             "pr_number": "42",
         },
         triggered_by=PipelineTrigger.WEBHOOK,
-        build_id="build-123",
+        build_id=123,
         commit_job_id=12345,
         flat_manager_repo="stable",
         log_url="https://example.com/logs/123",
@@ -218,7 +218,7 @@ async def test_notify_pr_build_complete_success_with_download(
     github_notifier, mock_pipeline
 ):
     github_notifier.flat_manager.get_flatpakref_url.return_value = (
-        "https://dl.flathub.org/build-repo/build-123/org.test.App.flatpakref"
+        "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref"
     )
 
     with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
@@ -266,7 +266,7 @@ async def test_notify_pr_build_complete_committed_with_download(
     github_notifier, mock_pipeline
 ):
     github_notifier.flat_manager.get_flatpakref_url.return_value = (
-        "https://dl.flathub.org/build-repo/build-123/org.test.App.flatpakref"
+        "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref"
     )
 
     with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
@@ -276,7 +276,7 @@ async def test_notify_pr_build_complete_committed_with_download(
             "✅ [Test build committed](https://example.com/logs/123). "
             "To test this build, install it from the testing repository:\n\n"
             "```\nflatpak install --user "
-            "https://dl.flathub.org/build-repo/build-123/org.test.App.flatpakref\n```"
+            "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref\n```"
         )
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App", pr_number=42, comment=expected_comment

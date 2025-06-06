@@ -29,7 +29,7 @@ def mock_pipelines():
             app_id="org.test.App1",
             status=PipelineStatus.COMMITTED,
             flat_manager_repo="stable",
-            build_id="build-1",
+            build_id=1,
             started_at=now,
             params={},
         ),
@@ -38,7 +38,7 @@ def mock_pipelines():
             app_id="org.test.App1",
             status=PipelineStatus.COMMITTED,
             flat_manager_repo="stable",
-            build_id="build-2",
+            build_id=2,
             started_at=now - timedelta(hours=1),
             params={},
         ),
@@ -47,7 +47,7 @@ def mock_pipelines():
             app_id="org.test.App2",
             status=PipelineStatus.COMMITTED,
             flat_manager_repo="beta",
-            build_id="build-3",
+            build_id=3,
             started_at=now,
             params={},
         ),
@@ -107,7 +107,7 @@ async def test_get_publishable_pipelines(publishing_service, mock_db, mock_pipel
             app_id="org.test.App3",
             status=PipelineStatus.FAILED,
             flat_manager_repo="stable",
-            build_id="build-4",
+            build_id=4,
             params={},
         )
     )
@@ -117,7 +117,7 @@ async def test_get_publishable_pipelines(publishing_service, mock_db, mock_pipel
             app_id="org.test.App4",
             status=PipelineStatus.COMMITTED,
             flat_manager_repo="test",
-            build_id="build-5",
+            build_id=5,
             params={},
         )
     )
@@ -163,7 +163,7 @@ async def test_handle_superseded_pipelines(publishing_service, mock_pipelines):
 
         assert len(result.superseded) == 1
         assert duplicates[0].status == PipelineStatus.SUPERSEDED
-        mock_purge.assert_called_once_with("build-2")
+        mock_purge.assert_called_once_with(2)
 
 
 @pytest.mark.asyncio
@@ -208,7 +208,7 @@ async def test_process_candidate_pipeline_no_build_id(publishing_service):
 
 @pytest.mark.asyncio
 async def test_get_build_info_success(publishing_service):
-    pipeline = Pipeline(id=uuid.uuid4(), build_id="build-123", params={})
+    pipeline = Pipeline(id=uuid.uuid4(), build_id=123, params={})
 
     with patch.object(publishing_service.flat_manager, "get_build_info") as mock_get:
         mock_get.return_value = {
@@ -224,12 +224,12 @@ async def test_get_build_info_success(publishing_service):
 
         assert result["repo_state"] == 2
         assert result["published_state"] == 0
-        mock_get.assert_called_once_with("build-123")
+        mock_get.assert_called_once_with(123)
 
 
 @pytest.mark.asyncio
 async def test_get_build_info_missing_state(publishing_service):
-    pipeline = Pipeline(id=uuid.uuid4(), build_id="build-123", params={})
+    pipeline = Pipeline(id=uuid.uuid4(), build_id=123, params={})
 
     with patch.object(publishing_service.flat_manager, "get_build_info") as mock_get:
         mock_get.return_value = {"build": {"repo_state": 2}}
@@ -269,7 +269,7 @@ async def test_handle_build_state_already_published(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         status=PipelineStatus.SUCCEEDED,
-        build_id="build-123",
+        build_id=123,
         params={},
     )
     build_data = {"published_state": 2, "repo_state": 2}
@@ -289,7 +289,7 @@ async def test_handle_build_state_failed(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         status=PipelineStatus.SUCCEEDED,
-        build_id="build-123",
+        build_id=123,
         params={},
     )
     build_data = {"published_state": 0, "repo_state": 3}
@@ -309,7 +309,7 @@ async def test_handle_build_state_uploading(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         status=PipelineStatus.COMMITTED,
-        build_id="build-123",
+        build_id=123,
         params={},
     )
     build_data = {"published_state": 0, "repo_state": 0}
@@ -329,7 +329,7 @@ async def test_handle_build_state_ready(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         status=PipelineStatus.COMMITTED,
-        build_id="build-123",
+        build_id=123,
         params={},
     )
     build_data = {"published_state": 0, "repo_state": 2}
@@ -339,7 +339,7 @@ async def test_handle_build_state_ready(publishing_service):
     with patch.object(publishing_service.flat_manager, "publish") as mock_publish:
         await publishing_service._handle_build_state(pipeline, build_data, result, now)
 
-        mock_publish.assert_called_once_with("build-123")
+        mock_publish.assert_called_once_with(123)
         assert pipeline.status == PipelineStatus.PUBLISHED
         assert len(result.published) == 1
 
@@ -349,7 +349,7 @@ async def test_handle_build_state_processing(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         status=PipelineStatus.COMMITTED,
-        build_id="build-123",
+        build_id=123,
         params={},
     )
 
@@ -370,7 +370,7 @@ async def test_handle_build_state_processing(publishing_service):
 async def test_try_publish_build_error(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
-        build_id="build-123",
+        build_id=123,
         status=PipelineStatus.COMMITTED,
         params={},
     )

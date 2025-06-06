@@ -17,7 +17,7 @@ class PipelineSummary(BaseModel):
     status: PipelineStatus
     repo: str | None = None
     triggered_by: PipelineTrigger
-    build_id: str | None = None
+    build_id: int | None = None
     commit_job_id: int | None = None
     publish_job_id: int | None = None
     created_at: datetime
@@ -34,7 +34,7 @@ class PipelineResponse(BaseModel):
     params: dict[str, Any]
     triggered_by: PipelineTrigger
     log_url: str | None = None
-    build_id: str | None = None
+    build_id: int | None = None
     commit_job_id: int | None = None
     publish_job_id: int | None = None
     created_at: datetime

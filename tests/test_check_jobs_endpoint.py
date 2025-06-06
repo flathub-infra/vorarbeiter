@@ -17,7 +17,7 @@ async def test_check_jobs_endpoint_success(client, db_session_maker, auth_header
         app_id="org.test.App1",
         status=PipelineStatus.SUCCEEDED,
         commit_job_id=12345,
-        build_id="build-1",
+        build_id=1,
         flat_manager_repo="stable",
         params={},
     )
@@ -27,7 +27,7 @@ async def test_check_jobs_endpoint_success(client, db_session_maker, auth_header
         app_id="org.test.App2",
         status=PipelineStatus.SUCCEEDED,
         commit_job_id=12346,
-        build_id="build-2",
+        build_id=2,
         flat_manager_repo="test",
         params={},
     )
@@ -37,7 +37,7 @@ async def test_check_jobs_endpoint_success(client, db_session_maker, auth_header
         app_id="org.test.App3",
         status=PipelineStatus.SUCCEEDED,
         commit_job_id=None,
-        build_id="build-3",
+        build_id=3,
         flat_manager_repo="stable",
         params={},
     )
@@ -47,7 +47,7 @@ async def test_check_jobs_endpoint_success(client, db_session_maker, auth_header
         app_id="org.test.App4",
         status=PipelineStatus.COMMITTED,
         commit_job_id=12347,
-        build_id="build-4",
+        build_id=4,
         flat_manager_repo="stable",
         params={},
     )
@@ -118,7 +118,7 @@ async def test_check_jobs_endpoint_all_failed(client, db_session_maker, auth_hea
         app_id="org.test.App",
         status=PipelineStatus.SUCCEEDED,
         commit_job_id=12345,
-        build_id="build-1",
+        build_id=1,
         flat_manager_repo="stable",
         params={},
     )

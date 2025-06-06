@@ -22,7 +22,7 @@ def mock_pipeline():
         status=PipelineStatus.SUCCEEDED,
         params={"branch": "main"},
         triggered_by=PipelineTrigger.MANUAL,
-        build_id="build-123",
+        build_id=123,
         flat_manager_repo="stable",
         created_at=datetime.now(),
     )
@@ -66,7 +66,7 @@ async def test_update_pipeline_job_ids_success(pipeline_service, mock_pipeline):
         assert result is True
         assert mock_pipeline.commit_job_id == 789
         assert mock_pipeline.publish_job_id == 101112
-        mock_get_info.assert_called_once_with("build-123")
+        mock_get_info.assert_called_once_with(123)
 
 
 @pytest.mark.asyncio
@@ -214,10 +214,10 @@ async def test_list_pipelines_with_filters_limit_bounds(pipeline_service):
 @pytest.mark.asyncio
 async def test_list_pipelines_with_job_updates(pipeline_service):
     pipeline1 = MagicMock(
-        id=uuid.uuid4(), commit_job_id=None, publish_job_id=None, build_id="build-1"
+        id=uuid.uuid4(), commit_job_id=None, publish_job_id=None, build_id=1
     )
     pipeline2 = MagicMock(
-        id=uuid.uuid4(), commit_job_id=1, publish_job_id=2, build_id="build-2"
+        id=uuid.uuid4(), commit_job_id=1, publish_job_id=2, build_id=2
     )
 
     mock_result = MagicMock()

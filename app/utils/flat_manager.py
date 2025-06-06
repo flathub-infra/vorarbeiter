@@ -25,7 +25,7 @@ class JobKind(IntEnum):
 
 
 class BuildResponse(TypedDict):
-    id: str
+    id: int
     status: str
     repo: str
     ref: NotRequired[str]
@@ -91,7 +91,7 @@ class FlatManagerClient:
                 )
                 raise
 
-    async def create_token_subset(self, build_id: str, app_id: str) -> str:
+    async def create_token_subset(self, build_id: int, app_id: str) -> str:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.url}/api/v1/token_subset",
@@ -109,7 +109,7 @@ class FlatManagerClient:
             data: TokenResponse = response.json()
             return data["token"]
 
-    def get_build_url(self, build_id: str) -> str:
+    def get_build_url(self, build_id: int | str) -> str:
         # Handle case where build_id is already a full URL
         if isinstance(build_id, str) and (
             build_id.startswith("http://") or build_id.startswith("https://")
@@ -122,12 +122,12 @@ class FlatManagerClient:
 
         return f"{self.url}/api/v1/build/{build_id}"
 
-    def get_flatpakref_url(self, build_id: str, app_id: str) -> str:
+    def get_flatpakref_url(self, build_id: int, app_id: str) -> str:
         return f"https://dl.flathub.org/build-repo/{build_id}/{app_id}.flatpakref"
 
     async def commit(
         self,
-        build_id: str,
+        build_id: int,
         end_of_life: str | None = None,
         end_of_life_rebase: str | None = None,
     ):
@@ -144,7 +144,7 @@ class FlatManagerClient:
             )
             response.raise_for_status()
 
-    async def publish(self, build_id: str):
+    async def publish(self, build_id: int):
         build_url = self.get_build_url(build_id)
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -155,7 +155,7 @@ class FlatManagerClient:
             )
             response.raise_for_status()
 
-    async def purge(self, build_id: str):
+    async def purge(self, build_id: int):
         build_url = self.get_build_url(build_id)
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -166,7 +166,7 @@ class FlatManagerClient:
             )
             response.raise_for_status()
 
-    async def get_build_info(self, build_id: str) -> dict[str, Any]:
+    async def get_build_info(self, build_id: int) -> dict[str, Any]:
         build_url = self.get_build_url(build_id)
         async with httpx.AsyncClient() as client:
             response = await client.get(

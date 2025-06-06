@@ -101,8 +101,8 @@ async def test_publish_pipelines_success(db_session_maker, client):
 
         # Verify FlatManagerClient was called with correct build IDs
         assert mock_client.publish.call_count == 2
-        mock_client.publish.assert_any_call("123")
-        mock_client.publish.assert_any_call("789")
+        mock_client.publish.assert_any_call(123)
+        mock_client.publish.assert_any_call(789)
 
         assert len(result.published) == 2
         assert len(result.superseded) == 1

@@ -122,7 +122,7 @@ class PublishingService:
             if pipeline.build_id:
                 await self._purge_build(pipeline.build_id, str(pipeline.id))
 
-    async def _purge_build(self, build_id: str, pipeline_id: str) -> None:
+    async def _purge_build(self, build_id: int, pipeline_id: str) -> None:
         try:
             await self.flat_manager.purge(build_id)
             logger.info(

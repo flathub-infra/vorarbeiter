@@ -331,7 +331,7 @@ def test_list_pipelines_endpoint(mock_get_db):
             status=PipelineStatus.RUNNING,
             flat_manager_repo="stable",
             triggered_by=PipelineTrigger.MANUAL,
-            build_id="build-123",
+            build_id=123,
             created_at=datetime.now(),
             started_at=datetime.now(),
             finished_at=None,
@@ -343,7 +343,7 @@ def test_list_pipelines_endpoint(mock_get_db):
             status=PipelineStatus.SUCCEEDED,
             flat_manager_repo="beta",
             triggered_by=PipelineTrigger.WEBHOOK,
-            build_id="build-456",
+            build_id=456,
             created_at=datetime.now(),
             started_at=datetime.now(),
             finished_at=datetime.now(),
@@ -787,7 +787,7 @@ def test_pipeline_callback_end_of_life_with_status(mock_get_db, sample_pipeline)
     pipeline_id = sample_pipeline.id
     # Start with a running pipeline
     sample_pipeline.status = PipelineStatus.RUNNING
-    sample_pipeline.build_id = "build-123"
+    sample_pipeline.build_id = 123
     sample_pipeline.params = {"sha": "abc123", "repo": "flathub/test-app"}
 
     mock_flat_manager = MagicMock()
@@ -836,7 +836,7 @@ def test_pipeline_callback_end_of_life_with_status(mock_get_db, sample_pipeline)
 
     # Verify that flat_manager.commit was called with the end_of_life parameters
     mock_flat_manager.commit.assert_called_once_with(
-        "build-123",
+        123,
         end_of_life="This app is deprecated",
         end_of_life_rebase="org.flathub.NewApp",
     )
@@ -851,7 +851,7 @@ def test_pipeline_callback_status_update_preserves_existing_end_of_life(
     pipeline_id = sample_pipeline.id
     # Start with a running pipeline that already has end_of_life fields set
     sample_pipeline.status = PipelineStatus.RUNNING
-    sample_pipeline.build_id = "build-456"
+    sample_pipeline.build_id = 456
     sample_pipeline.end_of_life = "Already deprecated"
     sample_pipeline.end_of_life_rebase = "org.flathub.ExistingApp"
     sample_pipeline.params = {"sha": "def456", "repo": "flathub/test-app"}
@@ -895,7 +895,7 @@ def test_pipeline_callback_status_update_preserves_existing_end_of_life(
 
     # Verify that flat_manager.commit was called with the existing end_of_life parameters
     mock_flat_manager.commit.assert_called_once_with(
-        "build-456",
+        456,
         end_of_life="Already deprecated",
         end_of_life_rebase="org.flathub.ExistingApp",
     )
@@ -912,7 +912,7 @@ def test_pipeline_callback_early_exit_bug_regression(mock_get_db, sample_pipelin
     pipeline_id = sample_pipeline.id
     # Start with a running pipeline
     sample_pipeline.status = PipelineStatus.RUNNING
-    sample_pipeline.build_id = "build-789"
+    sample_pipeline.build_id = 789
     sample_pipeline.params = {"sha": "xyz789", "repo": "flathub/test-app"}
 
     mock_flat_manager = MagicMock()
@@ -966,7 +966,7 @@ def test_pipeline_callback_early_exit_bug_regression(mock_get_db, sample_pipelin
 
     # Verify that flat_manager.commit was called with all parameters
     mock_flat_manager.commit.assert_called_once_with(
-        "build-789",
+        789,
         end_of_life="App renamed to: org.luanti.luanti. Read: https://blog.luanti.org/2024/10/13/Introducing-Our-New-Name/",
         end_of_life_rebase="org.luanti.luanti",
     )
