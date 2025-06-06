@@ -17,6 +17,7 @@ app_build_types = {
     "org.freecad.FreeCAD": "large",
     "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "large",
     "org.paraview.ParaView": "large",
+    "com.bambulab.BambuStudio": "large",
 }
 
 
