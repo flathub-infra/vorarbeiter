@@ -54,7 +54,7 @@ class PublishingService:
 
     async def _get_publishable_pipelines(self, db: AsyncSession) -> List[Pipeline]:
         query = select(Pipeline).where(
-            Pipeline.status == PipelineStatus.SUCCEEDED,
+            Pipeline.status == PipelineStatus.COMMITTED,
             Pipeline.flat_manager_repo.in_(["stable", "beta"]),
         )
         result = await db.execute(query)
@@ -266,10 +266,6 @@ class PublishingService:
             )
             return
 
-        if repo_state == 0 and published_state == 0:  # RepoState::Uploading
-            await self._try_commit_build(pipeline, result)
-            return
-
         if repo_state in [0, 1, 6]:  # Uploading, Committing, Validating
             logger.info(
                 "Pipeline is still processing in flat-manager, skipping for this run",
@@ -295,42 +291,6 @@ class PublishingService:
                 "error": f"Unexpected flat-manager repo_state: {repo_state}",
             }
         )
-
-    async def _try_commit_build(
-        self, pipeline: Pipeline, result: PublishResult
-    ) -> None:
-        assert pipeline.build_id is not None
-        logger.info(
-            "Pipeline is in Uploading state (repo_state 0), attempting to commit",
-            pipeline_id=str(pipeline.id),
-            build_id=pipeline.build_id,
-        )
-        try:
-            await self.flat_manager.commit(
-                pipeline.build_id,
-                end_of_life=pipeline.end_of_life,
-                end_of_life_rebase=pipeline.end_of_life_rebase,
-            )
-            logger.info(
-                "Successfully committed build",
-                build_id=pipeline.build_id,
-                pipeline_id=str(pipeline.id),
-            )
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "Failed to commit build",
-                build_id=pipeline.build_id,
-                pipeline_id=str(pipeline.id),
-                status_code=e.response.status_code,
-                response_text=e.response.text,
-            )
-        except Exception as e:
-            logger.error(
-                "Unexpected error while committing build",
-                build_id=pipeline.build_id,
-                pipeline_id=str(pipeline.id),
-                error=str(e),
-            )
 
     async def _try_publish_build(
         self, pipeline: Pipeline, result: PublishResult, now: datetime

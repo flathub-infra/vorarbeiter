@@ -27,7 +27,7 @@ def mock_pipelines():
         Pipeline(
             id=uuid.uuid4(),
             app_id="org.test.App1",
-            status=PipelineStatus.SUCCEEDED,
+            status=PipelineStatus.COMMITTED,
             flat_manager_repo="stable",
             build_id="build-1",
             started_at=now,
@@ -36,7 +36,7 @@ def mock_pipelines():
         Pipeline(
             id=uuid.uuid4(),
             app_id="org.test.App1",
-            status=PipelineStatus.SUCCEEDED,
+            status=PipelineStatus.COMMITTED,
             flat_manager_repo="stable",
             build_id="build-2",
             started_at=now - timedelta(hours=1),
@@ -45,7 +45,7 @@ def mock_pipelines():
         Pipeline(
             id=uuid.uuid4(),
             app_id="org.test.App2",
-            status=PipelineStatus.SUCCEEDED,
+            status=PipelineStatus.COMMITTED,
             flat_manager_repo="beta",
             build_id="build-3",
             started_at=now,
@@ -115,7 +115,7 @@ async def test_get_publishable_pipelines(publishing_service, mock_db, mock_pipel
         Pipeline(
             id=uuid.uuid4(),
             app_id="org.test.App4",
-            status=PipelineStatus.SUCCEEDED,
+            status=PipelineStatus.COMMITTED,
             flat_manager_repo="test",
             build_id="build-5",
             params={},
@@ -129,7 +129,7 @@ async def test_get_publishable_pipelines(publishing_service, mock_db, mock_pipel
     result = await publishing_service._get_publishable_pipelines(mock_db)
 
     assert len(result) == 3
-    assert all(p.status == PipelineStatus.SUCCEEDED for p in result)
+    assert all(p.status == PipelineStatus.COMMITTED for p in result)
     assert all(p.flat_manager_repo in ["stable", "beta"] for p in result)
 
 
@@ -308,28 +308,27 @@ async def test_handle_build_state_failed(publishing_service):
 async def test_handle_build_state_uploading(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         build_id="build-123",
         params={},
     )
     build_data = {"published_state": 0, "repo_state": 0}
     result = PublishResult()
 
-    with patch.object(publishing_service.flat_manager, "commit") as mock_commit:
-        await publishing_service._handle_build_state(
-            pipeline, build_data, result, datetime.now()
-        )
+    await publishing_service._handle_build_state(
+        pipeline, build_data, result, datetime.now()
+    )
 
-        mock_commit.assert_called_once_with(
-            "build-123", end_of_life=None, end_of_life_rebase=None
-        )
+    # Should skip processing since repo_state is 0 (Uploading)
+    assert len(result.published) == 0
+    assert len(result.errors) == 0
 
 
 @pytest.mark.asyncio
 async def test_handle_build_state_ready(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         build_id="build-123",
         params={},
     )
@@ -349,7 +348,7 @@ async def test_handle_build_state_ready(publishing_service):
 async def test_handle_build_state_processing(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         build_id="build-123",
         params={},
     )
@@ -364,26 +363,7 @@ async def test_handle_build_state_processing(publishing_service):
 
         assert len(result.published) == 0
         assert len(result.errors) == 0
-        assert pipeline.status == PipelineStatus.SUCCEEDED
-
-
-@pytest.mark.asyncio
-async def test_try_commit_build_with_end_of_life(publishing_service):
-    pipeline = Pipeline(
-        id=uuid.uuid4(),
-        build_id="build-123",
-        end_of_life="Deprecated",
-        end_of_life_rebase="org.test.NewApp",
-        params={},
-    )
-    result = PublishResult()
-
-    with patch.object(publishing_service.flat_manager, "commit") as mock_commit:
-        await publishing_service._try_commit_build(pipeline, result)
-
-        mock_commit.assert_called_once_with(
-            "build-123", end_of_life="Deprecated", end_of_life_rebase="org.test.NewApp"
-        )
+        assert pipeline.status == PipelineStatus.COMMITTED
 
 
 @pytest.mark.asyncio
@@ -391,7 +371,7 @@ async def test_try_publish_build_error(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         build_id="build-123",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={},
     )
     result = PublishResult()
@@ -407,7 +387,7 @@ async def test_try_publish_build_error(publishing_service):
 
         assert len(result.errors) == 1
         assert "HTTP 400" in result.errors[0]["error"]
-        assert pipeline.status == PipelineStatus.SUCCEEDED
+        assert pipeline.status == PipelineStatus.COMMITTED
 
 
 def test_handle_build_error_request_error(publishing_service):

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.schemas.pipelines import PipelineResponse, PipelineSummary
+from app.services.job_monitor import JobMonitor
 from app.utils.flat_manager import FlatManagerClient
 
 logger = structlog.get_logger(__name__)
@@ -21,6 +22,7 @@ class PipelineService:
             url=settings.flat_manager_url,
             token=settings.flat_manager_token,
         )
+        self.job_monitor = JobMonitor()
 
     async def update_pipeline_job_ids(self, pipeline: Pipeline) -> bool:
         """
@@ -89,6 +91,9 @@ class PipelineService:
             if await self.update_pipeline_job_ids(pipeline):
                 await db.commit()
 
+        if await self.job_monitor.check_and_update_pipeline_jobs(db, pipeline):
+            await db.commit()
+
         return pipeline
 
     async def list_pipelines_with_filters(
@@ -135,6 +140,7 @@ class PipelineService:
         pipelines = list(result.scalars().all())
 
         updated_job_ids = False
+        updated_statuses = False
         for pipeline in pipelines:
             if (
                 pipeline.commit_job_id is None or pipeline.publish_job_id is None
@@ -142,7 +148,10 @@ class PipelineService:
                 if await self.update_pipeline_job_ids(pipeline):
                     updated_job_ids = True
 
-        if updated_job_ids:
+            if await self.job_monitor.check_and_update_pipeline_jobs(db, pipeline):
+                updated_statuses = True
+
+        if updated_job_ids or updated_statuses:
             await db.commit()
 
         return pipelines

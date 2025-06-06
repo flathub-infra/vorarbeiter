@@ -16,6 +16,7 @@ from app.schemas.pipelines import (
     PublishSummary,
 )
 from app.services import pipeline_service, publishing_service
+from app.services.job_monitor import JobMonitor
 
 logger = structlog.get_logger(__name__)
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
@@ -217,3 +218,38 @@ async def publish_pipelines(
             superseded=result.superseded,
             errors=result.errors,
         )
+
+
+@pipelines_router.post(
+    "/pipelines/check-jobs",
+    status_code=status.HTTP_200_OK,
+)
+async def check_pipeline_jobs(
+    token: str = Depends(verify_token),
+):
+    """Check job statuses for all SUCCEEDED pipelines and update accordingly."""
+    async with get_db() as db:
+        from sqlalchemy import select
+
+        query = select(Pipeline).where(
+            Pipeline.status == PipelineStatus.SUCCEEDED,
+            Pipeline.commit_job_id.isnot(None),
+        )
+        result = await db.execute(query)
+        succeeded_pipelines = list(result.scalars().all())
+
+        job_monitor = JobMonitor()
+        updated_count = 0
+
+        for pipeline in succeeded_pipelines:
+            if await job_monitor.check_and_update_pipeline_jobs(db, pipeline):
+                updated_count += 1
+
+        if updated_count > 0:
+            await db.commit()
+
+        return {
+            "status": "completed",
+            "checked_pipelines": len(succeeded_pipelines),
+            "updated_pipelines": updated_count,
+        }

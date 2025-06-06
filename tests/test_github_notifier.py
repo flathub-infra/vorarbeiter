@@ -28,6 +28,7 @@ def mock_pipeline():
         },
         triggered_by=PipelineTrigger.WEBHOOK,
         build_id="build-123",
+        commit_job_id=12345,
         flat_manager_repo="stable",
         log_url="https://example.com/logs/123",
         created_at=datetime.now(),
@@ -43,9 +44,29 @@ async def test_notify_build_status_success(github_notifier, mock_pipeline):
 
         mock_update.assert_called_once_with(
             sha="abc123def456",
-            state="success",
+            state="pending",
             git_repo="flathub/org.test.App",
-            description="Build succeeded.",
+            description="Build succeeded, committing...",
+            target_url="https://hub.flathub.org/status/12345",
+        )
+
+
+@pytest.mark.asyncio
+async def test_notify_build_status_success_no_commit_job_id(
+    github_notifier, mock_pipeline
+):
+    mock_pipeline.commit_job_id = None
+
+    with patch("app.services.github_notifier.update_commit_status") as mock_update:
+        await github_notifier.notify_build_status(
+            mock_pipeline, "success", log_url="https://example.com/custom-log"
+        )
+
+        mock_update.assert_called_once_with(
+            sha="abc123def456",
+            state="pending",
+            git_repo="flathub/org.test.App",
+            description="Build succeeded, committing...",
             target_url="https://example.com/custom-log",
         )
 
@@ -79,6 +100,22 @@ async def test_notify_build_status_cancelled(github_notifier, mock_pipeline):
 
 
 @pytest.mark.asyncio
+async def test_notify_build_status_committed(github_notifier, mock_pipeline):
+    with patch("app.services.github_notifier.update_commit_status") as mock_update:
+        await github_notifier.notify_build_status(
+            mock_pipeline, "committed", log_url="https://example.com/custom-log"
+        )
+
+        mock_update.assert_called_once_with(
+            sha="abc123def456",
+            state="success",
+            git_repo="flathub/org.test.App",
+            description="Build ready.",
+            target_url="https://example.com/custom-log",
+        )
+
+
+@pytest.mark.asyncio
 async def test_notify_build_status_unknown(github_notifier, mock_pipeline):
     with patch("app.services.github_notifier.update_commit_status") as mock_update:
         await github_notifier.notify_build_status(mock_pipeline, "unknown_status")
@@ -103,8 +140,11 @@ async def test_notify_build_status_missing_params(github_notifier, mock_pipeline
 
 
 @pytest.mark.asyncio
-async def test_notify_build_status_no_log_url(github_notifier, mock_pipeline):
+async def test_notify_build_status_no_log_url_no_commit_job(
+    github_notifier, mock_pipeline
+):
     mock_pipeline.log_url = None
+    mock_pipeline.commit_job_id = None
 
     with patch("app.services.github_notifier.update_commit_status") as mock_update:
         await github_notifier.notify_build_status(mock_pipeline, "success")
@@ -186,9 +226,7 @@ async def test_notify_pr_build_complete_success_with_download(
 
         expected_comment = (
             "🚧 [Test build succeeded](https://example.com/logs/123). "
-            "To test this build, install it from the testing repository:\n\n"
-            "```\nflatpak install --user "
-            "https://dl.flathub.org/build-repo/build-123/org.test.App.flatpakref\n```"
+            "Committing to repository..."
         )
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App", pr_number=42, comment=expected_comment
@@ -207,7 +245,7 @@ async def test_notify_pr_build_complete_success_no_build_id(
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App",
             pr_number=42,
-            comment="🚧 [Test build succeeded](https://example.com/logs/123).",
+            comment="🚧 [Test build succeeded](https://example.com/logs/123). Committing to repository...",
         )
 
 
@@ -220,6 +258,44 @@ async def test_notify_pr_build_complete_failure(github_notifier, mock_pipeline):
             git_repo="flathub/org.test.App",
             pr_number=42,
             comment="🚧 [Test build](https://example.com/logs/123) failed.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_notify_pr_build_complete_committed_with_download(
+    github_notifier, mock_pipeline
+):
+    github_notifier.flat_manager.get_flatpakref_url.return_value = (
+        "https://dl.flathub.org/build-repo/build-123/org.test.App.flatpakref"
+    )
+
+    with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
+        await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
+
+        expected_comment = (
+            "✅ [Test build committed](https://example.com/logs/123). "
+            "To test this build, install it from the testing repository:\n\n"
+            "```\nflatpak install --user "
+            "https://dl.flathub.org/build-repo/build-123/org.test.App.flatpakref\n```"
+        )
+        mock_comment.assert_called_once_with(
+            git_repo="flathub/org.test.App", pr_number=42, comment=expected_comment
+        )
+
+
+@pytest.mark.asyncio
+async def test_notify_pr_build_complete_committed_no_build_id(
+    github_notifier, mock_pipeline
+):
+    mock_pipeline.build_id = None
+
+    with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
+        await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
+
+        mock_comment.assert_called_once_with(
+            git_repo="flathub/org.test.App",
+            pr_number=42,
+            comment="✅ [Test build committed](https://example.com/logs/123).",
         )
 
 

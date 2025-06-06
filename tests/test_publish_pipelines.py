@@ -22,7 +22,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.App",
         flat_manager_repo="stable",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="123",
         started_at=now,
@@ -31,7 +31,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.App",
         flat_manager_repo="stable",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="122",
         started_at=now - timedelta(hours=1),
@@ -40,7 +40,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.BetaApp",
         flat_manager_repo="beta",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="124",
         started_at=now,
@@ -49,7 +49,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.TestApp",
         flat_manager_repo="test",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="125",
         started_at=now,
@@ -69,7 +69,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.Other",
         flat_manager_repo="stable",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="789",
         started_at=now,
@@ -141,7 +141,7 @@ async def test_publish_pipelines_error_handling(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.Error",
         flat_manager_repo="stable",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="error",
         started_at=datetime.now(),
@@ -191,7 +191,7 @@ async def test_publish_pipelines_error_handling(db_session_maker, client):
             db_result = await session.execute(query)
             updated_pipeline = db_result.scalars().first()
             assert updated_pipeline is not None
-            assert updated_pipeline.status == PipelineStatus.SUCCEEDED
+            assert updated_pipeline.status == PipelineStatus.COMMITTED
             assert updated_pipeline.published_at is None
 
 
@@ -203,7 +203,7 @@ async def test_publish_pipelines_no_build_url(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.NoBuildId",
         flat_manager_repo="stable",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id=None,
         started_at=datetime.now(),
@@ -243,7 +243,7 @@ async def test_publish_pipelines_no_build_url(db_session_maker, client):
             db_result = await session.execute(query)
             updated_pipeline = db_result.scalars().first()
             assert updated_pipeline is not None
-            assert updated_pipeline.status == PipelineStatus.SUCCEEDED
+            assert updated_pipeline.status == PipelineStatus.COMMITTED
             assert updated_pipeline.published_at is None
 
 
@@ -256,7 +256,7 @@ async def test_publish_pipelines_already_published(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.AlreadyPublished",
         flat_manager_repo="stable",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="already_done",
         started_at=now,
@@ -313,7 +313,7 @@ async def test_publish_pipelines_still_processing(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.Validating",
         flat_manager_repo="stable",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="validating",
         started_at=now,
@@ -322,7 +322,7 @@ async def test_publish_pipelines_still_processing(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.Uploading",
         flat_manager_repo="stable",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="uploading",
         started_at=now,
@@ -373,12 +373,12 @@ async def test_publish_pipelines_still_processing(db_session_maker, client):
         async with session_maker() as session:
             res_validating = await session.get(Pipeline, pipeline_validating.id)
             assert res_validating is not None
-            assert res_validating.status == PipelineStatus.SUCCEEDED
+            assert res_validating.status == PipelineStatus.COMMITTED
             assert res_validating.published_at is None
 
             res_uploading = await session.get(Pipeline, pipeline_uploading.id)
             assert res_uploading is not None
-            assert res_uploading.status == PipelineStatus.SUCCEEDED
+            assert res_uploading.status == PipelineStatus.COMMITTED
             assert res_uploading.published_at is None
 
 
@@ -391,7 +391,7 @@ async def test_publish_pipelines_failed_validation(db_session_maker, client):
         id=uuid.uuid4(),
         app_id="org.test.FailedValidation",
         flat_manager_repo="stable",
-        status=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.COMMITTED,
         params={"key": "value"},
         build_id="failed_repo",
         started_at=now,

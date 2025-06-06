@@ -18,6 +18,7 @@ class PipelineStatus(Enum):
     CANCELLED = "cancelled"
     PUBLISHED = "published"
     SUCCEEDED = "succeeded"
+    COMMITTED = "committed"
     SUPERSEDED = "superseded"
 
 

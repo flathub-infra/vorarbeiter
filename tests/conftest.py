@@ -59,3 +59,8 @@ def db_session_maker(_real_db_session_generator):
 def client():
     test_client = TestClient(app)
     yield test_client
+
+
+@pytest.fixture
+def auth_headers():
+    return {"Authorization": "Bearer raeVenga1eez3Geeca"}

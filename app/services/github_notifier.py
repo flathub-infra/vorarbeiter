@@ -1,6 +1,7 @@
 import structlog
 from typing import Optional
 
+from app.config import settings
 from app.models import Pipeline
 from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
@@ -45,7 +46,10 @@ class GitHubNotifier:
 
         match status:
             case "success":
-                description = "Build succeeded."
+                description = "Build succeeded, committing..."
+                github_state = "pending"
+            case "committed":
+                description = "Build ready."
                 github_state = "success"
             case "failure":
                 description = "Build failed."
@@ -57,13 +61,15 @@ class GitHubNotifier:
                 description = f"Build status: {status}."
                 github_state = "failure"
 
-        target_url = log_url or pipeline.log_url
-        if not target_url:
-            logger.warning(
-                "log_url is unexpectedly None when setting final commit status",
-                pipeline_id=str(pipeline.id),
-            )
-            target_url = ""
+        if status == "success" and pipeline.commit_job_id:
+            target_url = f"{settings.flat_manager_url}/status/{pipeline.commit_job_id}"
+        else:
+            target_url = log_url or pipeline.log_url or ""
+            if not target_url:
+                logger.warning(
+                    "log_url is unexpectedly None when setting final commit status",
+                    pipeline_id=str(pipeline.id),
+                )
 
         await update_commit_status(
             sha=sha,
@@ -166,13 +172,17 @@ class GitHubNotifier:
             comment = ""
 
             if status == "success":
+                comment = (
+                    f"🚧 [Test build succeeded]({log_url}). Committing to repository..."
+                )
+            elif status == "committed":
                 if pipeline.build_id and self.flat_manager:
                     download_url = self.flat_manager.get_flatpakref_url(
                         pipeline.build_id, pipeline.app_id
                     )
-                    comment = f"🚧 [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```"
+                    comment = f"✅ [Test build committed]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```"
                 else:
-                    comment = f"🚧 [Test build succeeded]({log_url})."
+                    comment = f"✅ [Test build committed]({log_url})."
             elif status == "failure":
                 comment = f"🚧 [Test build]({log_url}) failed."
             elif status == "cancelled":
@@ -268,3 +278,16 @@ class GitHubNotifier:
 
         if pipeline.params.get("pr_number"):
             await self.notify_pr_build_started(pipeline, log_url)
+
+    async def handle_build_committed(
+        self,
+        pipeline: Pipeline,
+        flat_manager_client: Optional[FlatManagerClient] = None,
+    ) -> None:
+        if flat_manager_client:
+            self.flat_manager = flat_manager_client
+
+        await self.notify_build_status(pipeline, "committed")
+
+        if pipeline.params.get("pr_number"):
+            await self.notify_pr_build_complete(pipeline, "committed")

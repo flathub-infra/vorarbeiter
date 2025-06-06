@@ -246,6 +246,27 @@ class BuildPipeline:
                                 build_id=pipeline.build_id,
                                 pipeline_id=str(pipeline_id),
                             )
+
+                            try:
+                                build_info = await flat_manager.get_build_info(
+                                    pipeline.build_id
+                                )
+                                build_data = build_info.get("build", {})
+                                commit_job_id = build_data.get("commit_job_id")
+                                if commit_job_id and not pipeline.commit_job_id:
+                                    pipeline.commit_job_id = commit_job_id
+                                    await db.commit()
+                                    logger.info(
+                                        "Stored commit job ID",
+                                        commit_job_id=commit_job_id,
+                                        pipeline_id=str(pipeline_id),
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    "Failed to fetch commit job ID after commit",
+                                    pipeline_id=str(pipeline_id),
+                                    error=str(e),
+                                )
                         except httpx.HTTPStatusError as e:
                             logger.error(
                                 "Failed to commit build",
