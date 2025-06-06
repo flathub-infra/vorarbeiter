@@ -11,6 +11,7 @@ from app.main import app
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
 from app.routes.pipelines import publish_pipelines
+from app.services import publishing_service
 
 
 @pytest.mark.asyncio
@@ -78,9 +79,7 @@ async def test_publish_pipelines_success(db_session_maker, client):
         session.add_all([newer_pipeline, older_pipeline, other_app_pipeline])
         await session.commit()
 
-    with patch("app.routes.pipelines.FlatManagerClient") as mock_client_class:
-        mock_client = AsyncMock()
-        mock_client_class.return_value = mock_client
+    with patch.object(publishing_service, "flat_manager") as mock_client:
         mock_client.publish = AsyncMock()
         mock_client.get_build_info = AsyncMock(
             return_value={"build": {"repo_state": 2, "published_state": 0}}
@@ -152,9 +151,7 @@ async def test_publish_pipelines_error_handling(db_session_maker, client):
         session.add(pipeline)
         await session.commit()
 
-    with patch("app.routes.pipelines.FlatManagerClient") as mock_client_class:
-        mock_client = AsyncMock()
-        mock_client_class.return_value = mock_client
+    with patch.object(publishing_service, "flat_manager") as mock_client:
         mock_client.get_build_info = AsyncMock(
             return_value={"build": {"repo_state": 2, "published_state": 0}}
         )
@@ -216,9 +213,7 @@ async def test_publish_pipelines_no_build_url(db_session_maker, client):
         session.add(pipeline)
         await session.commit()
 
-    with patch("app.routes.pipelines.FlatManagerClient") as mock_client_class:
-        mock_client = AsyncMock()
-        mock_client_class.return_value = mock_client
+    with patch.object(publishing_service, "flat_manager") as mock_client:
         mock_client.publish = AsyncMock()
 
         @asynccontextmanager
@@ -271,9 +266,7 @@ async def test_publish_pipelines_already_published(db_session_maker, client):
         session.add(pipeline)
         await session.commit()
 
-    with patch("app.routes.pipelines.FlatManagerClient") as mock_client_class:
-        mock_client = AsyncMock()
-        mock_client_class.return_value = mock_client
+    with patch.object(publishing_service, "flat_manager") as mock_client:
         # Mock get_build_info to return "Published" state
         mock_client.get_build_info = AsyncMock(
             return_value={"build": {"repo_state": 2, "published_state": 2}}
@@ -339,9 +332,7 @@ async def test_publish_pipelines_still_processing(db_session_maker, client):
         session.add_all([pipeline_validating, pipeline_uploading])
         await session.commit()
 
-    with patch("app.routes.pipelines.FlatManagerClient") as mock_client_class:
-        mock_client = AsyncMock()
-        mock_client_class.return_value = mock_client
+    with patch.object(publishing_service, "flat_manager") as mock_client:
 
         def get_build_info_side_effect(build_id):
             if build_id == "validating":
@@ -410,9 +401,7 @@ async def test_publish_pipelines_failed_validation(db_session_maker, client):
         session.add(pipeline)
         await session.commit()
 
-    with patch("app.routes.pipelines.FlatManagerClient") as mock_client_class:
-        mock_client = AsyncMock()
-        mock_client_class.return_value = mock_client
+    with patch.object(publishing_service, "flat_manager") as mock_client:
         # Mock get_build_info to return "Failed" repo_state
         mock_client.get_build_info = AsyncMock(
             return_value={"build": {"repo_state": 3, "published_state": 0}}
