@@ -14,14 +14,14 @@ logger = structlog.get_logger(__name__)
 
 
 class PublishResult:
-    def __init__(self):
+    def __init__(self) -> None:
         self.published: List[str] = []
         self.superseded: List[str] = []
         self.errors: List[Dict[str, str]] = []
 
 
 class PublishingService:
-    def __init__(self):
+    def __init__(self) -> None:
         self.flat_manager = FlatManagerClient(
             url=settings.flat_manager_url,
             token=settings.flat_manager_token,
@@ -182,6 +182,7 @@ class PublishingService:
 
     async def _get_build_info(self, pipeline: Pipeline) -> Dict | None:
         try:
+            assert pipeline.build_id is not None
             build_info = await self.flat_manager.get_build_info(pipeline.build_id)
             build_data = build_info.get("build", {})
 
@@ -298,6 +299,7 @@ class PublishingService:
     async def _try_commit_build(
         self, pipeline: Pipeline, result: PublishResult
     ) -> None:
+        assert pipeline.build_id is not None
         logger.info(
             "Pipeline is in Uploading state (repo_state 0), attempting to commit",
             pipeline_id=str(pipeline.id),
@@ -333,6 +335,7 @@ class PublishingService:
     async def _try_publish_build(
         self, pipeline: Pipeline, result: PublishResult, now: datetime
     ) -> None:
+        assert pipeline.build_id is not None
         logger.info(
             "Attempting to publish pipeline - RepoState is Ready",
             pipeline_id=str(pipeline.id),

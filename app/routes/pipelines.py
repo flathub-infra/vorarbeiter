@@ -5,7 +5,6 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.future import select
 
 from app.config import settings
 from app.database import get_db
@@ -19,51 +18,12 @@ from app.schemas.pipelines import (
     PipelineTriggerRequest,
     PublishSummary,
 )
-from app.services import publishing_service
-from app.utils.flat_manager import FlatManagerClient
+from app.services import pipeline_service, publishing_service
 
 logger = structlog.get_logger(__name__)
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
 api_security = HTTPBearer()
-
-
-async def update_pipeline_job_ids(pipeline: Pipeline) -> bool:
-    if pipeline.commit_job_id is not None and pipeline.publish_job_id is not None:
-        return False
-
-    if not pipeline.build_id:
-        return False
-
-    try:
-        flat_manager = FlatManagerClient(
-            url=settings.flat_manager_url,
-            token=settings.flat_manager_token,
-        )
-        build_info = await flat_manager.get_build_info(pipeline.build_id)
-        build_data = build_info.get("build", {})
-
-        commit_job_id = build_data.get("commit_job_id")
-        publish_job_id = build_data.get("publish_job_id")
-
-        updated = False
-        if commit_job_id is not None and pipeline.commit_job_id is None:
-            pipeline.commit_job_id = commit_job_id
-            updated = True
-
-        if publish_job_id is not None and pipeline.publish_job_id is None:
-            pipeline.publish_job_id = publish_job_id
-            updated = True
-
-        return updated
-    except Exception as e:
-        logger.error(
-            "Failed to fetch job IDs from flat-manager",
-            pipeline_id=str(pipeline.id),
-            build_id=pipeline.build_id,
-            error=str(e),
-        )
-        return False
 
 
 async def verify_token(
@@ -86,9 +46,9 @@ async def trigger_pipeline(
     data: PipelineTriggerRequest,
     token: str = Depends(verify_token),
 ):
-    pipeline_service = BuildPipeline()
+    build_pipeline = BuildPipeline()
 
-    pipeline = await pipeline_service.create_pipeline(
+    pipeline = await build_pipeline.create_pipeline(
         app_id=data.app_id,
         params=data.params,
         webhook_event_id=None,
@@ -105,7 +65,7 @@ async def trigger_pipeline(
         await db.flush()
         pipeline = db_pipeline
 
-    pipeline = await pipeline_service.start_pipeline(
+    pipeline = await build_pipeline.start_pipeline(
         pipeline_id=pipeline.id,
     )
 
@@ -129,70 +89,36 @@ async def list_pipelines(
     target_repo: str | None = None,
     limit: int | None = 10,
 ):
-    limit = min(max(1, limit or 10), 100)
+    if status_filter:
+        try:
+            status_filter = pipeline_service.validate_status_filter(status_filter)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+
+    if triggered_by:
+        try:
+            triggered_by = pipeline_service.validate_trigger_filter(triggered_by)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
 
     async with get_db() as db:
-        stmt = select(Pipeline).order_by(Pipeline.created_at.desc())
-
-        if app_id is not None:
-            stmt = stmt.where(Pipeline.app_id.startswith(app_id))
-
-        if status_filter is not None:
-            try:
-                pipeline_status = PipelineStatus(status_filter)
-                stmt = stmt.where(Pipeline.status == pipeline_status)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid status value: {status_filter}. Valid values are: {[s.value for s in PipelineStatus]}",
-                )
-
-        if triggered_by is not None:
-            try:
-                pipeline_trigger = PipelineTrigger(triggered_by)
-                stmt = stmt.where(Pipeline.triggered_by == pipeline_trigger)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid triggered_by value: {triggered_by}. Valid values are: {[t.value for t in PipelineTrigger]}",
-                )
-
-        if target_repo is not None:
-            stmt = stmt.where(Pipeline.flat_manager_repo == target_repo)
-
-        stmt = stmt.limit(limit)
-        result = await db.execute(stmt)
-        pipelines = list(result.scalars().all())
-
-        updated_job_ids = False
-        for pipeline in pipelines:
-            if (
-                pipeline.commit_job_id is None or pipeline.publish_job_id is None
-            ) and pipeline.build_id:
-                if await update_pipeline_job_ids(pipeline):
-                    updated_job_ids = True
-
-        if updated_job_ids:
-            await db.commit()
+        pipelines = await pipeline_service.list_pipelines_with_filters(
+            db=db,
+            app_id=app_id,
+            status_filter=status_filter,
+            triggered_by=triggered_by,
+            target_repo=target_repo,
+            limit=limit or 10,
+        )
 
         return [
-            PipelineSummary(
-                id=str(pipeline.id),
-                app_id=pipeline.app_id,
-                status=pipeline.status,
-                repo=str(pipeline.flat_manager_repo)
-                if pipeline.flat_manager_repo is not None
-                else None,
-                triggered_by=pipeline.triggered_by,
-                build_id=pipeline.build_id,
-                commit_job_id=pipeline.commit_job_id,
-                publish_job_id=pipeline.publish_job_id,
-                created_at=pipeline.created_at,
-                started_at=pipeline.started_at,
-                finished_at=pipeline.finished_at,
-                published_at=pipeline.published_at,
-            )
-            for pipeline in pipelines
+            pipeline_service.pipeline_to_summary(pipeline) for pipeline in pipelines
         ]
 
 
@@ -205,37 +131,14 @@ async def get_pipeline(
     pipeline_id: uuid.UUID,
 ):
     async with get_db() as db:
-        pipeline = await db.get(Pipeline, pipeline_id)
+        pipeline = await pipeline_service.get_pipeline_with_job_updates(db, pipeline_id)
         if not pipeline:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Pipeline {pipeline_id} not found",
             )
 
-        if (
-            pipeline.commit_job_id is None or pipeline.publish_job_id is None
-        ) and pipeline.build_id:
-            if await update_pipeline_job_ids(pipeline):
-                await db.commit()
-
-        return PipelineResponse(
-            id=str(pipeline.id),
-            app_id=pipeline.app_id,
-            status=pipeline.status,
-            repo=str(pipeline.flat_manager_repo)
-            if pipeline.flat_manager_repo is not None
-            else None,
-            params=pipeline.params,
-            triggered_by=pipeline.triggered_by,
-            log_url=pipeline.log_url,
-            build_id=pipeline.build_id,
-            commit_job_id=pipeline.commit_job_id,
-            publish_job_id=pipeline.publish_job_id,
-            created_at=pipeline.created_at,
-            started_at=pipeline.started_at,
-            finished_at=pipeline.finished_at,
-            published_at=pipeline.published_at,
-        )
+        return pipeline_service.pipeline_to_response(pipeline)
 
 
 @pipelines_router.post(
@@ -289,9 +192,9 @@ async def pipeline_callback(
         end_of_life_rebase=data.get("end_of_life_rebase"),
     )
 
-    pipeline_service = BuildPipeline()
+    build_pipeline = BuildPipeline()
     try:
-        updated_pipeline, updates = await pipeline_service.handle_callback(
+        updated_pipeline, updates = await build_pipeline.handle_callback(
             pipeline_id=pipeline_id,
             callback_data=callback_data,
         )
