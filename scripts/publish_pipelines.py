@@ -11,7 +11,7 @@ def main():
     url = f"{settings.base_url}/api/pipelines/publish"
     headers = {"Authorization": f"Bearer {settings.admin_token}"}
 
-    with httpx.Client() as client:
+    with httpx.Client(timeout=180.0) as client:
         response = client.post(url, headers=headers)
 
     print(json.dumps(response.json(), indent=2))
