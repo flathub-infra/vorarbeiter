@@ -1,4 +1,3 @@
-import secrets
 import uuid
 from typing import Any
 
@@ -9,11 +8,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.pipelines import BuildPipeline, CallbackData
+from app.pipelines import BuildPipeline
 from app.schemas.pipelines import (
-    PipelineLogUrlCallback,
     PipelineResponse,
-    PipelineStatusCallback,
     PipelineSummary,
     PipelineTriggerRequest,
     PublishSummary,
@@ -46,35 +43,17 @@ async def trigger_pipeline(
     data: PipelineTriggerRequest,
     token: str = Depends(verify_token),
 ):
-    build_pipeline = BuildPipeline()
-
-    pipeline = await build_pipeline.create_pipeline(
-        app_id=data.app_id,
-        params=data.params,
-        webhook_event_id=None,
-    )
-
-    async with get_db() as db:
-        db_pipeline = await db.get(Pipeline, pipeline.id)
-        if db_pipeline is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Pipeline {pipeline.id} not found",
-            )
-        db_pipeline.triggered_by = PipelineTrigger.MANUAL
-        await db.flush()
-        pipeline = db_pipeline
-
-    pipeline = await build_pipeline.start_pipeline(
-        pipeline_id=pipeline.id,
-    )
-
-    return {
-        "status": "created",
-        "pipeline_id": str(pipeline.id),
-        "app_id": pipeline.app_id,
-        "pipeline_status": pipeline.status.value,
-    }
+    try:
+        result = await pipeline_service.trigger_manual_pipeline(
+            app_id=data.app_id,
+            params=data.params,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
 
 
 @pipelines_router.get(
@@ -150,53 +129,29 @@ async def pipeline_callback(
     data: dict[str, Any],
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    async with get_db() as db:
-        pipeline = await db.get(Pipeline, pipeline_id)
-        if not pipeline:
+    build_pipeline = BuildPipeline()
+
+    try:
+        await build_pipeline.verify_callback_token(
+            pipeline_id=pipeline_id,
+            token=credentials.credentials,
+        )
+    except ValueError as e:
+        if "not found" in str(e):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Pipeline {pipeline_id} not found",
+                detail=str(e),
             )
-
-        if not secrets.compare_digest(credentials.credentials, pipeline.callback_token):
+        else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid callback token",
             )
 
-    if "status" in data:
-        try:
-            PipelineStatusCallback(**data)
-        except Exception:
-            raise
-    elif "log_url" in data:
-        try:
-            PipelineLogUrlCallback(**data)
-        except Exception:
-            raise
-    elif not any(
-        field in data
-        for field in ["app_id", "is_extra_data", "end_of_life", "end_of_life_rebase"]
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Request must contain either 'status', 'log_url', 'app_id', 'is_extra_data', 'end_of_life', or 'end_of_life_rebase' field",
-        )
-
-    callback_data = CallbackData(
-        status=data.get("status"),
-        log_url=data.get("log_url"),
-        app_id=data.get("app_id"),
-        is_extra_data=data.get("is_extra_data"),
-        end_of_life=data.get("end_of_life"),
-        end_of_life_rebase=data.get("end_of_life_rebase"),
-    )
-
-    build_pipeline = BuildPipeline()
     try:
         updated_pipeline, updates = await build_pipeline.handle_callback(
             pipeline_id=pipeline_id,
-            callback_data=callback_data,
+            callback_data=data,
         )
     except ValueError as e:
         if "Log URL already set" in str(e):

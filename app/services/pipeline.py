@@ -206,3 +206,47 @@ class PipelineService:
             raise ValueError(
                 f"Invalid triggered_by value: {triggered_by}. Valid values are: {valid_values}"
             )
+
+    async def trigger_manual_pipeline(
+        self, app_id: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Trigger a new pipeline manually.
+
+        Args:
+            app_id: Application ID
+            params: Pipeline parameters
+
+        Returns:
+            Dictionary with pipeline creation details
+        """
+        from app.pipelines import BuildPipeline
+
+        build_pipeline = BuildPipeline()
+
+        pipeline = await build_pipeline.create_pipeline(
+            app_id=app_id,
+            params=params,
+            webhook_event_id=None,
+        )
+
+        from app.database import get_db
+
+        async with get_db() as db:
+            db_pipeline = await db.get(Pipeline, pipeline.id)
+            if db_pipeline is None:
+                raise ValueError(f"Pipeline {pipeline.id} not found")
+            db_pipeline.triggered_by = PipelineTrigger.MANUAL
+            await db.flush()
+            pipeline = db_pipeline
+
+        pipeline = await build_pipeline.start_pipeline(
+            pipeline_id=pipeline.id,
+        )
+
+        return {
+            "status": "created",
+            "pipeline_id": str(pipeline.id),
+            "app_id": pipeline.app_id,
+            "pipeline_status": pipeline.status.value,
+        }

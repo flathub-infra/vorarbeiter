@@ -1,7 +1,7 @@
 import uuid
 import pytest
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from contextlib import asynccontextmanager
 
 from fastapi.testclient import TestClient
@@ -263,26 +263,20 @@ def mock_get_db(mock_db_session):
 
 
 @pytest.fixture
-def mock_build_pipeline():
-    with patch("app.routes.pipelines.BuildPipeline") as pipeline_class_mock:
-        pipeline_mock = AsyncMock()
-
-        mock_pipeline = MagicMock(spec=Pipeline)
-        mock_pipeline.id = uuid.uuid4()
-        mock_pipeline.app_id = "org.flathub.Test"
-
-        mock_status = MagicMock()
-        type(mock_status).value = PropertyMock(return_value="running")
-        mock_pipeline.status = mock_status
-
-        pipeline_mock.create_pipeline = AsyncMock(return_value=mock_pipeline)
-        pipeline_mock.start_pipeline = AsyncMock(return_value=mock_pipeline)
-
-        pipeline_class_mock.return_value = pipeline_mock
-        yield pipeline_class_mock
+def mock_pipeline_service():
+    with patch("app.routes.pipelines.pipeline_service") as service_mock:
+        service_mock.trigger_manual_pipeline = AsyncMock(
+            return_value={
+                "status": "created",
+                "pipeline_id": str(uuid.uuid4()),
+                "app_id": "org.flathub.Test",
+                "pipeline_status": "running",
+            }
+        )
+        yield service_mock
 
 
-def test_trigger_pipeline_endpoint(mock_get_db, mock_build_pipeline):
+def test_trigger_pipeline_endpoint(mock_pipeline_service):
     from app.config import settings
 
     test_client = TestClient(app)
@@ -302,20 +296,13 @@ def test_trigger_pipeline_endpoint(mock_get_db, mock_build_pipeline):
     assert response.json()["status"] == "created"
     assert response.json()["pipeline_status"] == "running"
 
-    pipeline_instance = mock_build_pipeline.return_value
-
-    pipeline_instance.create_pipeline.assert_called_once()
-    call_kwargs = pipeline_instance.create_pipeline.call_args[1]
-    assert call_kwargs["app_id"] == "org.flathub.Test"
-    assert call_kwargs["params"] == {"branch": "main"}
-    assert call_kwargs["webhook_event_id"] is None
-
-    pipeline_instance.start_pipeline.assert_called_once()
-
-    assert mock_get_db.flush.called
+    mock_pipeline_service.trigger_manual_pipeline.assert_called_once_with(
+        app_id="org.flathub.Test",
+        params={"branch": "main"},
+    )
 
 
-def test_trigger_pipeline_unauthorized(mock_get_db, mock_build_pipeline):
+def test_trigger_pipeline_unauthorized(mock_pipeline_service):
     test_client = TestClient(app)
 
     request_data = {

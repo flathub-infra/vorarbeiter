@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from datetime import datetime
 from typing import Any, Optional
@@ -10,6 +11,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
 from app.services import github_actions_service
+from app.services.callback import CallbackValidator
 from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
 
@@ -148,13 +150,16 @@ class BuildPipeline:
     async def handle_callback(
         self,
         pipeline_id: uuid.UUID,
-        callback_data: CallbackData,
+        callback_data: CallbackData | dict[str, Any],
     ) -> tuple[Pipeline, dict[str, Any]]:
         """Handle all types of callbacks for a pipeline.
 
         Returns:
             tuple: (updated_pipeline, updates_dict)
         """
+        if isinstance(callback_data, dict):
+            validator = CallbackValidator()
+            callback_data = validator.validate_and_parse(callback_data)
         async with get_db() as db:
             pipeline = await db.get(Pipeline, pipeline_id)
             if not pipeline:
@@ -275,3 +280,29 @@ class BuildPipeline:
     async def get_pipeline(self, pipeline_id: uuid.UUID) -> Pipeline | None:
         async with get_db() as db:
             return await db.get(Pipeline, pipeline_id)
+
+    async def verify_callback_token(
+        self, pipeline_id: uuid.UUID, token: str
+    ) -> Pipeline:
+        """
+        Verify callback token for a pipeline.
+
+        Args:
+            pipeline_id: Pipeline ID
+            token: Callback token to verify
+
+        Returns:
+            Pipeline if token is valid
+
+        Raises:
+            ValueError: If pipeline not found or token invalid
+        """
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+
+            if not secrets.compare_digest(token, pipeline.callback_token):
+                raise ValueError("Invalid callback token")
+
+            return pipeline
