@@ -304,12 +304,10 @@ class PublishingService:
         try:
             await self.flat_manager.publish(pipeline.build_id)
             logger.info(
-                "Successfully published build via flat-manager",
+                "Successfully triggered publish job via flat-manager",
                 build_id=pipeline.build_id,
                 pipeline_id=str(pipeline.id),
             )
-            pipeline.status = PipelineStatus.PUBLISHED
-            pipeline.published_at = now
             result.published.append(str(pipeline.id))
 
         except httpx.HTTPStatusError as e:

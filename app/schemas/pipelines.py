@@ -20,6 +20,7 @@ class PipelineSummary(BaseModel):
     build_id: int | None = None
     commit_job_id: int | None = None
     publish_job_id: int | None = None
+    update_repo_job_id: int | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -37,6 +38,7 @@ class PipelineResponse(BaseModel):
     build_id: int | None = None
     commit_job_id: int | None = None
     publish_job_id: int | None = None
+    update_repo_job_id: int | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None

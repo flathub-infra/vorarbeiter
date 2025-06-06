@@ -5,7 +5,7 @@ import pytest
 
 from app.models import Pipeline, PipelineStatus
 from app.services.job_monitor import JobMonitor
-from app.utils.flat_manager import JobStatus
+from app.utils.flat_manager import JobStatus, JobKind
 
 
 @pytest.fixture
@@ -174,3 +174,221 @@ async def test_notify_committed_exception(job_monitor, mock_pipeline):
         mock_notifier_class.side_effect = Exception("Notification error")
 
         await job_monitor._notify_committed(mock_pipeline)
+
+
+@pytest.mark.asyncio
+async def test_process_publish_job_success(job_monitor, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.COMMITTED,
+        publish_job_id=67890,
+        build_id=123,
+        params={},
+    )
+
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+        mock_get_job.return_value = {
+            "status": JobStatus.ENDED,
+            "kind": JobKind.PUBLISH,
+            "results": '{"update-repo-job": 99999}',
+        }
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is True
+        assert pipeline.update_repo_job_id == 99999
+        assert pipeline.status == PipelineStatus.PUBLISHING
+
+
+@pytest.mark.asyncio
+async def test_process_publish_job_failed(job_monitor, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.COMMITTED,
+        publish_job_id=67890,
+        build_id=123,
+        params={},
+    )
+
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+        mock_get_job.return_value = {
+            "status": JobStatus.BROKEN,
+            "kind": JobKind.PUBLISH,
+        }
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is True
+        assert pipeline.status == PipelineStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_process_publish_job_no_update_repo_id(job_monitor, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.COMMITTED,
+        publish_job_id=67890,
+        build_id=123,
+        params={},
+    )
+
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+        mock_get_job.return_value = {
+            "status": JobStatus.ENDED,
+            "kind": JobKind.PUBLISH,
+            "results": "{}",
+        }
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is False
+        assert pipeline.update_repo_job_id is None
+        assert pipeline.status == PipelineStatus.COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_process_publish_job_invalid_json(job_monitor, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.COMMITTED,
+        publish_job_id=67890,
+        build_id=123,
+        params={},
+    )
+
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+        mock_get_job.return_value = {
+            "status": JobStatus.ENDED,
+            "kind": JobKind.PUBLISH,
+            "results": "invalid json",
+        }
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is False
+        assert pipeline.update_repo_job_id is None
+        assert pipeline.status == PipelineStatus.COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_process_update_repo_job_success(job_monitor, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHING,
+        publish_job_id=67890,
+        update_repo_job_id=99999,
+        build_id=123,
+        params={},
+    )
+
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+        mock_get_job.return_value = {
+            "status": JobStatus.ENDED,
+            "kind": JobKind.UPDATE_REPO,
+        }
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is True
+        assert pipeline.status == PipelineStatus.PUBLISHED
+        assert pipeline.published_at is not None
+
+
+@pytest.mark.asyncio
+async def test_process_update_repo_job_failed(job_monitor, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHING,
+        publish_job_id=67890,
+        update_repo_job_id=99999,
+        build_id=123,
+        params={},
+    )
+
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+        mock_get_job.return_value = {
+            "status": JobStatus.BROKEN,
+            "kind": JobKind.UPDATE_REPO,
+        }
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is True
+        assert pipeline.status == PipelineStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_process_update_repo_job_still_running(job_monitor, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHING,
+        publish_job_id=67890,
+        update_repo_job_id=99999,
+        build_id=123,
+        params={},
+    )
+
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+        mock_get_job.return_value = {
+            "status": JobStatus.STARTED,
+            "kind": JobKind.UPDATE_REPO,
+        }
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is False
+        assert pipeline.status == PipelineStatus.PUBLISHING
+
+
+@pytest.mark.asyncio
+async def test_process_wrong_job_kind_publish(job_monitor, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.COMMITTED,
+        publish_job_id=67890,
+        build_id=123,
+        params={},
+    )
+
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+        mock_get_job.return_value = {
+            "status": JobStatus.ENDED,
+            "kind": JobKind.COMMIT,  # Wrong kind
+        }
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is False
+        assert pipeline.status == PipelineStatus.COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_process_wrong_job_kind_update_repo(job_monitor, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHING,
+        publish_job_id=67890,
+        update_repo_job_id=99999,
+        build_id=123,
+        params={},
+    )
+
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+        mock_get_job.return_value = {
+            "status": JobStatus.ENDED,
+            "kind": JobKind.PUBLISH,  # Wrong kind
+        }
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is False
+        assert pipeline.status == PipelineStatus.PUBLISHING

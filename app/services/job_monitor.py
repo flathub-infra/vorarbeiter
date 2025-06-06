@@ -1,9 +1,10 @@
 import structlog
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Pipeline, PipelineStatus
-from app.utils.flat_manager import FlatManagerClient, JobStatus
+from app.utils.flat_manager import FlatManagerClient, JobStatus, JobKind
 
 logger = structlog.get_logger(__name__)
 
@@ -22,6 +23,14 @@ class JobMonitor:
 
         if pipeline.status == PipelineStatus.SUCCEEDED and pipeline.commit_job_id:
             if await self._process_succeeded_pipeline(db, pipeline):
+                updated = True
+        elif pipeline.status == PipelineStatus.COMMITTED and pipeline.publish_job_id:
+            if await self._process_publish_job(db, pipeline):
+                updated = True
+        elif (
+            pipeline.status == PipelineStatus.PUBLISHING and pipeline.update_repo_job_id
+        ):
+            if await self._process_update_repo_job(db, pipeline):
                 updated = True
 
         return updated
@@ -82,6 +91,136 @@ class JobMonitor:
                 error=str(e),
             )
             return None
+
+    async def _process_publish_job(self, db: AsyncSession, pipeline: Pipeline) -> bool:
+        if not pipeline.publish_job_id:
+            return False
+
+        try:
+            job_response = await self.flat_manager.get_job(pipeline.publish_job_id)
+            job_status = JobStatus(job_response["status"])
+            job_kind = JobKind(job_response["kind"])
+
+            if job_kind != JobKind.PUBLISH:
+                logger.warning(
+                    "Job is not a publish job",
+                    pipeline_id=str(pipeline.id),
+                    job_id=pipeline.publish_job_id,
+                    job_kind=job_kind.name,
+                )
+                return False
+
+            if job_status == JobStatus.ENDED:
+                results = job_response.get("results")
+                if results:
+                    try:
+                        import json
+
+                        results_data = json.loads(results)
+                        update_repo_job_id = results_data.get("update-repo-job")
+                        if update_repo_job_id:
+                            pipeline.update_repo_job_id = update_repo_job_id
+                            pipeline.status = PipelineStatus.PUBLISHING
+                            logger.info(
+                                "Extracted update-repo job ID from publish job results, transitioning to PUBLISHING",
+                                pipeline_id=str(pipeline.id),
+                                publish_job_id=pipeline.publish_job_id,
+                                update_repo_job_id=update_repo_job_id,
+                            )
+                            return True
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.error(
+                            "Failed to parse publish job results",
+                            pipeline_id=str(pipeline.id),
+                            publish_job_id=pipeline.publish_job_id,
+                            error=str(e),
+                        )
+                logger.warning(
+                    "Publish job completed but no update-repo job ID found",
+                    pipeline_id=str(pipeline.id),
+                    publish_job_id=pipeline.publish_job_id,
+                )
+                return False
+            elif job_status == JobStatus.BROKEN:
+                pipeline.status = PipelineStatus.FAILED
+                logger.error(
+                    "Publish job failed, marking pipeline as FAILED",
+                    pipeline_id=str(pipeline.id),
+                    publish_job_id=pipeline.publish_job_id,
+                )
+                return True
+            else:
+                logger.debug(
+                    "Publish job still in progress",
+                    pipeline_id=str(pipeline.id),
+                    publish_job_id=pipeline.publish_job_id,
+                    job_status=job_status.name,
+                )
+                return False
+
+        except Exception as e:
+            logger.error(
+                "Failed to check publish job status",
+                pipeline_id=str(pipeline.id),
+                publish_job_id=pipeline.publish_job_id,
+                error=str(e),
+            )
+            return False
+
+    async def _process_update_repo_job(
+        self, db: AsyncSession, pipeline: Pipeline
+    ) -> bool:
+        if not pipeline.update_repo_job_id:
+            return False
+
+        try:
+            job_response = await self.flat_manager.get_job(pipeline.update_repo_job_id)
+            job_status = JobStatus(job_response["status"])
+            job_kind = JobKind(job_response["kind"])
+
+            if job_kind != JobKind.UPDATE_REPO:
+                logger.warning(
+                    "Job is not an update-repo job",
+                    pipeline_id=str(pipeline.id),
+                    job_id=pipeline.update_repo_job_id,
+                    job_kind=job_kind.name,
+                )
+                return False
+
+            if job_status == JobStatus.ENDED:
+                pipeline.status = PipelineStatus.PUBLISHED
+                pipeline.published_at = datetime.now()
+                logger.info(
+                    "Update-repo job completed, pipeline published",
+                    pipeline_id=str(pipeline.id),
+                    update_repo_job_id=pipeline.update_repo_job_id,
+                )
+                return True
+            elif job_status == JobStatus.BROKEN:
+                pipeline.status = PipelineStatus.FAILED
+                logger.error(
+                    "Update-repo job failed, marking pipeline as FAILED",
+                    pipeline_id=str(pipeline.id),
+                    update_repo_job_id=pipeline.update_repo_job_id,
+                )
+                return True
+            else:
+                logger.debug(
+                    "Update-repo job still in progress",
+                    pipeline_id=str(pipeline.id),
+                    update_repo_job_id=pipeline.update_repo_job_id,
+                    job_status=job_status.name,
+                )
+                return False
+
+        except Exception as e:
+            logger.error(
+                "Failed to check update-repo job status",
+                pipeline_id=str(pipeline.id),
+                update_repo_job_id=pipeline.update_repo_job_id,
+                error=str(e),
+            )
+            return False
 
     async def _notify_committed(self, pipeline: Pipeline) -> None:
         try:

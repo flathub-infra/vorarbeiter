@@ -340,7 +340,7 @@ async def test_handle_build_state_ready(publishing_service):
         await publishing_service._handle_build_state(pipeline, build_data, result, now)
 
         mock_publish.assert_called_once_with(123)
-        assert pipeline.status == PipelineStatus.PUBLISHED
+        assert pipeline.status == PipelineStatus.COMMITTED  # Should remain COMMITTED
         assert len(result.published) == 1
 
 
@@ -388,6 +388,26 @@ async def test_try_publish_build_error(publishing_service):
         assert len(result.errors) == 1
         assert "HTTP 400" in result.errors[0]["error"]
         assert pipeline.status == PipelineStatus.COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_try_publish_build_success(publishing_service):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        build_id=123,
+        status=PipelineStatus.COMMITTED,
+        params={},
+    )
+    result = PublishResult()
+    now = datetime.now()
+
+    with patch.object(publishing_service.flat_manager, "publish") as mock_publish:
+        await publishing_service._try_publish_build(pipeline, result, now)
+
+        mock_publish.assert_called_once_with(123)
+        assert pipeline.status == PipelineStatus.COMMITTED  # Should remain COMMITTED
+        assert len(result.published) == 1
+        assert str(pipeline.id) in result.published
 
 
 def test_handle_build_error_request_error(publishing_service):

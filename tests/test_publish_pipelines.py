@@ -116,8 +116,8 @@ async def test_publish_pipelines_success(db_session_maker, client):
             db_result = await session.execute(query)
             updated_newer = db_result.scalars().first()
             assert updated_newer is not None
-            assert updated_newer.status == PipelineStatus.PUBLISHED
-            assert updated_newer.published_at is not None
+            assert updated_newer.status == PipelineStatus.COMMITTED
+            assert updated_newer.published_at is None
 
             query = select(Pipeline).where(Pipeline.id == older_pipeline.id)
             db_result = await session.execute(query)
@@ -129,8 +129,8 @@ async def test_publish_pipelines_success(db_session_maker, client):
             db_result = await session.execute(query)
             updated_other = db_result.scalars().first()
             assert updated_other is not None
-            assert updated_other.status == PipelineStatus.PUBLISHED
-            assert updated_other.published_at is not None
+            assert updated_other.status == PipelineStatus.COMMITTED
+            assert updated_other.published_at is None
 
 
 @pytest.mark.asyncio

@@ -227,21 +227,27 @@ async def publish_pipelines(
 async def check_pipeline_jobs(
     token: str = Depends(verify_token),
 ):
-    """Check job statuses for all SUCCEEDED pipelines and update accordingly."""
+    """Check job statuses for pipelines and update accordingly."""
     async with get_db() as db:
-        from sqlalchemy import select
+        from sqlalchemy import select, or_
 
         query = select(Pipeline).where(
-            Pipeline.status == PipelineStatus.SUCCEEDED,
-            Pipeline.commit_job_id.isnot(None),
+            or_(
+                (Pipeline.status == PipelineStatus.SUCCEEDED)
+                & Pipeline.commit_job_id.isnot(None),
+                (Pipeline.status == PipelineStatus.COMMITTED)
+                & Pipeline.publish_job_id.isnot(None),
+                (Pipeline.status == PipelineStatus.PUBLISHING)
+                & Pipeline.update_repo_job_id.isnot(None),
+            )
         )
         result = await db.execute(query)
-        succeeded_pipelines = list(result.scalars().all())
+        pipelines = list(result.scalars().all())
 
         job_monitor = JobMonitor()
         updated_count = 0
 
-        for pipeline in succeeded_pipelines:
+        for pipeline in pipelines:
             if await job_monitor.check_and_update_pipeline_jobs(db, pipeline):
                 updated_count += 1
 
@@ -250,6 +256,6 @@ async def check_pipeline_jobs(
 
         return {
             "status": "completed",
-            "checked_pipelines": len(succeeded_pipelines),
+            "checked_pipelines": len(pipelines),
             "updated_pipelines": updated_count,
         }
