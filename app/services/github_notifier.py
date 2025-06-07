@@ -171,22 +171,18 @@ class GitHubNotifier:
             log_url = pipeline.log_url
             comment = ""
 
-            if status == "success":
-                comment = (
-                    f"🚧 [Test build succeeded]({log_url}). Committing to repository..."
-                )
-            elif status == "committed":
+            if status == "committed":
                 if pipeline.build_id and self.flat_manager:
                     download_url = self.flat_manager.get_flatpakref_url(
                         pipeline.build_id, pipeline.app_id
                     )
-                    comment = f"✅ [Test build committed]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```"
+                    comment = f"✅ [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```"
                 else:
-                    comment = f"✅ [Test build committed]({log_url})."
+                    comment = f"✅ [Test build succeeded]({log_url})."
             elif status == "failure":
-                comment = f"🚧 [Test build]({log_url}) failed."
+                comment = f"❌ [Test build]({log_url}) failed."
             elif status == "cancelled":
-                comment = f"🚧 [Test build]({log_url}) was cancelled."
+                comment = f"❌ [Test build]({log_url}) was cancelled."
 
             if comment:
                 await create_pr_comment(

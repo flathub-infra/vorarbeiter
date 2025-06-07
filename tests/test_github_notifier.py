@@ -224,13 +224,7 @@ async def test_notify_pr_build_complete_success_with_download(
     with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
         await github_notifier.notify_pr_build_complete(mock_pipeline, "success")
 
-        expected_comment = (
-            "🚧 [Test build succeeded](https://example.com/logs/123). "
-            "Committing to repository..."
-        )
-        mock_comment.assert_called_once_with(
-            git_repo="flathub/org.test.App", pr_number=42, comment=expected_comment
-        )
+        mock_comment.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -242,11 +236,7 @@ async def test_notify_pr_build_complete_success_no_build_id(
     with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
         await github_notifier.notify_pr_build_complete(mock_pipeline, "success")
 
-        mock_comment.assert_called_once_with(
-            git_repo="flathub/org.test.App",
-            pr_number=42,
-            comment="🚧 [Test build succeeded](https://example.com/logs/123). Committing to repository...",
-        )
+        mock_comment.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -257,7 +247,7 @@ async def test_notify_pr_build_complete_failure(github_notifier, mock_pipeline):
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App",
             pr_number=42,
-            comment="🚧 [Test build](https://example.com/logs/123) failed.",
+            comment="❌ [Test build](https://example.com/logs/123) failed.",
         )
 
 
@@ -273,7 +263,7 @@ async def test_notify_pr_build_complete_committed_with_download(
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
 
         expected_comment = (
-            "✅ [Test build committed](https://example.com/logs/123). "
+            "✅ [Test build succeeded](https://example.com/logs/123). "
             "To test this build, install it from the testing repository:\n\n"
             "```\nflatpak install --user "
             "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref\n```"
@@ -295,7 +285,7 @@ async def test_notify_pr_build_complete_committed_no_build_id(
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App",
             pr_number=42,
-            comment="✅ [Test build committed](https://example.com/logs/123).",
+            comment="✅ [Test build succeeded](https://example.com/logs/123).",
         )
 
 
@@ -307,7 +297,7 @@ async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App",
             pr_number=42,
-            comment="🚧 [Test build](https://example.com/logs/123) was cancelled.",
+            comment="❌ [Test build](https://example.com/logs/123) was cancelled.",
         )
 
 
