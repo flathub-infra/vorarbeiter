@@ -23,12 +23,8 @@ def upgrade() -> None:
     op.execute(
         "UPDATE pipeline SET build_id = NULL WHERE build_id IS NOT NULL AND build_id !~ '^[0-9]+$'"
     )
-    op.alter_column(
-        "pipeline",
-        "build_id",
-        existing_type=sa.Text(),
-        type_=sa.Integer(),
-        existing_nullable=True,
+    op.execute(
+        "ALTER TABLE pipeline ALTER COLUMN build_id TYPE INTEGER USING build_id::integer"
     )
 
 
