@@ -261,7 +261,7 @@ class GitHubNotifier:
         if status == "failure":
             await self.create_stable_build_failure_issue(pipeline)
 
-        if pipeline.params.get("pr_number"):
+        if pipeline.params.get("pr_number") and status != "success":
             await self.notify_pr_build_complete(pipeline, status)
 
     async def handle_build_started(

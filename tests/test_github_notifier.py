@@ -379,7 +379,7 @@ async def test_handle_build_completion_success(github_notifier, mock_pipeline):
             await github_notifier.handle_build_completion(mock_pipeline, "success")
 
             mock_status.assert_called_once_with(mock_pipeline, "success")
-            mock_pr.assert_called_once_with(mock_pipeline, "success")
+            mock_pr.assert_not_called()
 
 
 @pytest.mark.asyncio
