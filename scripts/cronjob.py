@@ -29,6 +29,9 @@ def main():
 
         print(json.dumps(response.json(), indent=2))
     except httpx.HTTPStatusError as e:
+        if e.response.status_code == 504:
+            print(f"HTTP Error 504 (Gateway Timeout): {e.response.text}")
+            sys.exit(0)
         print(
             f"HTTP Error {e.response.status_code}: {e.response.text}", file=sys.stderr
         )
