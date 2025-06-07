@@ -21,6 +21,12 @@ class JobMonitor:
     ) -> bool:
         updated = False
 
+        if pipeline.build_id and (
+            pipeline.commit_job_id is None or pipeline.publish_job_id is None
+        ):
+            if await self._fetch_missing_job_ids(pipeline):
+                updated = True
+
         if pipeline.status == PipelineStatus.SUCCEEDED and pipeline.commit_job_id:
             if await self._process_succeeded_pipeline(db, pipeline):
                 updated = True
@@ -218,6 +224,55 @@ class JobMonitor:
                 "Failed to check update-repo job status",
                 pipeline_id=str(pipeline.id),
                 update_repo_job_id=pipeline.update_repo_job_id,
+                error=str(e),
+            )
+            return False
+
+    async def _fetch_missing_job_ids(self, pipeline: Pipeline) -> bool:
+        """
+        Fetch missing job IDs from flat-manager build info.
+
+        Args:
+            pipeline: The pipeline to update
+
+        Returns:
+            True if any job IDs were updated
+        """
+        if not pipeline.build_id:
+            return False
+
+        try:
+            build_info = await self.flat_manager.get_build_info(pipeline.build_id)
+            build_data = build_info.get("build", {})
+
+            commit_job_id = build_data.get("commit_job_id")
+            publish_job_id = build_data.get("publish_job_id")
+
+            updated = False
+            if commit_job_id is not None and pipeline.commit_job_id is None:
+                pipeline.commit_job_id = commit_job_id
+                updated = True
+                logger.info(
+                    "Fetched commit_job_id from flat-manager",
+                    pipeline_id=str(pipeline.id),
+                    commit_job_id=commit_job_id,
+                )
+
+            if publish_job_id is not None and pipeline.publish_job_id is None:
+                pipeline.publish_job_id = publish_job_id
+                updated = True
+                logger.info(
+                    "Fetched publish_job_id from flat-manager",
+                    pipeline_id=str(pipeline.id),
+                    publish_job_id=publish_job_id,
+                )
+
+            return updated
+        except Exception as e:
+            logger.error(
+                "Failed to fetch job IDs from flat-manager",
+                pipeline_id=str(pipeline.id),
+                build_id=pipeline.build_id,
                 error=str(e),
             )
             return False

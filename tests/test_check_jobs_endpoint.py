@@ -60,10 +60,18 @@ async def test_check_jobs_endpoint_success(client, db_session_maker, auth_header
         mock_fm_instance = AsyncMock()
         mock_fm_class.return_value = mock_fm_instance
 
-        mock_fm_instance.get_job.side_effect = [
-            {"status": 2},
-            {"status": 1},
-        ]
+        # Mock for fetching missing job IDs
+        mock_fm_instance.get_build_info = AsyncMock(
+            return_value={"build": {"commit_job_id": 12349, "publish_job_id": 12350}}
+        )
+
+        # Mock for checking job statuses
+        mock_fm_instance.get_job = AsyncMock(
+            side_effect=[
+                {"status": 2},  # ENDED for pipeline1
+                {"status": 1},  # STARTED for pipeline2
+            ]
+        )
 
         response = client.post(
             "/api/pipelines/check-jobs",
@@ -73,14 +81,19 @@ async def test_check_jobs_endpoint_success(client, db_session_maker, auth_header
         assert response.status_code == 200
         result = response.json()
         assert result["status"] == "completed"
-        assert result["checked_pipelines"] == 2
-        assert result["updated_pipelines"] == 1
+        assert result["checked_pipelines"] == 4
+        assert result["updated_pipelines"] == 4
 
         async with session_maker() as session:
             query = select(Pipeline).where(Pipeline.id == pipeline1.id)
             db_result = await session.execute(query)
             updated_pipeline = db_result.scalars().first()
             assert updated_pipeline.status == PipelineStatus.COMMITTED
+
+            query = select(Pipeline).where(Pipeline.id == pipeline3.id)
+            db_result = await session.execute(query)
+            updated_pipeline3 = db_result.scalars().first()
+            assert updated_pipeline3.commit_job_id == 12349
 
 
 @pytest.mark.asyncio
@@ -131,7 +144,7 @@ async def test_check_jobs_endpoint_all_failed(client, db_session_maker, auth_hea
         mock_fm_instance = AsyncMock()
         mock_fm_class.return_value = mock_fm_instance
 
-        mock_fm_instance.get_job.return_value = {"status": 3}
+        mock_fm_instance.get_job = AsyncMock(return_value={"status": 3})
 
         response = client.post(
             "/api/pipelines/check-jobs",

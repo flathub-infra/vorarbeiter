@@ -117,12 +117,9 @@ async def test_get_pipeline_with_job_updates_not_found(pipeline_service):
 
 
 @pytest.mark.asyncio
-async def test_get_pipeline_with_job_updates_no_update_needed(
+async def test_get_pipeline_with_job_updates_returns_pipeline(
     pipeline_service, mock_pipeline
 ):
-    mock_pipeline.commit_job_id = 123
-    mock_pipeline.publish_job_id = 456
-
     mock_db = AsyncMock(spec=AsyncSession)
     mock_db.get.return_value = mock_pipeline
 
@@ -132,28 +129,6 @@ async def test_get_pipeline_with_job_updates_no_update_needed(
 
     assert result == mock_pipeline
     mock_db.commit.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_get_pipeline_with_job_updates_with_update(
-    pipeline_service, mock_pipeline
-):
-    mock_pipeline.commit_job_id = None
-    mock_pipeline.publish_job_id = None
-
-    mock_db = AsyncMock(spec=AsyncSession)
-    mock_db.get.return_value = mock_pipeline
-
-    with patch.object(pipeline_service, "update_pipeline_job_ids") as mock_update:
-        mock_update.return_value = True
-
-        result = await pipeline_service.get_pipeline_with_job_updates(
-            mock_db, mock_pipeline.id
-        )
-
-        assert result == mock_pipeline
-        mock_update.assert_called_once_with(mock_pipeline)
-        mock_db.commit.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -209,31 +184,6 @@ async def test_list_pipelines_with_filters_limit_bounds(pipeline_service):
     await pipeline_service.list_pipelines_with_filters(mock_db, limit=200)
 
     assert mock_db.execute.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_list_pipelines_with_job_updates(pipeline_service):
-    pipeline1 = MagicMock(
-        id=uuid.uuid4(), commit_job_id=None, publish_job_id=None, build_id=1
-    )
-    pipeline2 = MagicMock(
-        id=uuid.uuid4(), commit_job_id=1, publish_job_id=2, build_id=2
-    )
-
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = [pipeline1, pipeline2]
-
-    mock_db = AsyncMock(spec=AsyncSession)
-    mock_db.execute.return_value = mock_result
-
-    with patch.object(pipeline_service, "update_pipeline_job_ids") as mock_update:
-        mock_update.side_effect = [True, False]
-
-        result = await pipeline_service.list_pipelines_with_filters(mock_db)
-
-        assert len(result) == 2
-        assert mock_update.call_count == 1
-        mock_db.commit.assert_called_once()
 
 
 def test_pipeline_to_summary(pipeline_service, mock_pipeline):
