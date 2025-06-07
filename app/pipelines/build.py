@@ -36,6 +36,7 @@ app_build_types = {
     "org.freedesktop.LinuxAudio.Plugins.ChowDSP-Plugins": "large",
     "org.paraview.ParaView": "large",
     "com.bambulab.BambuStudio": "large",
+    "org.telegram.desktop": "large",
 }
 
 
