@@ -30,11 +30,17 @@ class JobMonitor:
         if pipeline.status == PipelineStatus.SUCCEEDED and pipeline.commit_job_id:
             if await self._process_succeeded_pipeline(db, pipeline):
                 updated = True
-        elif pipeline.status == PipelineStatus.COMMITTED and pipeline.publish_job_id:
+        elif (
+            pipeline.status == PipelineStatus.COMMITTED
+            and pipeline.publish_job_id
+            and pipeline.flat_manager_repo in ["beta", "stable"]
+        ):
             if await self._process_publish_job(db, pipeline):
                 updated = True
         elif (
-            pipeline.status == PipelineStatus.PUBLISHING and pipeline.update_repo_job_id
+            pipeline.status == PipelineStatus.PUBLISHING
+            and pipeline.update_repo_job_id
+            and pipeline.flat_manager_repo in ["beta", "stable"]
         ):
             if await self._process_update_repo_job(db, pipeline):
                 updated = True
@@ -258,7 +264,11 @@ class JobMonitor:
                     commit_job_id=commit_job_id,
                 )
 
-            if publish_job_id is not None and pipeline.publish_job_id is None:
+            if (
+                pipeline.flat_manager_repo in ["beta", "stable"]
+                and publish_job_id is not None
+                and pipeline.publish_job_id is None
+            ):
                 pipeline.publish_job_id = publish_job_id
                 updated = True
                 logger.info(

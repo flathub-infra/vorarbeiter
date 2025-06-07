@@ -184,6 +184,7 @@ async def test_process_publish_job_success(job_monitor, mock_db):
         status=PipelineStatus.COMMITTED,
         publish_job_id=67890,
         build_id=123,
+        flat_manager_repo="stable",
         params={},
     )
 
@@ -209,6 +210,7 @@ async def test_process_publish_job_failed(job_monitor, mock_db):
         status=PipelineStatus.COMMITTED,
         publish_job_id=67890,
         build_id=123,
+        flat_manager_repo="stable",
         params={},
     )
 
@@ -232,6 +234,7 @@ async def test_process_publish_job_no_update_repo_id(job_monitor, mock_db):
         status=PipelineStatus.COMMITTED,
         publish_job_id=67890,
         build_id=123,
+        flat_manager_repo="stable",
         params={},
     )
 
@@ -257,6 +260,7 @@ async def test_process_publish_job_invalid_json(job_monitor, mock_db):
         status=PipelineStatus.COMMITTED,
         publish_job_id=67890,
         build_id=123,
+        flat_manager_repo="stable",
         params={},
     )
 
@@ -283,6 +287,7 @@ async def test_process_update_repo_job_success(job_monitor, mock_db):
         publish_job_id=67890,
         update_repo_job_id=99999,
         build_id=123,
+        flat_manager_repo="stable",
         params={},
     )
 
@@ -308,6 +313,7 @@ async def test_process_update_repo_job_failed(job_monitor, mock_db):
         publish_job_id=67890,
         update_repo_job_id=99999,
         build_id=123,
+        flat_manager_repo="stable",
         params={},
     )
 
@@ -332,6 +338,7 @@ async def test_process_update_repo_job_still_running(job_monitor, mock_db):
         publish_job_id=67890,
         update_repo_job_id=99999,
         build_id=123,
+        flat_manager_repo="stable",
         params={},
     )
 
@@ -355,6 +362,7 @@ async def test_process_wrong_job_kind_publish(job_monitor, mock_db):
         status=PipelineStatus.COMMITTED,
         publish_job_id=67890,
         build_id=123,
+        flat_manager_repo="stable",
         params={},
     )
 
@@ -379,6 +387,7 @@ async def test_process_wrong_job_kind_update_repo(job_monitor, mock_db):
         publish_job_id=67890,
         update_repo_job_id=99999,
         build_id=123,
+        flat_manager_repo="stable",
         params={},
     )
 
