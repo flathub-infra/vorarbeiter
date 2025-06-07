@@ -230,9 +230,13 @@ async def check_pipeline_jobs(
     """Check job statuses for pipelines and update accordingly."""
     async with get_db() as db:
         from sqlalchemy import select, or_
+        from datetime import datetime, timedelta
+
+        cutoff_date = datetime.now() - timedelta(hours=24)
 
         query = select(Pipeline).where(
-            or_(
+            (Pipeline.created_at > cutoff_date)
+            & or_(
                 (Pipeline.status == PipelineStatus.SUCCEEDED)
                 & Pipeline.commit_job_id.isnot(None),
                 (Pipeline.status == PipelineStatus.COMMITTED)
