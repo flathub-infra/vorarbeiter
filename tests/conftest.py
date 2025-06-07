@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 import pytest_asyncio
+from contextlib import asynccontextmanager
 
 # Force SQLite for tests
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
@@ -64,3 +65,13 @@ def client():
 @pytest.fixture
 def auth_headers():
     return {"Authorization": "Bearer raeVenga1eez3Geeca"}
+
+
+def create_mock_get_db(mock_session):
+    """Create a mock get_db function that accepts use_replica parameter."""
+
+    @asynccontextmanager
+    async def mock_get_db(*, use_replica: bool = False):
+        yield mock_session
+
+    return mock_get_db

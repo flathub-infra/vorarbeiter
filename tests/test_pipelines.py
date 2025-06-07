@@ -11,6 +11,7 @@ from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.services import GitHubActionsService
 from app.pipelines.build import BuildPipeline, CallbackData
+from tests.conftest import create_mock_get_db
 
 
 @pytest.fixture
@@ -58,9 +59,7 @@ async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
     test_pipeline.params = params
     test_pipeline.status = PipelineStatus.PENDING
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db
+    mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch("app.pipelines.build.Pipeline", return_value=test_pipeline):
@@ -90,9 +89,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
     mock_db.get = AsyncMock(side_effect=mock_get)
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db
+    mock_get_db = create_mock_get_db(mock_db)
 
     dispatch_result = {"status": "dispatched"}
     build_pipeline.provider.dispatch = AsyncMock(return_value=dispatch_result)
@@ -210,9 +207,7 @@ async def test_start_pipeline_branch_mapping(
 async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline):
     mock_db.get.return_value = sample_pipeline
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db
+    mock_get_db = create_mock_get_db(mock_db)
 
     callback_data = CallbackData(status="success")
 
@@ -229,9 +224,7 @@ async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline)
 async def test_handle_callback_failure(build_pipeline, mock_db, sample_pipeline):
     mock_db.get.return_value = sample_pipeline
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db
+    mock_get_db = create_mock_get_db(mock_db)
 
     callback_data = CallbackData(status="failure")
 
@@ -255,7 +248,7 @@ def mock_db_session():
 @pytest.fixture
 def mock_get_db(mock_db_session):
     @asynccontextmanager
-    async def _mock_get_db():
+    async def _mock_get_db(*, use_replica: bool = False):
         yield mock_db_session
 
     with patch("app.routes.pipelines.get_db", _mock_get_db):
@@ -402,9 +395,7 @@ def test_pipeline_callback_status_endpoint(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -429,9 +420,7 @@ def test_pipeline_callback_log_url_endpoint(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -457,9 +446,7 @@ def test_pipeline_callback_invalid_data(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -486,9 +473,7 @@ def test_pipeline_callback_invalid_status(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -513,9 +498,7 @@ def test_pipeline_callback_not_found(mock_get_db):
 
     pipeline_id = uuid.uuid4()
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -539,9 +522,7 @@ def test_pipeline_callback_invalid_token(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -567,9 +548,7 @@ def test_pipeline_callback_status_immutable(mock_get_db, sample_pipeline):
 
     sample_pipeline.status = PipelineStatus.SUCCEEDED
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -595,9 +574,7 @@ def test_pipeline_callback_log_url_immutable(mock_get_db, sample_pipeline):
 
     sample_pipeline.log_url = "https://example.com/logs/existing"
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -623,9 +600,7 @@ def test_redirect_to_log_url(mock_get_db, sample_pipeline):
 
     sample_pipeline.log_url = "https://example.com/logs/12345"
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with patch("app.routes.pipelines.get_db", mock_get_db_session):
         mock_get_db.get.return_value = sample_pipeline
@@ -645,9 +620,7 @@ def test_redirect_to_log_url_not_available(mock_get_db, sample_pipeline):
 
     sample_pipeline.log_url = None
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with patch("app.routes.pipelines.get_db", mock_get_db_session):
         mock_get_db.get.return_value = sample_pipeline
@@ -664,9 +637,7 @@ def test_redirect_to_log_url_not_found(mock_get_db):
 
     pipeline_id = uuid.uuid4()
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with patch("app.routes.pipelines.get_db", mock_get_db_session):
         mock_get_db.get.return_value = None
@@ -683,9 +654,7 @@ def test_pipeline_callback_end_of_life_only(mock_get_db, sample_pipeline):
 
     pipeline_id = sample_pipeline.id
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -716,9 +685,7 @@ def test_pipeline_callback_end_of_life_rebase_only(mock_get_db, sample_pipeline)
 
     pipeline_id = sample_pipeline.id
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -749,9 +716,7 @@ def test_pipeline_callback_both_end_of_life_fields(mock_get_db, sample_pipeline)
 
     pipeline_id = sample_pipeline.id
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -793,9 +758,7 @@ def test_pipeline_callback_end_of_life_with_status(mock_get_db, sample_pipeline)
     mock_flat_manager = MagicMock()
     mock_flat_manager.commit = AsyncMock()
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -859,9 +822,7 @@ def test_pipeline_callback_status_update_preserves_existing_end_of_life(
     mock_flat_manager = MagicMock()
     mock_flat_manager.commit = AsyncMock()
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
@@ -918,9 +879,7 @@ def test_pipeline_callback_early_exit_bug_regression(mock_get_db, sample_pipelin
     mock_flat_manager = MagicMock()
     mock_flat_manager.commit = AsyncMock()
 
-    @asynccontextmanager
-    async def mock_get_db_session():
-        yield mock_get_db
+    mock_get_db_session = create_mock_get_db(mock_get_db)
 
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),

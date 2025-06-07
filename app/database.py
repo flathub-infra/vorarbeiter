@@ -23,25 +23,48 @@ def get_engine_args() -> dict[str, Any]:
     return args
 
 
-engine: AsyncEngine = create_async_engine(
+writer_engine: AsyncEngine = create_async_engine(
     settings.database_url,
     **get_engine_args(),
 )
 
+reader_engine: AsyncEngine = (
+    create_async_engine(
+        settings.database_replica_url,
+        **get_engine_args(),
+    )
+    if settings.database_replica_url
+    else writer_engine
+)
 
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
+engine: AsyncEngine = writer_engine
+
+AsyncWriterSessionLocal = async_sessionmaker(
+    bind=writer_engine,
     class_=AsyncSession,
     expire_on_commit=False,
     autocommit=False,
     autoflush=False,
 )
 
+AsyncReaderSessionLocal = async_sessionmaker(
+    bind=reader_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
+)
+
+AsyncSessionLocal = AsyncWriterSessionLocal
+
 
 @asynccontextmanager
-async def get_db() -> AsyncGenerator[AsyncSession]:
+async def get_db(*, use_replica: bool = False) -> AsyncGenerator[AsyncSession]:
     """Context manager that provides an AsyncSession."""
-    async with AsyncSessionLocal() as session:
+    session_factory = (
+        AsyncReaderSessionLocal if use_replica else AsyncWriterSessionLocal
+    )
+    async with session_factory() as session:
         async with session.begin():
             try:
                 yield session

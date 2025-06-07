@@ -87,7 +87,7 @@ async def list_pipelines(
                 detail=str(e),
             )
 
-    async with get_db() as db:
+    async with get_db(use_replica=True) as db:
         pipelines = await pipeline_service.list_pipelines_with_filters(
             db=db,
             app_id=app_id,
@@ -110,7 +110,7 @@ async def list_pipelines(
 async def get_pipeline(
     pipeline_id: uuid.UUID,
 ):
-    async with get_db() as db:
+    async with get_db(use_replica=True) as db:
         pipeline = await pipeline_service.get_pipeline_with_job_updates(db, pipeline_id)
         if not pipeline:
             raise HTTPException(
@@ -185,7 +185,7 @@ async def redirect_to_log_url(
     pipeline_id: uuid.UUID,
     response: Response,
 ):
-    async with get_db() as db:
+    async with get_db(use_replica=True) as db:
         pipeline = await db.get(Pipeline, pipeline_id)
         if not pipeline:
             raise HTTPException(

@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import json
 import uuid
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -13,6 +12,7 @@ from app.config import settings
 from app.main import app
 from app.models import Pipeline, PipelineStatus
 from app.models.webhook_event import WebhookEvent, WebhookSource
+from tests.conftest import create_mock_get_db
 
 # Sample GitHub payloads (simplified)
 SAMPLE_GITHUB_PAYLOAD = {
@@ -69,9 +69,7 @@ def mock_db_session():
 def mock_db(mock_db_session):
     """Mock the database session factory."""
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db_session
+    mock_get_db = create_mock_get_db(mock_db_session)
 
     with patch("app.routes.webhooks.get_db", mock_get_db):
         yield mock_db_session
@@ -90,9 +88,7 @@ def test_receive_github_webhook_success(client: TestClient, mock_db_session):
         "X-GitHub-Delivery": delivery_id,
     }
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db_session
+    mock_get_db = create_mock_get_db(mock_db_session)
 
     with patch("app.routes.webhooks.get_db", mock_get_db):
         with patch("app.routes.webhooks.settings.github_webhook_secret", ""):
@@ -375,9 +371,7 @@ async def test_create_pipeline_pr():
     mock_db_session = AsyncMock(spec=AsyncSession)
     mock_db_session.get.return_value = mock_pipeline
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db_session
+    mock_get_db = create_mock_get_db(mock_db_session)
 
     with patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service):
         with patch("app.routes.webhooks.get_db", mock_get_db):
@@ -427,9 +421,7 @@ async def test_create_pipeline_push():
     mock_db_session = AsyncMock(spec=AsyncSession)
     mock_db_session.get.return_value = mock_pipeline
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db_session
+    mock_get_db = create_mock_get_db(mock_db_session)
 
     with patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service):
         with patch("app.routes.webhooks.get_db", mock_get_db):
@@ -494,9 +486,7 @@ async def test_create_pipeline_comment():
     mock_db_session = AsyncMock(spec=AsyncSession)
     mock_db_session.get.return_value = mock_pipeline
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db_session
+    mock_get_db = create_mock_get_db(mock_db_session)
 
     with patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service):
         with patch("app.routes.webhooks.get_db", mock_get_db):
@@ -526,9 +516,7 @@ async def test_receive_webhook_creates_pipeline(client, mock_db_session):
         "X-GitHub-Delivery": delivery_id,
     }
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield mock_db_session
+    mock_get_db = create_mock_get_db(mock_db_session)
 
     with patch("app.routes.webhooks.get_db", mock_get_db):
         with patch(
