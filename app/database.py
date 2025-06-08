@@ -60,7 +60,6 @@ AsyncSessionLocal = AsyncWriterSessionLocal
 
 @asynccontextmanager
 async def get_db(*, use_replica: bool = False) -> AsyncGenerator[AsyncSession]:
-    """Context manager that provides an AsyncSession."""
     session_factory = (
         AsyncReaderSessionLocal if use_replica else AsyncWriterSessionLocal
     )

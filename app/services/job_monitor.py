@@ -64,6 +64,9 @@ class JobMonitor:
                     pipeline_id=str(pipeline.id),
                     commit_job_id=pipeline.commit_job_id,
                 )
+                await self._notify_flat_manager_job_completed(
+                    pipeline, "commit", pipeline.commit_job_id, success=True
+                )
                 await self._notify_committed(pipeline)
                 return True
             elif job_status == JobStatus.BROKEN:
@@ -72,6 +75,9 @@ class JobMonitor:
                     "Commit job failed, marking pipeline as FAILED",
                     pipeline_id=str(pipeline.id),
                     commit_job_id=pipeline.commit_job_id,
+                )
+                await self._notify_flat_manager_job_completed(
+                    pipeline, "commit", pipeline.commit_job_id, success=False
                 )
                 return True
             else:
@@ -139,6 +145,15 @@ class JobMonitor:
                                 publish_job_id=pipeline.publish_job_id,
                                 update_repo_job_id=update_repo_job_id,
                             )
+                            await self._notify_flat_manager_job_completed(
+                                pipeline,
+                                "publish",
+                                pipeline.publish_job_id,
+                                success=True,
+                            )
+                            await self._notify_flat_manager_job_started(
+                                pipeline, "update-repo", update_repo_job_id
+                            )
                             return True
                     except (json.JSONDecodeError, TypeError) as e:
                         logger.error(
@@ -159,6 +174,9 @@ class JobMonitor:
                     "Publish job failed, marking pipeline as FAILED",
                     pipeline_id=str(pipeline.id),
                     publish_job_id=pipeline.publish_job_id,
+                )
+                await self._notify_flat_manager_job_completed(
+                    pipeline, "publish", pipeline.publish_job_id, success=False
                 )
                 return True
             else:
@@ -207,6 +225,9 @@ class JobMonitor:
                     pipeline_id=str(pipeline.id),
                     update_repo_job_id=pipeline.update_repo_job_id,
                 )
+                await self._notify_flat_manager_job_completed(
+                    pipeline, "update-repo", pipeline.update_repo_job_id, success=True
+                )
                 return True
             elif job_status == JobStatus.BROKEN:
                 pipeline.status = PipelineStatus.FAILED
@@ -214,6 +235,9 @@ class JobMonitor:
                     "Update-repo job failed, marking pipeline as FAILED",
                     pipeline_id=str(pipeline.id),
                     update_repo_job_id=pipeline.update_repo_job_id,
+                )
+                await self._notify_flat_manager_job_completed(
+                    pipeline, "update-repo", pipeline.update_repo_job_id, success=False
                 )
                 return True
             else:
@@ -235,15 +259,6 @@ class JobMonitor:
             return False
 
     async def _fetch_missing_job_ids(self, pipeline: Pipeline) -> bool:
-        """
-        Fetch missing job IDs from flat-manager build info.
-
-        Args:
-            pipeline: The pipeline to update
-
-        Returns:
-            True if any job IDs were updated
-        """
         if not pipeline.build_id:
             return False
 
@@ -307,5 +322,69 @@ class JobMonitor:
             logger.error(
                 "Failed to send committed notification",
                 pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
+
+    async def _notify_flat_manager_job_started(
+        self, pipeline: Pipeline, job_type: str, job_id: int
+    ) -> None:
+        if pipeline.flat_manager_repo not in ["stable", "beta"]:
+            return
+
+        try:
+            from app.services.github_notifier import GitHubNotifier
+
+            github_notifier = GitHubNotifier()
+            description = {
+                "commit": "Committing build...",
+                "publish": "Publishing build...",
+                "update-repo": "Updating repository...",
+            }.get(job_type, f"{job_type} in progress...")
+
+            await github_notifier.notify_flat_manager_job_status(
+                pipeline, job_type, job_id, "pending", description
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to notify {job_type} job started",
+                pipeline_id=str(pipeline.id),
+                job_id=job_id,
+                error=str(e),
+            )
+
+    async def _notify_flat_manager_job_completed(
+        self, pipeline: Pipeline, job_type: str, job_id: int, success: bool
+    ) -> None:
+        if pipeline.flat_manager_repo not in ["stable", "beta"]:
+            return
+
+        try:
+            from app.services.github_notifier import GitHubNotifier
+
+            github_notifier = GitHubNotifier()
+            if success:
+                state = "success"
+                description = {
+                    "commit": "Build committed",
+                    "publish": "Build published",
+                    "update-repo": "Repository updated",
+                }.get(job_type, f"{job_type} completed")
+            else:
+                state = "failure"
+                description = {
+                    "commit": "Commit failed",
+                    "publish": "Publish failed",
+                    "update-repo": "Repository update failed",
+                }.get(job_type, f"{job_type} failed")
+
+            await github_notifier.notify_flat_manager_job_status(
+                pipeline, job_type, job_id, state, description
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to notify {job_type} job completion",
+                pipeline_id=str(pipeline.id),
+                job_id=job_id,
+                success=success,
                 error=str(e),
             )

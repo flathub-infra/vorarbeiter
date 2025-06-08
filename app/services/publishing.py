@@ -310,6 +310,36 @@ class PublishingService:
             )
             result.published.append(str(pipeline.id))
 
+            try:
+                build_info = await self.flat_manager.get_build_info(pipeline.build_id)
+                build_data = build_info.get("build", {})
+                publish_job_id = build_data.get("publish_job_id")
+                if publish_job_id and not pipeline.publish_job_id:
+                    pipeline.publish_job_id = publish_job_id
+                    logger.info(
+                        "Stored publish job ID",
+                        publish_job_id=publish_job_id,
+                        pipeline_id=str(pipeline.id),
+                    )
+
+                    if pipeline.flat_manager_repo in ["stable", "beta"]:
+                        from app.services.github_notifier import GitHubNotifier
+
+                        github_notifier = GitHubNotifier()
+                        await github_notifier.notify_flat_manager_job_status(
+                            pipeline,
+                            "publish",
+                            publish_job_id,
+                            "pending",
+                            "Publishing build...",
+                        )
+            except Exception as e:
+                logger.warning(
+                    "Failed to fetch publish job ID after triggering publish",
+                    pipeline_id=str(pipeline.id),
+                    error=str(e),
+                )
+
         except httpx.HTTPStatusError as e:
             logger.error(
                 "Failed to publish build",

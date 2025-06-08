@@ -14,8 +14,6 @@ logger = structlog.get_logger(__name__)
 
 
 class GitHubNotifier:
-    """Service for handling GitHub notifications related to pipelines."""
-
     def __init__(self, flat_manager_client: Optional[FlatManagerClient] = None):
         self.flat_manager = flat_manager_client
 
@@ -25,7 +23,6 @@ class GitHubNotifier:
         status: str,
         log_url: Optional[str] = None,
     ) -> None:
-        """Update GitHub commit status based on build status."""
         app_id = pipeline.app_id
         sha = pipeline.params.get("sha")
         git_repo = pipeline.params.get("repo")
@@ -84,7 +81,6 @@ class GitHubNotifier:
         pipeline: Pipeline,
         log_url: str,
     ) -> None:
-        """Update GitHub status when build starts."""
         sha = pipeline.params.get("sha")
         git_repo = pipeline.params.get("repo")
 
@@ -114,7 +110,6 @@ class GitHubNotifier:
         pipeline: Pipeline,
         log_url: str,
     ) -> None:
-        """Create PR comment when build starts."""
         pr_number_str = pipeline.params.get("pr_number")
         git_repo = pipeline.params.get("repo")
 
@@ -153,7 +148,6 @@ class GitHubNotifier:
         pipeline: Pipeline,
         status: str,
     ) -> None:
-        """Create PR comment when build completes."""
         pr_number_str = pipeline.params.get("pr_number")
         git_repo = pipeline.params.get("repo")
 
@@ -207,7 +201,6 @@ class GitHubNotifier:
         self,
         pipeline: Pipeline,
     ) -> None:
-        """Create GitHub issue when stable build fails."""
         if pipeline.flat_manager_repo != "stable":
             return
 
@@ -252,7 +245,6 @@ class GitHubNotifier:
         status: str,
         flat_manager_client: Optional[FlatManagerClient] = None,
     ) -> None:
-        """Handle all GitHub notifications when a build completes."""
         if flat_manager_client:
             self.flat_manager = flat_manager_client
 
@@ -269,7 +261,6 @@ class GitHubNotifier:
         pipeline: Pipeline,
         log_url: str,
     ) -> None:
-        """Handle all GitHub notifications when a build starts."""
         await self.notify_build_started(pipeline, log_url)
 
         if pipeline.params.get("pr_number"):
@@ -287,3 +278,39 @@ class GitHubNotifier:
 
         if pipeline.params.get("pr_number"):
             await self.notify_pr_build_complete(pipeline, "committed")
+
+    async def notify_flat_manager_job_status(
+        self,
+        pipeline: Pipeline,
+        job_type: str,
+        job_id: int,
+        status: str,
+        description: str,
+    ) -> None:
+        sha = pipeline.params.get("sha")
+        git_repo = pipeline.params.get("repo")
+
+        if (
+            not all([sha, git_repo])
+            or not isinstance(sha, str)
+            or not isinstance(git_repo, str)
+        ):
+            logger.warning(
+                "Missing required params for flat-manager job status update",
+                pipeline_id=str(pipeline.id),
+                has_sha=bool(sha),
+                has_git_repo=bool(git_repo),
+            )
+            return
+
+        context = f"flat-manager/{job_type}"
+        target_url = f"{settings.flat_manager_url}/status/{job_id}"
+
+        await update_commit_status(
+            sha=sha,
+            state=status,
+            git_repo=git_repo,
+            description=description,
+            target_url=target_url,
+            context=context,
+        )

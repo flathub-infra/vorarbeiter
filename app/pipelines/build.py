@@ -153,11 +153,6 @@ class BuildPipeline:
         pipeline_id: uuid.UUID,
         callback_data: CallbackData | dict[str, Any],
     ) -> tuple[Pipeline, dict[str, Any]]:
-        """Handle all types of callbacks for a pipeline.
-
-        Returns:
-            tuple: (updated_pipeline, updates_dict)
-        """
         if isinstance(callback_data, dict):
             validator = CallbackValidator()
             callback_data = validator.validate_and_parse(callback_data)
@@ -262,6 +257,14 @@ class BuildPipeline:
                                         commit_job_id=commit_job_id,
                                         pipeline_id=str(pipeline_id),
                                     )
+                                    if pipeline.flat_manager_repo in ["stable", "beta"]:
+                                        await github_notifier.notify_flat_manager_job_status(
+                                            pipeline,
+                                            "commit",
+                                            commit_job_id,
+                                            "pending",
+                                            "Committing build...",
+                                        )
                             except Exception as e:
                                 logger.warning(
                                     "Failed to fetch commit job ID after commit",
@@ -306,19 +309,6 @@ class BuildPipeline:
     async def verify_callback_token(
         self, pipeline_id: uuid.UUID, token: str
     ) -> Pipeline:
-        """
-        Verify callback token for a pipeline.
-
-        Args:
-            pipeline_id: Pipeline ID
-            token: Callback token to verify
-
-        Returns:
-            Pipeline if token is valid
-
-        Raises:
-            ValueError: If pipeline not found or token invalid
-        """
         async with get_db() as db:
             pipeline = await db.get(Pipeline, pipeline_id)
             if not pipeline:

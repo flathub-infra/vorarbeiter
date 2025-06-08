@@ -227,7 +227,6 @@ async def publish_pipelines(
 async def check_pipeline_jobs(
     token: str = Depends(verify_token),
 ):
-    """Check job statuses for pipelines and update accordingly."""
     async with get_db() as db:
         from sqlalchemy import select, or_
         from datetime import datetime, timedelta
