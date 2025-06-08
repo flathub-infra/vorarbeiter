@@ -153,7 +153,11 @@ async def test_check_and_update_fetches_missing_ids_then_checks_status(
         }
 
         with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
-            mock_get_job.return_value = {"status": 2}  # ENDED
+            mock_get_job.side_effect = [
+                {"status": 1},
+                {"status": 1},
+                {"status": 2},
+            ]
 
             with patch.object(job_monitor, "_notify_committed") as mock_notify:
                 result = await job_monitor.check_and_update_pipeline_jobs(
@@ -165,7 +169,7 @@ async def test_check_and_update_fetches_missing_ids_then_checks_status(
                 assert pipeline.publish_job_id == 101112
                 assert pipeline.status == PipelineStatus.COMMITTED
                 mock_get_info.assert_called_once_with(123)
-                mock_get_job.assert_called_once_with(789)
+                assert mock_get_job.call_count == 3
                 mock_notify.assert_called_once()
 
 

@@ -167,7 +167,7 @@ async def test_build_pipeline_sets_initial_commit_status():
     mock_pipeline.commit_job_id = None
     mock_pipeline.end_of_life = None
     mock_pipeline.end_of_life_rebase = None
-    mock_pipeline.flat_manager_repo = "stable"  # Needs to be stable or beta
+    mock_pipeline.flat_manager_repo = "stable"
 
     build_pipeline = BuildPipeline()
 
@@ -195,3 +195,89 @@ async def test_build_pipeline_sets_initial_commit_status():
                 mock_notifier.notify_flat_manager_job_status.assert_called_once_with(
                     mock_pipeline, "commit", 12345, "pending", "Committing build..."
                 )
+
+
+@pytest.mark.asyncio
+async def test_job_monitor_fetches_and_notifies_new_commit_job(mock_pipeline):
+    job_monitor = JobMonitor()
+    mock_pipeline.commit_job_id = None
+    mock_pipeline.publish_job_id = None
+    mock_pipeline.flat_manager_repo = "stable"
+
+    with patch.object(
+        job_monitor.flat_manager, "get_build_info"
+    ) as mock_get_build_info:
+        mock_get_build_info.return_value = {
+            "build": {"commit_job_id": 12345, "publish_job_id": 12346}
+        }
+
+        with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+            mock_get_job.return_value = {"status": JobStatus.NEW}
+
+            with patch.object(
+                job_monitor, "_notify_flat_manager_job_new"
+            ) as mock_notify_new:
+                result = await job_monitor._fetch_missing_job_ids(mock_pipeline)
+
+                assert result is True
+                assert mock_pipeline.commit_job_id == 12345
+                assert mock_pipeline.publish_job_id == 12346
+                mock_notify_new.assert_any_call(mock_pipeline, "commit", 12345)
+                mock_notify_new.assert_any_call(mock_pipeline, "publish", 12346)
+
+
+@pytest.mark.asyncio
+async def test_job_monitor_skips_notification_for_non_new_jobs(mock_pipeline):
+    job_monitor = JobMonitor()
+    mock_pipeline.commit_job_id = None
+    mock_pipeline.flat_manager_repo = "stable"
+
+    with patch.object(
+        job_monitor.flat_manager, "get_build_info"
+    ) as mock_get_build_info:
+        mock_get_build_info.return_value = {"build": {"commit_job_id": 12345}}
+
+        with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
+            mock_get_job.return_value = {"status": JobStatus.STARTED}
+
+            with patch.object(
+                job_monitor, "_notify_flat_manager_job_new"
+            ) as mock_notify_new:
+                result = await job_monitor._fetch_missing_job_ids(mock_pipeline)
+
+                assert result is True
+                assert mock_pipeline.commit_job_id == 12345
+                mock_notify_new.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_notify_flat_manager_job_new():
+    job_monitor = JobMonitor()
+    mock_pipeline = MagicMock(spec=Pipeline)
+    mock_pipeline.params = {"sha": "abc123", "repo": "flathub/org.example.App"}
+    mock_pipeline.flat_manager_repo = "stable"
+
+    with patch("app.services.github_notifier.GitHubNotifier") as mock_notifier_class:
+        mock_notifier = AsyncMock()
+        mock_notifier_class.return_value = mock_notifier
+
+        await job_monitor._notify_flat_manager_job_new(mock_pipeline, "commit", 12345)
+
+        mock_notifier.notify_flat_manager_job_status.assert_called_once_with(
+            mock_pipeline, "commit", 12345, "pending", "Commit job queued"
+        )
+
+
+@pytest.mark.asyncio
+async def test_notify_flat_manager_job_new_skips_test_builds():
+    job_monitor = JobMonitor()
+    mock_pipeline = MagicMock(spec=Pipeline)
+    mock_pipeline.flat_manager_repo = "test"
+
+    with patch("app.services.github_notifier.GitHubNotifier") as mock_notifier_class:
+        mock_notifier = AsyncMock()
+        mock_notifier_class.return_value = mock_notifier
+
+        await job_monitor._notify_flat_manager_job_new(mock_pipeline, "commit", 12345)
+
+        mock_notifier.notify_flat_manager_job_status.assert_not_called()

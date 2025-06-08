@@ -278,6 +278,7 @@ class JobMonitor:
                     pipeline_id=str(pipeline.id),
                     commit_job_id=commit_job_id,
                 )
+                await self._check_and_notify_new_job(pipeline, "commit", commit_job_id)
 
             if (
                 pipeline.flat_manager_repo in ["beta", "stable"]
@@ -290,6 +291,9 @@ class JobMonitor:
                     "Fetched publish_job_id from flat-manager",
                     pipeline_id=str(pipeline.id),
                     publish_job_id=publish_job_id,
+                )
+                await self._check_and_notify_new_job(
+                    pipeline, "publish", publish_job_id
                 )
 
             return updated
@@ -347,6 +351,53 @@ class JobMonitor:
         except Exception as e:
             logger.error(
                 f"Failed to notify {job_type} job started",
+                pipeline_id=str(pipeline.id),
+                job_id=job_id,
+                error=str(e),
+            )
+
+    async def _check_and_notify_new_job(
+        self, pipeline: Pipeline, job_type: str, job_id: int
+    ) -> None:
+        if pipeline.flat_manager_repo not in ["stable", "beta"]:
+            return
+
+        try:
+            job_response = await self.flat_manager.get_job(job_id)
+            job_status = JobStatus(job_response["status"])
+
+            if job_status == JobStatus.NEW:
+                await self._notify_flat_manager_job_new(pipeline, job_type, job_id)
+        except Exception as e:
+            logger.error(
+                f"Failed to check {job_type} job status for NEW notification",
+                pipeline_id=str(pipeline.id),
+                job_id=job_id,
+                error=str(e),
+            )
+
+    async def _notify_flat_manager_job_new(
+        self, pipeline: Pipeline, job_type: str, job_id: int
+    ) -> None:
+        if pipeline.flat_manager_repo not in ["stable", "beta"]:
+            return
+
+        try:
+            from app.services.github_notifier import GitHubNotifier
+
+            github_notifier = GitHubNotifier()
+            description = {
+                "commit": "Commit job queued",
+                "publish": "Publish job queued",
+                "update-repo": "Update-repo job queued",
+            }.get(job_type, f"{job_type} job queued")
+
+            await github_notifier.notify_flat_manager_job_status(
+                pipeline, job_type, job_id, "pending", description
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to notify {job_type} job queued",
                 pipeline_id=str(pipeline.id),
                 job_id=job_id,
                 error=str(e),

@@ -16,6 +16,7 @@ async def test_check_jobs_endpoint_success(client, db_session_maker, auth_header
         app_id="org.test.App1",
         status=PipelineStatus.SUCCEEDED,
         commit_job_id=12345,
+        publish_job_id=12350,
         build_id=1,
         flat_manager_repo="stable",
         params={},
@@ -64,39 +65,47 @@ async def test_check_jobs_endpoint_success(client, db_session_maker, auth_header
             return_value={"build": {"commit_job_id": 12349, "publish_job_id": 12350}}
         )
 
-        mock_fm_instance.get_job = AsyncMock(
-            side_effect=[
-                {"status": 2},  # ENDED for pipeline1
-                {"status": 1},  # STARTED for pipeline2
-                {
-                    "status": 2,
-                    "kind": 1,
-                    "results": '{"update-repo-job": 99999}',
-                },  # ENDED for pipeline4
-            ]
-        )
+        with patch("app.services.job_monitor.JobMonitor._notify_committed"):
+            with patch(
+                "app.services.job_monitor.JobMonitor._notify_flat_manager_job_completed"
+            ):
+                with patch(
+                    "app.services.job_monitor.JobMonitor._notify_flat_manager_job_started"
+                ):
+                    mock_fm_instance.get_job = AsyncMock(
+                        side_effect=[
+                            {"status": 2},
+                            {"status": 1},
+                            {"status": 1},
+                            {
+                                "status": 2,
+                                "kind": 1,
+                                "results": '{"update-repo-job": 99999}',
+                            },
+                        ]
+                    )
 
-        response = client.post(
-            "/api/pipelines/check-jobs",
-            headers=auth_headers,
-        )
+                    response = client.post(
+                        "/api/pipelines/check-jobs",
+                        headers=auth_headers,
+                    )
 
-        assert response.status_code == 200
-        result = response.json()
-        assert result["status"] == "completed"
-        assert result["checked_pipelines"] == 4
-        assert result["updated_pipelines"] == 3
+                    assert response.status_code == 200
+                    result = response.json()
+                    assert result["status"] == "completed"
+                    assert result["checked_pipelines"] == 4
+                    assert result["updated_pipelines"] == 2
 
-        async with session_maker() as session:
-            query = select(Pipeline).where(Pipeline.id == pipeline1.id)
-            db_result = await session.execute(query)
-            updated_pipeline = db_result.scalars().first()
-            assert updated_pipeline.status == PipelineStatus.COMMITTED
+                    async with session_maker() as session:
+                        query = select(Pipeline).where(Pipeline.id == pipeline1.id)
+                        db_result = await session.execute(query)
+                        updated_pipeline = db_result.scalars().first()
+                        assert updated_pipeline.status == PipelineStatus.COMMITTED
 
-            query = select(Pipeline).where(Pipeline.id == pipeline3.id)
-            db_result = await session.execute(query)
-            updated_pipeline3 = db_result.scalars().first()
-            assert updated_pipeline3.commit_job_id == 12349
+                        query = select(Pipeline).where(Pipeline.id == pipeline3.id)
+                        db_result = await session.execute(query)
+                        updated_pipeline3 = db_result.scalars().first()
+                        assert updated_pipeline3.commit_job_id == 12349
 
 
 @pytest.mark.asyncio
