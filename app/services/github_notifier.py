@@ -43,8 +43,8 @@ class GitHubNotifier:
 
         match status:
             case "success":
-                description = "Build succeeded, committing..."
-                github_state = "pending"
+                description = "Build succeeded."
+                github_state = "success"
             case "committed":
                 description = "Build ready."
                 github_state = "success"
@@ -58,15 +58,12 @@ class GitHubNotifier:
                 description = f"Build status: {status}."
                 github_state = "failure"
 
-        if status == "success" and pipeline.commit_job_id:
-            target_url = f"{settings.flat_manager_url}/status/{pipeline.commit_job_id}"
-        else:
-            target_url = log_url or pipeline.log_url or ""
-            if not target_url:
-                logger.warning(
-                    "log_url is unexpectedly None when setting final commit status",
-                    pipeline_id=str(pipeline.id),
-                )
+        target_url = log_url or pipeline.log_url or ""
+        if not target_url:
+            logger.warning(
+                "log_url is unexpectedly None when setting final commit status",
+                pipeline_id=str(pipeline.id),
+            )
 
         await update_commit_status(
             sha=sha,

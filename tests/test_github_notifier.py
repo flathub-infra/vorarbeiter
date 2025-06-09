@@ -44,10 +44,10 @@ async def test_notify_build_status_success(github_notifier, mock_pipeline):
 
         mock_update.assert_called_once_with(
             sha="abc123def456",
-            state="pending",
+            state="success",
             git_repo="flathub/org.test.App",
-            description="Build succeeded, committing...",
-            target_url="https://hub.flathub.org/status/12345",
+            description="Build succeeded.",
+            target_url="https://example.com/custom-log",
         )
 
 
@@ -64,9 +64,9 @@ async def test_notify_build_status_success_no_commit_job_id(
 
         mock_update.assert_called_once_with(
             sha="abc123def456",
-            state="pending",
+            state="success",
             git_repo="flathub/org.test.App",
-            description="Build succeeded, committing...",
+            description="Build succeeded.",
             target_url="https://example.com/custom-log",
         )
 

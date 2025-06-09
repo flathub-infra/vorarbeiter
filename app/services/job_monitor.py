@@ -67,7 +67,6 @@ class JobMonitor:
                 await self._notify_flat_manager_job_completed(
                     pipeline, "commit", pipeline.commit_job_id, success=True
                 )
-                await self._notify_committed(pipeline)
                 return True
             elif job_status == JobStatus.BROKEN:
                 pipeline.status = PipelineStatus.FAILED

@@ -159,18 +159,14 @@ async def test_check_and_update_fetches_missing_ids_then_checks_status(
                 {"status": 2},
             ]
 
-            with patch.object(job_monitor, "_notify_committed") as mock_notify:
-                result = await job_monitor.check_and_update_pipeline_jobs(
-                    mock_db, pipeline
-                )
+            result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
 
-                assert result is True
-                assert pipeline.commit_job_id == 789
-                assert pipeline.publish_job_id == 101112
-                assert pipeline.status == PipelineStatus.COMMITTED
-                mock_get_info.assert_called_once_with(123)
-                assert mock_get_job.call_count == 3
-                mock_notify.assert_called_once()
+            assert result is True
+            assert pipeline.commit_job_id == 789
+            assert pipeline.publish_job_id == 101112
+            assert pipeline.status == PipelineStatus.COMMITTED
+            mock_get_info.assert_called_once_with(123)
+            assert mock_get_job.call_count == 3
 
 
 @pytest.mark.asyncio

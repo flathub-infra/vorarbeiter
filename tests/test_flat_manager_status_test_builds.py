@@ -34,21 +34,16 @@ async def test_job_monitor_skips_notifications_for_test_builds(mock_test_pipelin
         with patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
         ) as mock_notify_completed:
-            with patch.object(
-                job_monitor, "_notify_committed"
-            ) as mock_notify_committed:
-                db = AsyncMock()
-                result = await job_monitor._process_succeeded_pipeline(
-                    db, mock_test_pipeline
-                )
+            db = AsyncMock()
+            result = await job_monitor._process_succeeded_pipeline(
+                db, mock_test_pipeline
+            )
 
-                assert result is True
-                assert mock_test_pipeline.status == PipelineStatus.COMMITTED
-                # Should still be called since the check is inside the method
-                mock_notify_completed.assert_called_once_with(
-                    mock_test_pipeline, "commit", 12345, success=True
-                )
-                mock_notify_committed.assert_called_once()
+            assert result is True
+            assert mock_test_pipeline.status == PipelineStatus.COMMITTED
+            mock_notify_completed.assert_called_once_with(
+                mock_test_pipeline, "commit", 12345, success=True
+            )
 
 
 @pytest.mark.asyncio

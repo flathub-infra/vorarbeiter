@@ -54,20 +54,14 @@ async def test_job_monitor_commit_job_success(mock_pipeline):
         with patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
         ) as mock_notify_completed:
-            with patch.object(
-                job_monitor, "_notify_committed"
-            ) as mock_notify_committed:
-                db = AsyncMock()
-                result = await job_monitor._process_succeeded_pipeline(
-                    db, mock_pipeline
-                )
+            db = AsyncMock()
+            result = await job_monitor._process_succeeded_pipeline(db, mock_pipeline)
 
-                assert result is True
-                assert mock_pipeline.status == PipelineStatus.COMMITTED
-                mock_notify_completed.assert_called_once_with(
-                    mock_pipeline, "commit", 12345, success=True
-                )
-                mock_notify_committed.assert_called_once()
+            assert result is True
+            assert mock_pipeline.status == PipelineStatus.COMMITTED
+            mock_notify_completed.assert_called_once_with(
+                mock_pipeline, "commit", 12345, success=True
+            )
 
 
 @pytest.mark.asyncio
