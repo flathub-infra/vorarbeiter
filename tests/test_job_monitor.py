@@ -46,6 +46,29 @@ async def test_check_and_update_pipeline_jobs_succeeded_to_committed(
 
 
 @pytest.mark.asyncio
+async def test_process_succeeded_pipeline_sends_pr_comment(
+    job_monitor, mock_pipeline, mock_db
+):
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(
+            job_monitor, "_notify_flat_manager_job_completed"
+        ) as mock_notify_job,
+        patch.object(job_monitor, "_notify_committed") as mock_notify_committed,
+    ):
+        mock_get_job.return_value = {"status": JobStatus.ENDED}
+
+        result = await job_monitor._process_succeeded_pipeline(mock_db, mock_pipeline)
+
+        assert result is True
+        assert mock_pipeline.status == PipelineStatus.COMMITTED
+        mock_notify_job.assert_called_once_with(
+            mock_pipeline, "commit", 12345, success=True
+        )
+        mock_notify_committed.assert_called_once_with(mock_pipeline)
+
+
+@pytest.mark.asyncio
 async def test_check_and_update_pipeline_jobs_commit_failed(
     job_monitor, mock_pipeline, mock_db
 ):
