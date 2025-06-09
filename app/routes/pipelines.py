@@ -248,6 +248,12 @@ async def check_pipeline_jobs(
                 (Pipeline.status == PipelineStatus.COMMITTED)
                 & Pipeline.build_id.isnot(None)
                 & Pipeline.publish_job_id.is_(None),
+                (Pipeline.status == PipelineStatus.PUBLISHED)
+                & (Pipeline.published_at > cutoff_date)
+                & (
+                    Pipeline.publish_job_id.isnot(None)
+                    | Pipeline.update_repo_job_id.isnot(None)
+                ),
             )
         )
         result = await db.execute(query)

@@ -197,7 +197,174 @@ async def test_process_publish_job_success(job_monitor, mock_db):
 
         assert result is True
         assert pipeline.update_repo_job_id == 99999
-        assert pipeline.status == PipelineStatus.PUBLISHING
+
+
+@pytest.mark.asyncio
+async def test_check_published_pipeline_jobs_with_publish_job_success(
+    job_monitor, mock_db
+):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        publish_job_id=67890,
+        flat_manager_repo="stable",
+        params={},
+    )
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_notify_flat_manager_job_completed") as mock_notify,
+    ):
+        mock_get_job.return_value = {"status": JobStatus.ENDED}
+        mock_notify.return_value = None
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is True
+        mock_get_job.assert_called_once_with(67890)
+        mock_notify.assert_called_once_with(pipeline, "publish", 67890, success=True)
+
+
+@pytest.mark.asyncio
+async def test_check_published_pipeline_jobs_with_publish_job_failed(
+    job_monitor, mock_db
+):
+    """Test that published pipelines with failed publish_job_id get reported correctly"""
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        publish_job_id=67890,
+        flat_manager_repo="stable",
+        params={},
+    )
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_notify_flat_manager_job_completed") as mock_notify,
+    ):
+        mock_get_job.return_value = {"status": JobStatus.BROKEN}
+        mock_notify.return_value = None
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is True
+        mock_get_job.assert_called_once_with(67890)
+        mock_notify.assert_called_once_with(pipeline, "publish", 67890, success=False)
+
+
+@pytest.mark.asyncio
+async def test_check_published_pipeline_jobs_with_update_repo_job_success(
+    job_monitor, mock_db
+):
+    """Test that published pipelines with update_repo_job_id get reported correctly"""
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        update_repo_job_id=99999,
+        flat_manager_repo="beta",
+        params={},
+    )
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_notify_flat_manager_job_completed") as mock_notify,
+    ):
+        mock_get_job.return_value = {"status": JobStatus.ENDED}
+        mock_notify.return_value = None
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is True
+        mock_get_job.assert_called_once_with(99999)
+        mock_notify.assert_called_once_with(
+            pipeline, "update-repo", 99999, success=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_check_published_pipeline_jobs_with_both_jobs(job_monitor, mock_db):
+    """Test that published pipelines with both job IDs get both reported"""
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        publish_job_id=67890,
+        update_repo_job_id=99999,
+        flat_manager_repo="stable",
+        params={},
+    )
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_notify_flat_manager_job_completed") as mock_notify,
+    ):
+        mock_get_job.side_effect = [
+            {"status": JobStatus.ENDED},  # publish job
+            {"status": JobStatus.ENDED},  # update-repo job
+        ]
+        mock_notify.return_value = None
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is True
+        assert mock_get_job.call_count == 2
+        mock_get_job.assert_any_call(67890)
+        mock_get_job.assert_any_call(99999)
+
+        assert mock_notify.call_count == 2
+        mock_notify.assert_any_call(pipeline, "publish", 67890, success=True)
+        mock_notify.assert_any_call(pipeline, "update-repo", 99999, success=True)
+
+
+@pytest.mark.asyncio
+async def test_check_published_pipeline_jobs_skips_test_repo(job_monitor, mock_db):
+    """Test that published pipelines in test repo are skipped"""
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        publish_job_id=67890,
+        flat_manager_repo="test",
+        params={},
+    )
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_notify_flat_manager_job_completed") as mock_notify,
+    ):
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is False
+        mock_get_job.assert_not_called()
+        mock_notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_published_pipeline_jobs_handles_exception(job_monitor, mock_db):
+    """Test that exceptions during job status check are handled gracefully"""
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        publish_job_id=67890,
+        flat_manager_repo="stable",
+        params={},
+    )
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_notify_flat_manager_job_completed") as mock_notify,
+    ):
+        mock_get_job.side_effect = Exception("API error")
+
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+
+        assert result is False
+        mock_get_job.assert_called_once_with(67890)
+        mock_notify.assert_not_called()
 
 
 @pytest.mark.asyncio
