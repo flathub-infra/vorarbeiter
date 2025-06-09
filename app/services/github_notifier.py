@@ -1,5 +1,6 @@
-import structlog
 from typing import Optional
+
+import structlog
 
 from app.config import settings
 from app.models import Pipeline
@@ -43,16 +44,16 @@ class GitHubNotifier:
 
         match status:
             case "success":
-                description = "Build succeeded."
+                description = "Build succeeded"
                 github_state = "success"
             case "committed":
-                description = "Build ready."
+                description = "Build ready"
                 github_state = "success"
             case "failure":
-                description = "Build failed."
+                description = "Build failed"
                 github_state = "failure"
             case "cancelled":
-                description = "Build cancelled."
+                description = "Build cancelled"
                 github_state = "failure"
             case _:
                 description = f"Build status: {status}."

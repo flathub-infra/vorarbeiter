@@ -46,7 +46,7 @@ async def test_notify_build_status_success(github_notifier, mock_pipeline):
             sha="abc123def456",
             state="success",
             git_repo="flathub/org.test.App",
-            description="Build succeeded.",
+            description="Build succeeded",
             target_url="https://example.com/custom-log",
         )
 
@@ -66,7 +66,7 @@ async def test_notify_build_status_success_no_commit_job_id(
             sha="abc123def456",
             state="success",
             git_repo="flathub/org.test.App",
-            description="Build succeeded.",
+            description="Build succeeded",
             target_url="https://example.com/custom-log",
         )
 
@@ -80,7 +80,7 @@ async def test_notify_build_status_failure(github_notifier, mock_pipeline):
             sha="abc123def456",
             state="failure",
             git_repo="flathub/org.test.App",
-            description="Build failed.",
+            description="Build failed",
             target_url="https://example.com/logs/123",
         )
 
@@ -94,7 +94,7 @@ async def test_notify_build_status_cancelled(github_notifier, mock_pipeline):
             sha="abc123def456",
             state="failure",
             git_repo="flathub/org.test.App",
-            description="Build cancelled.",
+            description="Build cancelled",
             target_url="https://example.com/logs/123",
         )
 
@@ -110,7 +110,7 @@ async def test_notify_build_status_committed(github_notifier, mock_pipeline):
             sha="abc123def456",
             state="success",
             git_repo="flathub/org.test.App",
-            description="Build ready.",
+            description="Build ready",
             target_url="https://example.com/custom-log",
         )
 
