@@ -37,6 +37,7 @@ app_build_types = {
     "org.paraview.ParaView": "large",
     "com.bambulab.BambuStudio": "large",
     "org.telegram.desktop": "large",
+    "org.gnome.Fractal": "large",
 }
 
 
