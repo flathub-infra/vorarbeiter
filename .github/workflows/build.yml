@@ -68,6 +68,7 @@ jobs:
         run: |
           echo "APP_ID=${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "BRANCH=${{ inputs.flat_manager_repo }}" >> $GITHUB_ENV
+          # sync this env var name with linter
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
 
@@ -179,6 +180,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e APP_ID \
+            -e REPO \
             -e TMPDIR=/work/tmp \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-manifest $APP_ID
@@ -281,9 +283,9 @@ jobs:
         run: |
           echo "APP_ID=${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "BRANCH=${{ inputs.flat_manager_repo }}" >> $GITHUB_ENV
+          # sync this env var name with linter
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
-          # sync this env var name with linter
           echo "BUILD_URL=${{ inputs.build_url }}" >> $GITHUB_ENV
           echo "BUILD_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           REPO_TOKEN="$(jq -r '.inputs.flat_manager_token' $GITHUB_EVENT_PATH)"
@@ -489,7 +491,7 @@ jobs:
             -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
-            -e BUILD_URL \
+            -e REPO \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-build
 
