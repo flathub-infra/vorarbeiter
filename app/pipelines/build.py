@@ -38,6 +38,7 @@ app_build_types = {
     "com.bambulab.BambuStudio": "large",
     "org.telegram.desktop": "large",
     "org.gnome.Fractal": "large",
+    "com.pot_app.pot": "large",
 }
 
 
