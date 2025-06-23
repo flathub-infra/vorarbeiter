@@ -446,3 +446,224 @@ async def test_handle_build_started_no_pr(github_notifier, mock_pipeline):
 
             mock_started.assert_called_once_with(mock_pipeline, log_url)
             mock_pr.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_commit(github_notifier, mock_pipeline):
+    job_response = {
+        "id": 12345,
+        "kind": "COMMIT",
+        "status": "BROKEN",
+        "log": "Error: Could not commit to repository\nflat-manager: commit failed\nBuild artifacts not found",
+    }
+
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "commit", 12345, job_response
+        )
+
+        expected_title = "Stable commit job failed for org.test.App"
+        expected_body = (
+            "The commit job for `org.test.App` failed in the stable repository.\n\n"
+            "**Build Information:**\n"
+            "- Commit SHA: `abc123def456`\n"
+            "- Build ID: 123\n"
+            "- Build log: https://example.com/logs/123\n\n"
+            "**Job Details:**\n"
+            "- Job ID: 12345\n"
+            "- Job status: https://hub.flathub.org/status/12345\n\n"
+            "**Error Details:**\n```\n"
+            "Error: Could not commit to repository\n"
+            "flat-manager: commit failed\n"
+            "Build artifacts not found\n```\n\n"
+            "cc @flathub/build-moderation"
+        )
+
+        mock_issue.assert_called_once_with(
+            git_repo="flathub/org.test.App",
+            title=expected_title,
+            body=expected_body,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_publish(github_notifier, mock_pipeline):
+    job_response = {
+        "id": 54321,
+        "kind": "PUBLISH",
+        "status": "BROKEN",
+        "log": "Error: Publish failed\nRepository access denied",
+    }
+
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "publish", 54321, job_response
+        )
+
+        expected_title = "Stable publish job failed for org.test.App"
+        expected_body = (
+            "The publish job for `org.test.App` failed in the stable repository.\n\n"
+            "**Build Information:**\n"
+            "- Commit SHA: `abc123def456`\n"
+            "- Build ID: 123\n"
+            "- Build log: https://example.com/logs/123\n\n"
+            "**Job Details:**\n"
+            "- Job ID: 54321\n"
+            "- Job status: https://hub.flathub.org/status/54321\n\n"
+            "**Error Details:**\n```\n"
+            "Error: Publish failed\n"
+            "Repository access denied\n```\n\n"
+            "cc @flathub/build-moderation"
+        )
+
+        mock_issue.assert_called_once_with(
+            git_repo="flathub/org.test.App",
+            title=expected_title,
+            body=expected_body,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_update_repo(
+    github_notifier, mock_pipeline
+):
+    job_response = {
+        "id": 98765,
+        "kind": "UPDATE_REPO",
+        "status": "BROKEN",
+        "log": "Error: Repository update failed\nDisk space insufficient",
+    }
+
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "update-repo", 98765, job_response
+        )
+
+        expected_title = "Stable repository update job failed for org.test.App"
+        expected_body = (
+            "The update-repo job for `org.test.App` failed in the stable repository.\n\n"
+            "**Build Information:**\n"
+            "- Commit SHA: `abc123def456`\n"
+            "- Build ID: 123\n"
+            "- Build log: https://example.com/logs/123\n\n"
+            "**Job Details:**\n"
+            "- Job ID: 98765\n"
+            "- Job status: https://hub.flathub.org/status/98765\n\n"
+            "**Error Details:**\n```\n"
+            "Error: Repository update failed\n"
+            "Disk space insufficient\n```\n\n"
+            "cc @flathub/build-moderation"
+        )
+
+        mock_issue.assert_called_once_with(
+            git_repo="flathub/org.test.App",
+            title=expected_title,
+            body=expected_body,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_beta_repo(
+    github_notifier, mock_pipeline
+):
+    mock_pipeline.flat_manager_repo = "beta"
+    job_response = {"id": 12345, "log": "Error message"}
+
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "commit", 12345, job_response
+        )
+
+        expected_title = "Beta commit job failed for org.test.App"
+        mock_issue.assert_called_once()
+        assert mock_issue.call_args[1]["title"] == expected_title
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_test_repo_skipped(
+    github_notifier, mock_pipeline
+):
+    mock_pipeline.flat_manager_repo = "test"
+    job_response = {"id": 12345, "log": "Error message"}
+
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "commit", 12345, job_response
+        )
+
+        mock_issue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_long_log(github_notifier, mock_pipeline):
+    long_log = "\n".join([f"Line {i}: Some error message" for i in range(50)])
+    job_response = {"id": 12345, "log": long_log}
+
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "commit", 12345, job_response
+        )
+
+        mock_issue.assert_called_once()
+        body = mock_issue.call_args[1]["body"]
+        assert "...\n" in body
+        assert "Line 25:" in body
+        assert "Line 49:" in body
+        assert "Line 0:" not in body
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_no_log(github_notifier, mock_pipeline):
+    job_response = {"id": 12345}
+
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "commit", 12345, job_response
+        )
+
+        mock_issue.assert_called_once()
+        body = mock_issue.call_args[1]["body"]
+        assert "**Error Details:**" not in body
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_no_job_response(
+    github_notifier, mock_pipeline
+):
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "commit", 12345, None
+        )
+
+        mock_issue.assert_called_once()
+        body = mock_issue.call_args[1]["body"]
+        assert "**Error Details:**" not in body
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_missing_git_repo(
+    github_notifier, mock_pipeline
+):
+    mock_pipeline.params = {"sha": "abc123"}
+    job_response = {"id": 12345, "log": "Error message"}
+
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "commit", 12345, job_response
+        )
+
+        mock_issue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_stable_job_failure_issue_exception(
+    github_notifier, mock_pipeline
+):
+    job_response = {"id": 12345, "log": "Error message"}
+
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.side_effect = Exception("API Error")
+
+        await github_notifier.create_stable_job_failure_issue(
+            mock_pipeline, "commit", 12345, job_response
+        )

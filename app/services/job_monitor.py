@@ -82,6 +82,9 @@ class JobMonitor:
                 await self._notify_flat_manager_job_completed(
                     pipeline, "commit", pipeline.commit_job_id, success=False
                 )
+                await self._create_job_failure_issue(
+                    pipeline, "commit", pipeline.commit_job_id, job_response
+                )
                 return True
             else:
                 logger.debug(
@@ -181,6 +184,9 @@ class JobMonitor:
                 await self._notify_flat_manager_job_completed(
                     pipeline, "publish", pipeline.publish_job_id, success=False
                 )
+                await self._create_job_failure_issue(
+                    pipeline, "publish", pipeline.publish_job_id, job_response
+                )
                 return True
             else:
                 logger.debug(
@@ -241,6 +247,9 @@ class JobMonitor:
                 )
                 await self._notify_flat_manager_job_completed(
                     pipeline, "update-repo", pipeline.update_repo_job_id, success=False
+                )
+                await self._create_job_failure_issue(
+                    pipeline, "update-repo", pipeline.update_repo_job_id, job_response
                 )
                 return True
             else:
@@ -525,5 +534,23 @@ class JobMonitor:
                 pipeline_id=str(pipeline.id),
                 job_id=job_id,
                 success=success,
+                error=str(e),
+            )
+
+    async def _create_job_failure_issue(
+        self, pipeline: Pipeline, job_type: str, job_id: int, job_response: dict
+    ) -> None:
+        try:
+            from app.services.github_notifier import GitHubNotifier
+
+            github_notifier = GitHubNotifier()
+            await github_notifier.create_stable_job_failure_issue(
+                pipeline, job_type, job_id, job_response
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to create GitHub issue for {job_type} job failure",
+                pipeline_id=str(pipeline.id),
+                job_id=job_id,
                 error=str(e),
             )

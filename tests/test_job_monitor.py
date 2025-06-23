@@ -72,8 +72,13 @@ async def test_process_succeeded_pipeline_sends_pr_comment(
 async def test_check_and_update_pipeline_jobs_commit_failed(
     job_monitor, mock_pipeline, mock_db
 ):
-    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
-        mock_get_job.return_value = {"status": JobStatus.BROKEN}
+    job_response = {"status": JobStatus.BROKEN, "log": "Error: commit failed"}
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_create_job_failure_issue") as mock_create_issue,
+    ):
+        mock_get_job.return_value = job_response
 
         result = await job_monitor.check_and_update_pipeline_jobs(
             mock_db, mock_pipeline
@@ -81,6 +86,9 @@ async def test_check_and_update_pipeline_jobs_commit_failed(
 
         assert result is True
         assert mock_pipeline.status == PipelineStatus.FAILED
+        mock_create_issue.assert_called_once_with(
+            mock_pipeline, "commit", 12345, job_response
+        )
 
 
 @pytest.mark.asyncio
@@ -402,16 +410,25 @@ async def test_process_publish_job_failed(job_monitor, mock_db):
         params={},
     )
 
-    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
-        mock_get_job.return_value = {
-            "status": JobStatus.BROKEN,
-            "kind": JobKind.PUBLISH,
-        }
+    job_response = {
+        "status": JobStatus.BROKEN,
+        "kind": JobKind.PUBLISH,
+        "log": "Error: publish failed",
+    }
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_create_job_failure_issue") as mock_create_issue,
+    ):
+        mock_get_job.return_value = job_response
 
         result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
 
         assert result is True
         assert pipeline.status == PipelineStatus.FAILED
+        mock_create_issue.assert_called_once_with(
+            pipeline, "publish", 67890, job_response
+        )
 
 
 @pytest.mark.asyncio
@@ -505,16 +522,25 @@ async def test_process_update_repo_job_failed(job_monitor, mock_db):
         params={},
     )
 
-    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
-        mock_get_job.return_value = {
-            "status": JobStatus.BROKEN,
-            "kind": JobKind.UPDATE_REPO,
-        }
+    job_response = {
+        "status": JobStatus.BROKEN,
+        "kind": JobKind.UPDATE_REPO,
+        "log": "Error: update-repo failed",
+    }
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_create_job_failure_issue") as mock_create_issue,
+    ):
+        mock_get_job.return_value = job_response
 
         result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
 
         assert result is True
         assert pipeline.status == PipelineStatus.FAILED
+        mock_create_issue.assert_called_once_with(
+            pipeline, "update-repo", 99999, job_response
+        )
 
 
 @pytest.mark.asyncio
@@ -589,3 +615,33 @@ async def test_process_wrong_job_kind_update_repo(job_monitor, mock_db):
 
         assert result is False
         assert pipeline.status == PipelineStatus.PUBLISHING
+
+
+@pytest.mark.asyncio
+async def test_create_job_failure_issue_success(job_monitor, mock_pipeline):
+    job_response = {"id": 12345, "log": "Error: job failed"}
+
+    with patch("app.services.github_notifier.GitHubNotifier") as mock_notifier_class:
+        mock_notifier_instance = MagicMock()
+        mock_notifier_class.return_value = mock_notifier_instance
+
+        await job_monitor._create_job_failure_issue(
+            mock_pipeline, "commit", 12345, job_response
+        )
+
+        mock_notifier_class.assert_called_once_with()
+        mock_notifier_instance.create_stable_job_failure_issue.assert_called_once_with(
+            mock_pipeline, "commit", 12345, job_response
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_job_failure_issue_exception(job_monitor, mock_pipeline):
+    job_response = {"id": 12345, "log": "Error: job failed"}
+
+    with patch("app.services.github_notifier.GitHubNotifier") as mock_notifier_class:
+        mock_notifier_class.side_effect = Exception("GitHub API error")
+
+        await job_monitor._create_job_failure_issue(
+            mock_pipeline, "commit", 12345, job_response
+        )

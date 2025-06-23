@@ -237,6 +237,80 @@ class GitHubNotifier:
                 error=str(e),
             )
 
+    async def create_stable_job_failure_issue(
+        self,
+        pipeline: Pipeline,
+        job_type: str,
+        job_id: int,
+        job_response: Optional[dict] = None,
+    ) -> None:
+        if pipeline.flat_manager_repo not in ["stable", "beta"]:
+            return
+
+        git_repo = pipeline.params.get("repo")
+        if not git_repo:
+            logger.error(
+                "Missing git_repo in params. Cannot create issue for failed job",
+                pipeline_id=str(pipeline.id),
+                job_type=job_type,
+            )
+            return
+
+        try:
+            app_id = pipeline.app_id
+            sha = pipeline.params.get("sha")
+            repo = pipeline.flat_manager_repo.capitalize()
+
+            job_type_display = {
+                "commit": "commit",
+                "publish": "publish",
+                "update-repo": "repository update",
+            }.get(job_type, job_type)
+
+            title = f"{repo} {job_type_display} job failed for {app_id}"
+
+            body = f"The {job_type} job for `{app_id}` failed in the {pipeline.flat_manager_repo} repository.\n\n"
+            body += "**Build Information:**\n"
+            body += f"- Commit SHA: `{sha}`\n"
+
+            if pipeline.build_id:
+                body += f"- Build ID: {pipeline.build_id}\n"
+
+            if pipeline.log_url:
+                body += f"- Build log: {pipeline.log_url}\n"
+
+            body += "\n**Job Details:**\n"
+            body += f"- Job ID: {job_id}\n"
+            body += f"- Job status: {settings.flat_manager_url}/status/{job_id}\n"
+
+            if job_response and job_response.get("log"):
+                log_content = job_response["log"]
+                log_lines = log_content.strip().split("\n")
+
+                if len(log_lines) > 25:
+                    relevant_lines = log_lines[-25:]
+                    body += "\n**Error Details:**\n```\n"
+                    body += "...\n" + "\n".join(relevant_lines) + "\n```\n"
+                else:
+                    body += "\n**Error Details:**\n```\n"
+                    body += log_content + "\n```\n"
+
+            body += "\ncc @flathub/build-moderation"
+
+            await create_github_issue(
+                git_repo=git_repo,
+                title=title,
+                body=body,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to create GitHub issue for failed job",
+                pipeline_id=str(pipeline.id),
+                job_type=job_type,
+                job_id=job_id,
+                error=str(e),
+            )
+
     async def handle_build_completion(
         self,
         pipeline: Pipeline,
