@@ -20,7 +20,9 @@ _get_build_subject:
     set -euxo pipefail
     commit_msg=$(git log -1 --pretty=%s)
     commit_hash=$(git rev-parse --short=12 HEAD)
-    echo "$commit_msg ($commit_hash)"
+    subject="$commit_msg ($commit_hash)"
+    subject="${subject//[^[:ascii:]]/}"
+    echo "$subject"
 
 detect-appid $path:
     #!/usr/bin/env python3
