@@ -181,6 +181,7 @@ jobs:
             -w /work \
             -e APP_ID \
             -e REPO \
+            -e GITHUB_ACTIONS \
             -e TMPDIR=/work/tmp \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-manifest $APP_ID
@@ -492,6 +493,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e REPO \
+            -e GITHUB_ACTIONS \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-build
 
