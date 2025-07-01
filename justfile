@@ -110,7 +110,7 @@ validate-manifest app_id:
     set -euxo pipefail
     git config --global --add safe.directory "*"
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
-    flatpak-builder-lint --exceptions manifest "$manifest"
+    flatpak-builder-lint --gha-format --exceptions manifest "$manifest"
 
 download-sources app_id:
     #!/usr/bin/env bash
@@ -189,7 +189,7 @@ commit-screenshots:
 validate-build:
     #!/usr/bin/env bash
     set -euxo pipefail
-    flatpak-builder-lint --exceptions repo repo
+    flatpak-builder-lint --gha-format --exceptions repo repo
 
 generate-deltas:
     #!/usr/bin/env bash
