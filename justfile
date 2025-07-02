@@ -52,7 +52,7 @@ detect-appid $path:
                 with open(filename) as f:
                     if ext in ("yml", "yaml"):
                         manifest = yaml.safe_load(f)
-                        if manifest:
+                        if manifest and isinstance(manifest, dict):
                             if "app-id" in manifest:
                                 appid = manifest["app-id"]
                             elif "id" in manifest:
