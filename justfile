@@ -52,20 +52,22 @@ detect-appid $path:
                 with open(filename) as f:
                     if ext in ("yml", "yaml"):
                         manifest = yaml.safe_load(f)
-                        if "app-id" in manifest:
-                            appid = manifest["app-id"]
-                        elif "id" in manifest:
-                            appid = manifest["id"]
+                        if manifest:
+                            if "app-id" in manifest:
+                                appid = manifest["app-id"]
+                            elif "id" in manifest:
+                                appid = manifest["id"]
                     else:
                         parser = Json.Parser()
                         if parser.load_from_file(filename):
                             root_node = parser.get_root()
-                            if root_node.get_node_type() == Json.NodeType.OBJECT:
+                            if root_node and root_node.get_node_type() == Json.NodeType.OBJECT:
                                 json_object = root_node.get_object()
-                                if json_object.has_member("id"):
-                                    appid = json_object.get_string_member("id")
-                                elif json_object.has_member("app-id"):
-                                    appid = json_object.get_string_member("app-id")
+                                if json_object:
+                                    if json_object.has_member("id"):
+                                        appid = json_object.get_string_member("id")
+                                    elif json_object.has_member("app-id"):
+                                        appid = json_object.get_string_member("app-id")
 
                 if not appid:
                     continue
