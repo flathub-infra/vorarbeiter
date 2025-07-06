@@ -281,7 +281,7 @@ jobs:
       packages: write
     steps:
       - uses: runs-on/action@v2
-        if: ${{ input.build_type != 'default' }}
+        if: ${{ inputs.build_type != 'default' }}
         with:
           show_costs: true
           metrics: cpu,network,memory,disk,io
