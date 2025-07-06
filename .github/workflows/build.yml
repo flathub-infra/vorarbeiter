@@ -283,8 +283,8 @@ jobs:
       - uses: runs-on/action@v2
         if: ${{ inputs.build_type != 'default' }}
         with:
-          show_costs: true
-          metrics: cpu,network,memory,disk,io
+          show_costs: summary
+          metrics: disk
 
       - name: Set variables
         run: |
