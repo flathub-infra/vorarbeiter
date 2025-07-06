@@ -280,6 +280,12 @@ jobs:
     permissions:
       packages: write
     steps:
+      - uses: runs-on/action@v2
+        if: ${{ input.build_type != 'default' }}
+        with:
+          show_costs: true
+          metrics: cpu,network,memory,disk,io
+
       - name: Set variables
         run: |
           echo "APP_ID=${{ inputs.app_id }}" >> $GITHUB_ENV
