@@ -236,10 +236,8 @@ class GitHubNotifier:
             )
 
             if issue_url:
-                pipeline.provider_data = pipeline.provider_data or {}
-                pipeline.provider_data["issue_url"] = issue_url
                 logger.info(
-                    "Stored issue URL in pipeline metadata",
+                    "Successfully created GitHub issue",
                     pipeline_id=str(pipeline.id),
                     issue_url=issue_url,
                 )
@@ -321,10 +319,8 @@ class GitHubNotifier:
             )
 
             if issue_url:
-                pipeline.provider_data = pipeline.provider_data or {}
-                pipeline.provider_data["issue_url"] = issue_url
                 logger.info(
-                    "Stored issue URL in pipeline metadata",
+                    "Successfully created GitHub issue",
                     pipeline_id=str(pipeline.id),
                     issue_url=issue_url,
                 )
