@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import re
 import uuid
 
 import httpx
@@ -10,11 +11,207 @@ from app.config import settings
 from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types
-from app.utils.github import create_pr_comment, update_commit_status
+from app.utils.github import (
+    add_issue_comment,
+    close_github_issue,
+    create_pr_comment,
+    update_commit_status,
+)
 
 logger = structlog.get_logger(__name__)
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+STABLE_BUILD_FAILURE_PATTERN = re.compile(
+    r"The stable build pipeline for `(.+?)` failed\.\n\nCommit SHA: `(.+?)`"
+)
+JOB_FAILURE_PATTERN = re.compile(
+    r"The (\w+) job for `(.+?)` failed in the (\w+) repository\.\n\n.*?Commit SHA: `(.+?)`",
+    re.DOTALL,
+)
+
+
+def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
+    stable_match = STABLE_BUILD_FAILURE_PATTERN.search(issue_body)
+    if stable_match:
+        app_id, sha = stable_match.groups()
+        return {
+            "app_id": app_id,
+            "sha": sha,
+            "repo": git_repo,
+            "ref": "refs/heads/master",
+            "flat_manager_repo": "stable",
+            "issue_type": "build_failure",
+        }
+
+    job_match = JOB_FAILURE_PATTERN.search(issue_body)
+    if job_match:
+        job_type, app_id, repo_type, sha = job_match.groups()
+        ref = (
+            "refs/heads/master" if repo_type.lower() == "stable" else "refs/heads/beta"
+        )
+        return {
+            "app_id": app_id,
+            "sha": sha,
+            "repo": git_repo,
+            "ref": ref,
+            "flat_manager_repo": repo_type.lower(),
+            "issue_type": "job_failure",
+            "job_type": job_type,
+        }
+
+    return None
+
+
+async def validate_retry_permissions(git_repo: str, user_login: str) -> bool:
+    if not settings.github_status_token:
+        logger.warning("GITHUB_STATUS_TOKEN not set. Skipping permission check.")
+        return False
+
+    url = f"https://api.github.com/repos/{git_repo}/collaborators/{user_login}"
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {settings.github_status_token}",
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=10.0)
+            if response.status_code == 204:
+                return True
+            elif response.status_code == 404:
+                logger.info(
+                    "User not a collaborator, checking organization membership",
+                    user=user_login,
+                    repo=git_repo,
+                )
+
+                org = git_repo.split("/")[0]
+                org_url = f"https://api.github.com/orgs/{org}/members/{user_login}"
+                org_response = await client.get(org_url, headers=headers, timeout=10.0)
+                return org_response.status_code == 204
+            else:
+                logger.warning(
+                    "Unexpected response checking user permissions",
+                    status_code=response.status_code,
+                    user=user_login,
+                    repo=git_repo,
+                )
+                return False
+    except Exception as e:
+        logger.error(
+            "Error checking retry permissions",
+            error=str(e),
+            user=user_login,
+            repo=git_repo,
+        )
+        return False
+
+
+async def handle_issue_retry(
+    git_repo: str,
+    issue_number: int,
+    issue_body: str,
+    comment_author: str,
+    webhook_event_id: uuid.UUID,
+) -> uuid.UUID | None:
+    if not await validate_retry_permissions(git_repo, comment_author):
+        logger.warning(
+            "User does not have permission to trigger retries",
+            user=comment_author,
+            repo=git_repo,
+            issue_number=issue_number,
+        )
+        await add_issue_comment(
+            git_repo=git_repo,
+            issue_number=issue_number,
+            comment=f"❌ @{comment_author} does not have permission to trigger retries.",
+        )
+        return None
+
+    build_params = parse_failure_issue(issue_body, git_repo)
+    if not build_params:
+        logger.warning(
+            "Could not parse build parameters from issue",
+            repo=git_repo,
+            issue_number=issue_number,
+        )
+        await add_issue_comment(
+            git_repo=git_repo,
+            issue_number=issue_number,
+            comment="❌ Could not parse build parameters from this issue. This may not be a valid build failure issue.",
+        )
+        return None
+
+    retry_count = 1
+    existing_retry_pattern = re.search(
+        r"This is retry #(\d+) of the original build", issue_body
+    )
+    if existing_retry_pattern:
+        retry_count = int(existing_retry_pattern.group(1)) + 1
+        if retry_count > 3:
+            await add_issue_comment(
+                git_repo=git_repo,
+                issue_number=issue_number,
+                comment="❌ Maximum retry limit (3) reached for this build. Please investigate the underlying issue.",
+            )
+            return None
+
+    build_params["retry_count"] = retry_count
+    build_params["retry_from_issue"] = issue_number
+
+    try:
+        pipeline_service = BuildPipeline()
+        pipeline = await pipeline_service.create_pipeline(
+            app_id=build_params["app_id"],
+            params=build_params,
+            webhook_event_id=webhook_event_id,
+        )
+
+        target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
+        await update_commit_status(
+            sha=build_params["sha"],
+            state="pending",
+            git_repo=git_repo,
+            description="Retry build enqueued",
+            target_url=target_url,
+        )
+
+        pipeline = await pipeline_service.start_pipeline(pipeline_id=pipeline.id)
+
+        build_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
+        await add_issue_comment(
+            git_repo=git_repo,
+            issue_number=issue_number,
+            comment=f"🔄 Retrying build (attempt #{retry_count}): [View build]({build_url})",
+        )
+
+        await close_github_issue(git_repo=git_repo, issue_number=issue_number)
+
+        logger.info(
+            "Successfully triggered retry build",
+            pipeline_id=str(pipeline.id),
+            repo=git_repo,
+            issue_number=issue_number,
+            retry_count=retry_count,
+            triggered_by=comment_author,
+        )
+
+        return pipeline.id
+
+    except Exception as e:
+        logger.error(
+            "Failed to trigger retry build",
+            error=str(e),
+            repo=git_repo,
+            issue_number=issue_number,
+        )
+        await add_issue_comment(
+            git_repo=git_repo,
+            issue_number=issue_number,
+            comment=f"❌ Failed to trigger retry build: {str(e)}",
+        )
+        return None
 
 
 def should_store_event(payload: dict) -> bool:
@@ -26,6 +223,7 @@ def should_store_event(payload: dict) -> bool:
     - A PR is updated
     - A new commit happens to master, beta or branch/*
     - PR comment contains "bot, build"
+    - Issue comment contains "bot, retry"
     """
     ref = payload.get("ref", "")
     comment = payload.get("comment", {}).get("body", "")
@@ -44,6 +242,9 @@ def should_store_event(payload: dict) -> bool:
             return True
 
     if "comment" in payload and "bot, build" in comment:
+        return True
+
+    if "comment" in payload and "bot, retry" in comment.lower():
         return True
 
     return False
@@ -231,6 +432,33 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 "ref": pr_ref,
             }
         )
+
+    elif (
+        "comment" in payload
+        and "bot, retry" in payload.get("comment", {}).get("body", "").lower()
+    ):
+        issue = payload.get("issue", {})
+        issue_number = issue.get("number")
+        issue_body = issue.get("body", "")
+        comment_author = payload.get("comment", {}).get("user", {}).get("login", "")
+
+        if not issue_number or not issue_body:
+            logger.error("Missing issue number or body for retry request")
+            return None
+
+        if issue.get("pull_request"):
+            logger.info("Retry comment on PR, ignoring (only for build failure issues)")
+            return None
+
+        retry_pipeline_id = await handle_issue_retry(
+            git_repo=event.repository,
+            issue_number=issue_number,
+            issue_body=issue_body,
+            comment_author=comment_author,
+            webhook_event_id=event.id,
+        )
+
+        return retry_pipeline_id
 
     if sha:
         params["sha"] = sha

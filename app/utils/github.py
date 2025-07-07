@@ -146,10 +146,10 @@ async def create_pr_comment(git_repo: str, pr_number: int, comment: str) -> None
         )
 
 
-async def create_github_issue(git_repo: str, title: str, body: str) -> None:
+async def create_github_issue(git_repo: str, title: str, body: str) -> str | None:
     if not git_repo:
         logger.error("Missing git_repo for GitHub issue. Skipping issue creation.")
-        return
+        return None
 
     url = f"https://api.github.com/repos/{git_repo}/issues"
     headers = {
@@ -167,12 +167,14 @@ async def create_github_issue(git_repo: str, title: str, body: str) -> None:
                 timeout=10.0,
             )
             response.raise_for_status()
-            issue_url = response.json().get("html_url", "unknown URL")
+            issue_data = response.json()
+            issue_url = issue_data.get("html_url", "unknown URL")
             logger.info(
                 "Successfully created GitHub issue",
                 git_repo=git_repo,
                 issue_url=issue_url,
             )
+            return issue_url
     except httpx.RequestError as e:
         logger.error(
             "Request error creating GitHub issue",
@@ -192,3 +194,171 @@ async def create_github_issue(git_repo: str, title: str, body: str) -> None:
             git_repo=git_repo,
             error=str(e),
         )
+    return None
+
+
+async def close_github_issue(git_repo: str, issue_number: int) -> bool:
+    if not git_repo:
+        logger.error("Missing git_repo for GitHub issue. Skipping issue closure.")
+        return False
+
+    if not issue_number:
+        logger.error("Missing issue number. Skipping issue closure.")
+        return False
+
+    url = f"https://api.github.com/repos/{git_repo}/issues/{issue_number}"
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {settings.github_status_token}",
+    }
+    payload = {"state": "closed"}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.patch(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            logger.info(
+                "Successfully closed GitHub issue",
+                git_repo=git_repo,
+                issue_number=issue_number,
+            )
+            return True
+    except httpx.RequestError as e:
+        logger.error(
+            "Request error closing GitHub issue",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            error=str(e),
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "HTTP error closing GitHub issue",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            status_code=e.response.status_code,
+            response_text=e.response.text,
+        )
+    except Exception as e:
+        logger.error(
+            "Unexpected error closing GitHub issue",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            error=str(e),
+        )
+    return False
+
+
+async def add_issue_comment(git_repo: str, issue_number: int, comment: str) -> bool:
+    if not git_repo:
+        logger.error("Missing git_repo for GitHub issue comment. Skipping comment.")
+        return False
+
+    if not issue_number:
+        logger.error("Missing issue number. Skipping comment.")
+        return False
+
+    url = f"https://api.github.com/repos/{git_repo}/issues/{issue_number}/comments"
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {settings.github_status_token}",
+    }
+    payload = {"body": comment}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            logger.info(
+                "Successfully added comment to GitHub issue",
+                git_repo=git_repo,
+                issue_number=issue_number,
+            )
+            return True
+    except httpx.RequestError as e:
+        logger.error(
+            "Request error adding comment to GitHub issue",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            error=str(e),
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "HTTP error adding comment to GitHub issue",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            status_code=e.response.status_code,
+            response_text=e.response.text,
+        )
+    except Exception as e:
+        logger.error(
+            "Unexpected error adding comment to GitHub issue",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            error=str(e),
+        )
+    return False
+
+
+async def get_issue_details(git_repo: str, issue_number: int) -> dict | None:
+    if not git_repo:
+        logger.error("Missing git_repo for GitHub issue details. Skipping request.")
+        return None
+
+    if not issue_number:
+        logger.error("Missing issue number. Skipping request.")
+        return None
+
+    url = f"https://api.github.com/repos/{git_repo}/issues/{issue_number}"
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {settings.github_status_token}",
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                url,
+                headers=headers,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            issue_data = response.json()
+            logger.info(
+                "Successfully fetched GitHub issue details",
+                git_repo=git_repo,
+                issue_number=issue_number,
+            )
+            return issue_data
+    except httpx.RequestError as e:
+        logger.error(
+            "Request error fetching GitHub issue details",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            error=str(e),
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "HTTP error fetching GitHub issue details",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            status_code=e.response.status_code,
+            response_text=e.response.text,
+        )
+    except Exception as e:
+        logger.error(
+            "Unexpected error fetching GitHub issue details",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            error=str(e),
+        )
+    return None

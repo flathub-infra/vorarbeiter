@@ -105,6 +105,11 @@ class BuildPipeline:
                 )
 
                 build_id = build_data.get("id")
+                if build_id is None:
+                    raise ValueError(
+                        "Failed to get build ID from flat-manager response"
+                    )
+
                 pipeline.build_id = build_id
 
                 upload_token = await self.flat_manager.create_token_subset(

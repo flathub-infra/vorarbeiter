@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Pipeline, PipelineStatus
-from app.utils.flat_manager import FlatManagerClient, JobStatus, JobKind
+from app.utils.flat_manager import FlatManagerClient, JobResponse, JobStatus, JobKind
 
 logger = structlog.get_logger(__name__)
 
@@ -538,14 +538,14 @@ class JobMonitor:
             )
 
     async def _create_job_failure_issue(
-        self, pipeline: Pipeline, job_type: str, job_id: int, job_response: dict
+        self, pipeline: Pipeline, job_type: str, job_id: int, job_response: JobResponse
     ) -> None:
         try:
             from app.services.github_notifier import GitHubNotifier
 
             github_notifier = GitHubNotifier()
             await github_notifier.create_stable_job_failure_issue(
-                pipeline, job_type, job_id, job_response
+                pipeline, job_type, job_id, dict(job_response)
             )
         except Exception as e:
             logger.error(

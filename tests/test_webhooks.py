@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import json
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -456,11 +456,12 @@ async def test_create_pipeline_comment():
             "url": "https://api.github.com/repos/test-owner/test-repo/pulls/42"
         },
     }
-    comment_payload["comment"]["id"] = 12345
-    comment_payload["comment"]["user"] = {"login": "test-user"}
-    comment_payload["comment"]["html_url"] = (
-        "https://github.com/test-owner/test-repo/pull/42#comment-12345"
-    )
+    comment_payload["comment"] = {
+        "body": "please bot, build this",
+        "id": 12345,
+        "user": {"login": "test-user"},
+        "html_url": "https://github.com/test-owner/test-repo/pull/42#comment-12345",
+    }
     comment_payload["after"] = "fedcba654321"
 
     webhook_event = WebhookEvent(
@@ -536,3 +537,263 @@ async def test_receive_webhook_creates_pipeline(client, mock_db_session):
 
                 assert mock_db_session.add.called
                 assert mock_db_session.commit.called
+
+
+# Test data for retry functionality
+SAMPLE_ISSUE_BODY_STABLE = """The stable build pipeline for `test-app` failed.
+
+Commit SHA: `abc123456789`
+Build log: https://example.com/log/123"""
+
+SAMPLE_ISSUE_BODY_JOB_FAILURE = """The commit job for `test-app` failed in the stable repository.
+
+**Build Information:**
+- Commit SHA: `abc123456789`
+- Build ID: 456
+- Build log: https://example.com/log/123
+
+**Job Details:**
+- Job ID: 789
+- Job status: https://hub.flathub.org/status/789
+
+cc @flathub/build-moderation"""
+
+SAMPLE_RETRY_COMMENT_PAYLOAD = {
+    "repository": {"full_name": "flathub/test-app"},
+    "sender": {"login": "test-actor"},
+    "action": "created",
+    "comment": {"body": "bot, retry", "user": {"login": "test-user"}},
+    "issue": {"number": 123, "body": SAMPLE_ISSUE_BODY_STABLE, "state": "open"},
+}
+
+
+def test_parse_failure_issue_stable_build():
+    from app.routes.webhooks import parse_failure_issue
+
+    result = parse_failure_issue(SAMPLE_ISSUE_BODY_STABLE, "flathub/test-app")
+
+    assert result is not None
+    assert result["app_id"] == "test-app"
+    assert result["sha"] == "abc123456789"
+    assert result["repo"] == "flathub/test-app"
+    assert result["ref"] == "refs/heads/master"
+    assert result["flat_manager_repo"] == "stable"
+    assert result["issue_type"] == "build_failure"
+
+
+def test_parse_failure_issue_job_failure():
+    from app.routes.webhooks import parse_failure_issue
+
+    result = parse_failure_issue(SAMPLE_ISSUE_BODY_JOB_FAILURE, "flathub/test-app")
+
+    assert result is not None
+    assert result["app_id"] == "test-app"
+    assert result["sha"] == "abc123456789"
+    assert result["repo"] == "flathub/test-app"
+    assert result["ref"] == "refs/heads/master"
+    assert result["flat_manager_repo"] == "stable"
+    assert result["issue_type"] == "job_failure"
+    assert result["job_type"] == "commit"
+
+
+def test_parse_failure_issue_invalid():
+    from app.routes.webhooks import parse_failure_issue
+
+    invalid_body = "This is not a build failure issue."
+    result = parse_failure_issue(invalid_body, "flathub/test-app")
+
+    assert result is None
+
+
+def test_should_store_event_bot_retry():
+    from app.routes.webhooks import should_store_event
+
+    payload = {"comment": {"body": "bot, retry"}, "action": "created"}
+
+    assert should_store_event(payload) is True
+
+
+def test_should_store_event_bot_retry_case_insensitive():
+    from app.routes.webhooks import should_store_event
+
+    payload = {"comment": {"body": "Bot, Retry"}, "action": "created"}
+
+    assert should_store_event(payload) is True
+
+
+@pytest.mark.asyncio
+async def test_validate_retry_permissions_collaborator():
+    from app.routes.webhooks import validate_retry_permissions
+
+    with patch("httpx.AsyncClient") as MockClient:
+        mock_response = MagicMock()
+        mock_response.status_code = 204
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.get = AsyncMock(return_value=mock_response)
+        MockClient.return_value.__aenter__.return_value = mock_client_instance
+
+        with patch("app.routes.webhooks.settings.github_status_token", "test-token"):
+            result = await validate_retry_permissions("flathub/test-app", "test-user")
+
+            assert result is True
+
+
+@pytest.mark.asyncio
+async def test_validate_retry_permissions_org_member():
+    from app.routes.webhooks import validate_retry_permissions
+
+    with patch("httpx.AsyncClient") as MockClient:
+        collab_response = MagicMock()
+        collab_response.status_code = 404
+
+        org_response = MagicMock()
+        org_response.status_code = 204
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.get = AsyncMock(
+            side_effect=[collab_response, org_response]
+        )
+        MockClient.return_value.__aenter__.return_value = mock_client_instance
+
+        with patch("app.routes.webhooks.settings.github_status_token", "test-token"):
+            result = await validate_retry_permissions("flathub/test-app", "test-user")
+
+            assert result is True
+
+
+@pytest.mark.asyncio
+async def test_validate_retry_permissions_denied():
+    from app.routes.webhooks import validate_retry_permissions
+
+    with patch("httpx.AsyncClient") as MockClient:
+        collab_response = MagicMock()
+        collab_response.status_code = 404
+
+        org_response = MagicMock()
+        org_response.status_code = 404
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.get = AsyncMock(
+            side_effect=[collab_response, org_response]
+        )
+        MockClient.return_value.__aenter__.return_value = mock_client_instance
+
+        with patch("app.routes.webhooks.settings.github_status_token", "test-token"):
+            result = await validate_retry_permissions("flathub/test-app", "test-user")
+
+            assert result is False
+
+
+@pytest.mark.asyncio
+async def test_handle_issue_retry_success():
+    from app.routes.webhooks import handle_issue_retry
+
+    event_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="test-app",
+        params={"retry_count": 1, "retry_from_issue": 123},
+        status=PipelineStatus.PENDING,
+    )
+
+    mock_pipeline_service = AsyncMock()
+    mock_pipeline_service.create_pipeline.return_value = mock_pipeline
+    mock_pipeline_service.start_pipeline.return_value = mock_pipeline
+
+    with patch("app.routes.webhooks.validate_retry_permissions", return_value=True):
+        with patch(
+            "app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service
+        ):
+            with patch("app.routes.webhooks.update_commit_status", AsyncMock()):
+                with patch("app.routes.webhooks.add_issue_comment", AsyncMock()):
+                    with patch("app.routes.webhooks.close_github_issue", AsyncMock()):
+                        result = await handle_issue_retry(
+                            git_repo="flathub/test-app",
+                            issue_number=123,
+                            issue_body=SAMPLE_ISSUE_BODY_STABLE,
+                            comment_author="test-user",
+                            webhook_event_id=event_id,
+                        )
+
+                        assert result == pipeline_id
+                        mock_pipeline_service.create_pipeline.assert_called_once()
+                        mock_pipeline_service.start_pipeline.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_issue_retry_permission_denied():
+    from app.routes.webhooks import handle_issue_retry
+
+    event_id = uuid.uuid4()
+
+    with patch("app.routes.webhooks.validate_retry_permissions", return_value=False):
+        with patch(
+            "app.routes.webhooks.add_issue_comment", AsyncMock()
+        ) as mock_comment:
+            result = await handle_issue_retry(
+                git_repo="flathub/test-app",
+                issue_number=123,
+                issue_body=SAMPLE_ISSUE_BODY_STABLE,
+                comment_author="unauthorized-user",
+                webhook_event_id=event_id,
+            )
+
+            assert result is None
+            mock_comment.assert_called_once()
+            args, kwargs = mock_comment.call_args
+            assert "does not have permission" in kwargs["comment"]
+
+
+@pytest.mark.asyncio
+async def test_handle_issue_retry_invalid_issue():
+    from app.routes.webhooks import handle_issue_retry
+
+    event_id = uuid.uuid4()
+    invalid_body = "This is not a build failure issue."
+
+    with patch("app.routes.webhooks.validate_retry_permissions", return_value=True):
+        with patch(
+            "app.routes.webhooks.add_issue_comment", AsyncMock()
+        ) as mock_comment:
+            result = await handle_issue_retry(
+                git_repo="flathub/test-app",
+                issue_number=123,
+                issue_body=invalid_body,
+                comment_author="test-user",
+                webhook_event_id=event_id,
+            )
+
+            assert result is None
+            mock_comment.assert_called_once()
+            args, kwargs = mock_comment.call_args
+            assert "Could not parse build parameters" in kwargs["comment"]
+
+
+@pytest.mark.asyncio
+async def test_handle_issue_retry_max_retries():
+    from app.routes.webhooks import handle_issue_retry
+
+    event_id = uuid.uuid4()
+    body_with_retries = (
+        SAMPLE_ISSUE_BODY_STABLE + "\n\n> This is retry #3 of the original build."
+    )
+
+    with patch("app.routes.webhooks.validate_retry_permissions", return_value=True):
+        with patch(
+            "app.routes.webhooks.add_issue_comment", AsyncMock()
+        ) as mock_comment:
+            result = await handle_issue_retry(
+                git_repo="flathub/test-app",
+                issue_number=123,
+                issue_body=body_with_retries,
+                comment_author="test-user",
+                webhook_event_id=event_id,
+            )
+
+            assert result is None
+            mock_comment.assert_called_once()
+            args, kwargs = mock_comment.call_args
+            assert "Maximum retry limit" in kwargs["comment"]
