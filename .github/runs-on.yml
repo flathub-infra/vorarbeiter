@@ -1,17 +1,17 @@
 runners:
   medium-amd64:
     cpu: [4, 16]
-    ram: [16, 512]
+    ram: [32, 512]
     disk: large
     spot: lowest-price
-    family: ["m7a", "m7i", "r7i", "c7i", "c7a", "r7a"]
+    family: ["m7a", "m6a", "m7i", "m6i", "r7i", "r6i", "c7i", "c6i", "c7a", "c6a", "r7a", "r6a"]
 
   medium-arm64:
-    cpu: [4, 16]
-    ram: [16, 512]
+    cpu: [8, 16]
+    ram: [32, 512]
     disk: large
     spot: lowest-price
-    family: ["m7g", "m6g", "r7g", "r6g", "c7g", "c6g"]
+    family: ["m8g", "m7g", "m6g", "r8g", "r7g", "r6g", "c8g", "c7g", "c6g"]
     image: ubuntu24-full-arm64
 
   large-amd64:
@@ -19,12 +19,12 @@ runners:
     ram: [32, 512] 
     disk: large
     spot: lowest-price
-    family: ["m7a", "m7i", "r7i", "c7i", "c7a", "r7a"]
+    family: ["m7a", "m6a", "m7i", "m6i", "r7i", "r6i", "c7i", "c6i", "c7a", "c6a", "r7a", "r6a"]
 
   large-arm64:
     cpu: [16, 32]
     ram: [32, 512]
     disk: large
     spot: lowest-price
-    family: ["m7g", "m6g", "r7g", "r6g", "c7g", "c6g"]
+    family: ["m8g", "m7g", "m6g", "r8g", "r7g", "r6g", "c8g", "c7g", "c6g"]
     image: ubuntu24-full-arm64
