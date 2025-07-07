@@ -179,7 +179,7 @@ async def handle_issue_retry(
 
         pipeline = await pipeline_service.start_pipeline(pipeline_id=pipeline.id)
 
-        build_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
+        build_url = f"{settings.base_url}/api/pipelines/{pipeline.id}/log_url"
         await add_issue_comment(
             git_repo=git_repo,
             issue_number=issue_number,
