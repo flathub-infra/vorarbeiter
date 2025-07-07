@@ -120,6 +120,8 @@ class BuildPipeline:
             else:
                 build_type = pipeline.params.get("build_type", "default")
 
+            pipeline.params["build_type"] = build_type
+
             job_data = {
                 "app_id": pipeline.app_id,
                 "job_type": "build",

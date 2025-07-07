@@ -324,6 +324,10 @@ class GitHubNotifier:
 
         if status == "failure":
             await self.create_stable_build_failure_issue(pipeline)
+        elif status == "cancelled":
+            build_type = pipeline.params.get("build_type", "default")
+            if build_type == "default":
+                await self.create_stable_build_failure_issue(pipeline)
 
         if pipeline.params.get("pr_number") and status != "success":
             await self.notify_pr_build_complete(pipeline, status)

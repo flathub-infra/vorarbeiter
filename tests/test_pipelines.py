@@ -932,3 +932,159 @@ def test_pipeline_callback_early_exit_bug_regression(mock_get_db, sample_pipelin
 
     # Verify that GitHub notifier was called
     mock_github_notifier.handle_build_completion.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_pipeline_stores_default_build_type():
+    pipeline_id = uuid.uuid4()
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="org.example.app",
+        params={"repo": "test", "branch": "main"},
+        status=PipelineStatus.PENDING,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = mock_pipeline
+
+    mock_httpx_instance = MagicMock()
+    mock_httpx_instance.post = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 12345, "token": "test-token"}
+    mock_httpx_instance.post.return_value = mock_response
+
+    mock_github_provider = AsyncMock(spec=GitHubActionsService)
+    mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        with patch("httpx.AsyncClient") as mock_httpx_client:
+            mock_get_db.return_value.__aenter__.return_value = mock_db_session
+            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+
+            build_pipeline = BuildPipeline()
+            build_pipeline.provider = mock_github_provider
+
+            await build_pipeline.start_pipeline(pipeline_id)
+
+            assert mock_pipeline.params["build_type"] == "default"
+
+
+@pytest.mark.asyncio
+async def test_start_pipeline_stores_hardcoded_build_type():
+    pipeline_id = uuid.uuid4()
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="org.chromium.Chromium",
+        params={"repo": "test", "branch": "main"},
+        status=PipelineStatus.PENDING,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = mock_pipeline
+
+    mock_httpx_instance = MagicMock()
+    mock_httpx_instance.post = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 12345, "token": "test-token"}
+    mock_httpx_instance.post.return_value = mock_response
+
+    mock_github_provider = AsyncMock(spec=GitHubActionsService)
+    mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        with patch("httpx.AsyncClient") as mock_httpx_client:
+            mock_get_db.return_value.__aenter__.return_value = mock_db_session
+            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+
+            build_pipeline = BuildPipeline()
+            build_pipeline.provider = mock_github_provider
+
+            await build_pipeline.start_pipeline(pipeline_id)
+
+            assert mock_pipeline.params["build_type"] == "large"
+
+
+@pytest.mark.asyncio
+async def test_start_pipeline_stores_parameter_build_type():
+    pipeline_id = uuid.uuid4()
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="org.example.app",
+        params={"repo": "test", "branch": "main", "build_type": "medium"},
+        status=PipelineStatus.PENDING,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = mock_pipeline
+
+    mock_httpx_instance = MagicMock()
+    mock_httpx_instance.post = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 12345, "token": "test-token"}
+    mock_httpx_instance.post.return_value = mock_response
+
+    mock_github_provider = AsyncMock(spec=GitHubActionsService)
+    mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        with patch("httpx.AsyncClient") as mock_httpx_client:
+            mock_get_db.return_value.__aenter__.return_value = mock_db_session
+            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+
+            build_pipeline = BuildPipeline()
+            build_pipeline.provider = mock_github_provider
+
+            await build_pipeline.start_pipeline(pipeline_id)
+
+            assert mock_pipeline.params["build_type"] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_start_pipeline_build_type_precedence():
+    pipeline_id = uuid.uuid4()
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="org.chromium.Chromium",
+        params={"repo": "test", "branch": "main", "build_type": "medium"},
+        status=PipelineStatus.PENDING,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = mock_pipeline
+
+    mock_httpx_instance = MagicMock()
+    mock_httpx_instance.post = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 12345, "token": "test-token"}
+    mock_httpx_instance.post.return_value = mock_response
+
+    mock_github_provider = AsyncMock(spec=GitHubActionsService)
+    mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        with patch("httpx.AsyncClient") as mock_httpx_client:
+            mock_get_db.return_value.__aenter__.return_value = mock_db_session
+            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+
+            build_pipeline = BuildPipeline()
+            build_pipeline.provider = mock_github_provider
+
+            await build_pipeline.start_pipeline(pipeline_id)
+
+            assert mock_pipeline.params["build_type"] == "large"

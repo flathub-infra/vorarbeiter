@@ -424,6 +424,70 @@ async def test_handle_build_completion_with_flat_manager(
 
 
 @pytest.mark.asyncio
+async def test_handle_build_completion_cancelled_default_build(
+    github_notifier, mock_pipeline
+):
+    mock_pipeline.params = {"build_type": "default"}
+
+    with patch.object(github_notifier, "notify_build_status") as mock_status:
+        with patch.object(
+            github_notifier, "create_stable_build_failure_issue"
+        ) as mock_issue:
+            await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
+
+            mock_status.assert_called_once_with(mock_pipeline, "cancelled")
+            mock_issue.assert_called_once_with(mock_pipeline)
+
+
+@pytest.mark.asyncio
+async def test_handle_build_completion_cancelled_medium_build(
+    github_notifier, mock_pipeline
+):
+    mock_pipeline.params = {"build_type": "medium"}
+
+    with patch.object(github_notifier, "notify_build_status") as mock_status:
+        with patch.object(
+            github_notifier, "create_stable_build_failure_issue"
+        ) as mock_issue:
+            await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
+
+            mock_status.assert_called_once_with(mock_pipeline, "cancelled")
+            mock_issue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_build_completion_cancelled_large_build(
+    github_notifier, mock_pipeline
+):
+    mock_pipeline.params = {"build_type": "large"}
+
+    with patch.object(github_notifier, "notify_build_status") as mock_status:
+        with patch.object(
+            github_notifier, "create_stable_build_failure_issue"
+        ) as mock_issue:
+            await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
+
+            mock_status.assert_called_once_with(mock_pipeline, "cancelled")
+            mock_issue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_build_completion_cancelled_no_build_type(
+    github_notifier, mock_pipeline
+):
+    mock_pipeline.params = {}
+
+    with patch.object(github_notifier, "notify_build_status") as mock_status:
+        with patch.object(
+            github_notifier, "create_stable_build_failure_issue"
+        ) as mock_issue:
+            await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
+
+            mock_status.assert_called_once_with(mock_pipeline, "cancelled")
+            mock_issue.assert_called_once_with(mock_pipeline)
+
+
+@pytest.mark.asyncio
 async def test_handle_build_started(github_notifier, mock_pipeline):
     log_url = "https://example.com/new-log"
 
