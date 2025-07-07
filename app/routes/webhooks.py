@@ -23,10 +23,10 @@ logger = structlog.get_logger(__name__)
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
 STABLE_BUILD_FAILURE_PATTERN = re.compile(
-    r"The stable build pipeline for `(.+?)` failed\.\n\nCommit SHA: `(.+?)`"
+    r"The stable build pipeline for `.+?` failed\.\n\nCommit SHA: `(.+?)`"
 )
 JOB_FAILURE_PATTERN = re.compile(
-    r"The (\w+) job for `(.+?)` failed in the (\w+) repository\.\n\n.*?Commit SHA: `(.+?)`",
+    r"The (\w+) job for `.+?` failed in the (\w+) repository\.\n\n.*?Commit SHA: `(.+?)`",
     re.DOTALL,
 )
 
@@ -34,9 +34,8 @@ JOB_FAILURE_PATTERN = re.compile(
 def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
     stable_match = STABLE_BUILD_FAILURE_PATTERN.search(issue_body)
     if stable_match:
-        app_id, sha = stable_match.groups()
+        sha = stable_match.group(1)
         return {
-            "app_id": app_id,
             "sha": sha,
             "repo": git_repo,
             "ref": "refs/heads/master",
@@ -46,12 +45,11 @@ def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
 
     job_match = JOB_FAILURE_PATTERN.search(issue_body)
     if job_match:
-        job_type, app_id, repo_type, sha = job_match.groups()
+        job_type, repo_type, sha = job_match.groups()
         ref = (
             "refs/heads/master" if repo_type.lower() == "stable" else "refs/heads/beta"
         )
         return {
-            "app_id": app_id,
             "sha": sha,
             "repo": git_repo,
             "ref": ref,
@@ -129,6 +127,14 @@ async def handle_issue_retry(
         )
         return None
 
+    if "/" not in git_repo:
+        logger.warning(
+            "Invalid repository format", repo=git_repo, issue_number=issue_number
+        )
+        return None
+
+    app_id = git_repo.split("/", 1)[1]
+
     build_params = parse_failure_issue(issue_body, git_repo)
     if not build_params:
         logger.warning(
@@ -142,6 +148,8 @@ async def handle_issue_retry(
             comment="❌ Could not parse build parameters from this issue. This may not be a valid build failure issue.",
         )
         return None
+
+    build_params["app_id"] = app_id
 
     retry_count = 1
     existing_retry_pattern = re.search(
@@ -183,7 +191,7 @@ async def handle_issue_retry(
         await add_issue_comment(
             git_repo=git_repo,
             issue_number=issue_number,
-            comment=f"🔄 Retrying build (attempt {retry_count}): [View build]({build_url})",
+            comment=f"🔄 Retrying build (attempt {retry_count}): [view build]({build_url})",
         )
 
         await close_github_issue(git_repo=git_repo, issue_number=issue_number)

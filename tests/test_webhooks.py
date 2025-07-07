@@ -573,7 +573,6 @@ def test_parse_failure_issue_stable_build():
     result = parse_failure_issue(SAMPLE_ISSUE_BODY_STABLE, "flathub/test-app")
 
     assert result is not None
-    assert result["app_id"] == "test-app"
     assert result["sha"] == "abc123456789"
     assert result["repo"] == "flathub/test-app"
     assert result["ref"] == "refs/heads/master"
@@ -587,7 +586,6 @@ def test_parse_failure_issue_job_failure():
     result = parse_failure_issue(SAMPLE_ISSUE_BODY_JOB_FAILURE, "flathub/test-app")
 
     assert result is not None
-    assert result["app_id"] == "test-app"
     assert result["sha"] == "abc123456789"
     assert result["repo"] == "flathub/test-app"
     assert result["ref"] == "refs/heads/master"
