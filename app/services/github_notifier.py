@@ -225,7 +225,7 @@ class GitHubNotifier:
 
             retry_count = pipeline.params.get("retry_count", 0)
             if retry_count > 0:
-                body += f"\n\n> This is retry #{retry_count} of the original build."
+                body += f"\n\n> This is retry {retry_count} of the original build."
 
             body += "\n\ncc @flathub/build-moderation"
 
@@ -310,7 +310,7 @@ class GitHubNotifier:
 
             retry_count = pipeline.params.get("retry_count", 0)
             if retry_count > 0:
-                body += f"\n\n> This is retry #{retry_count} of the original build."
+                body += f"\n\n> This is retry {retry_count} of the original build."
 
             body += "\ncc @flathub/build-moderation"
 

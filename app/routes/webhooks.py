@@ -145,7 +145,7 @@ async def handle_issue_retry(
 
     retry_count = 1
     existing_retry_pattern = re.search(
-        r"This is retry #(\d+) of the original build", issue_body
+        r"This is retry (\d+) of the original build", issue_body
     )
     if existing_retry_pattern:
         retry_count = int(existing_retry_pattern.group(1)) + 1
@@ -183,7 +183,7 @@ async def handle_issue_retry(
         await add_issue_comment(
             git_repo=git_repo,
             issue_number=issue_number,
-            comment=f"🔄 Retrying build (attempt #{retry_count}): [View build]({build_url})",
+            comment=f"🔄 Retrying build (attempt {retry_count}): [View build]({build_url})",
         )
 
         await close_github_issue(git_repo=git_repo, issue_number=issue_number)

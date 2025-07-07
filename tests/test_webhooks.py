@@ -778,7 +778,7 @@ async def test_handle_issue_retry_max_retries():
 
     event_id = uuid.uuid4()
     body_with_retries = (
-        SAMPLE_ISSUE_BODY_STABLE + "\n\n> This is retry #3 of the original build."
+        SAMPLE_ISSUE_BODY_STABLE + "\n\n> This is retry 3 of the original build."
     )
 
     with patch("app.routes.webhooks.validate_retry_permissions", return_value=True):
