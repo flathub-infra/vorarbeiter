@@ -1,4 +1,3 @@
-import random
 import secrets
 import uuid
 from datetime import datetime
@@ -118,8 +117,6 @@ class BuildPipeline:
 
             if pipeline.app_id in app_build_types:
                 build_type = app_build_types[pipeline.app_id]
-            elif random.random() < 0.5:
-                build_type = "medium"
             else:
                 build_type = pipeline.params.get("build_type", "default")
 
