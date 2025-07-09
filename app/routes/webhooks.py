@@ -449,9 +449,18 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         issue_number = issue.get("number")
         issue_body = issue.get("body", "")
         comment_author = payload.get("comment", {}).get("user", {}).get("login", "")
+        issue_author = issue.get("user", {}).get("login", "")
 
         if not issue_number or not issue_body:
             logger.error("Missing issue number or body for retry request")
+            return None
+
+        if issue_author != "flathubbot":
+            logger.info(
+                "Retry comment on issue not created by flathubbot, ignoring",
+                issue_author=issue_author,
+                issue_number=issue_number,
+            )
             return None
 
         if issue.get("pull_request"):

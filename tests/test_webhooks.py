@@ -563,7 +563,12 @@ SAMPLE_RETRY_COMMENT_PAYLOAD = {
     "sender": {"login": "test-actor"},
     "action": "created",
     "comment": {"body": "bot, retry", "user": {"login": "test-user"}},
-    "issue": {"number": 123, "body": SAMPLE_ISSUE_BODY_STABLE, "state": "open"},
+    "issue": {
+        "number": 123,
+        "body": SAMPLE_ISSUE_BODY_STABLE,
+        "state": "open",
+        "user": {"login": "flathubbot"},
+    },
 }
 
 
