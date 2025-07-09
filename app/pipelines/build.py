@@ -39,7 +39,7 @@ app_build_types = {
     "org.telegram.desktop": "large",
     "org.gnome.Fractal": "large",
     "com.pot_app.pot": "large",
-    "org.mamedev.MAME": "large",
+    "org.mamedev.MAME": "medium",
 }
 
 
