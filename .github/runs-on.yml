@@ -3,14 +3,14 @@ runners:
     cpu: [4, 16]
     ram: [32, 512]
     disk: large
-    spot: lowest-price
+    spot: price-capacity-optimized
     family: ["m7a", "m6a", "m7i", "m6i", "r7i", "r6i", "c7i", "c6i", "c7a", "c6a", "r7a", "r6a"]
 
   medium-arm64:
     cpu: [8, 16]
     ram: [32, 512]
     disk: large
-    spot: lowest-price
+    spot: price-capacity-optimized
     family: ["m8g", "m7g", "m6g", "r8g", "r7g", "r6g", "c8g", "c7g", "c6g"]
     image: ubuntu24-full-arm64
 
