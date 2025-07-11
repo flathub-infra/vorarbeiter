@@ -102,6 +102,18 @@ async def test_update_commit_status_missing_sha(mock_settings):
 
 
 @pytest.mark.asyncio
+async def test_update_commit_status_null_sha(mock_settings):
+    with patch("httpx.AsyncClient") as MockClient:
+        await update_commit_status(
+            sha="0000000000000000000000000000000000000000",
+            state="success",
+            git_repo="flathub/test-app",
+        )
+
+        MockClient.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_update_commit_status_invalid_state(mock_settings):
     with patch("httpx.AsyncClient") as MockClient:
         await update_commit_status(

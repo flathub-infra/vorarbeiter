@@ -29,6 +29,14 @@ async def update_commit_status(
         logger.error("Missing commit SHA. Skipping status update.")
         return
 
+    if sha == "0000000000000000000000000000000000000000":
+        logger.warning(
+            "Detected null SHA (branch deletion). Skipping status update.",
+            git_repo=git_repo,
+            sha=sha,
+        )
+        return
+
     if state not in ["error", "failure", "pending", "success"]:
         logger.error(f"Invalid state '{state}'. Skipping status update.")
         return
