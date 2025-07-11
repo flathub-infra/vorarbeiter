@@ -800,3 +800,312 @@ async def test_handle_issue_retry_max_retries():
             mock_comment.assert_called_once()
             args, kwargs = mock_comment.call_args
             assert "Maximum retry limit" in kwargs["comment"]
+
+
+SAMPLE_CLOSED_PR_PAYLOAD = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "synchronize",
+    "pull_request": {
+        "number": 123,
+        "state": "closed",
+        "head": {
+            "ref": "feature-branch",
+            "sha": "abcdef123456",
+        },
+        "base": {
+            "ref": "main",
+        },
+    },
+}
+
+SAMPLE_COMMENT_CLOSED_PR_PAYLOAD = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "created",
+    "comment": {"body": "please bot, build this"},
+    "issue": {
+        "number": 42,
+        "pull_request": {
+            "url": "https://api.github.com/repos/test-owner/test-repo/pulls/42"
+        },
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_pr_closed_state():
+    """Test that create_pipeline returns None for closed PR events."""
+    event_id = uuid.uuid4()
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=SAMPLE_CLOSED_PR_PAYLOAD,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db_session)
+
+    with patch("app.routes.webhooks.get_db", mock_get_db):
+        with patch("app.routes.webhooks.logger") as mock_logger:
+            from app.routes.webhooks import create_pipeline
+
+            result = await create_pipeline(webhook_event)
+
+            assert result is None
+            mock_logger.info.assert_called_once_with(
+                "PR is closed, skipping pipeline creation",
+                pr_number=123,
+                repo="test-owner/test-repo",
+                action="synchronize",
+            )
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_pr_opened_closed_state():
+    """Test that create_pipeline returns None for opened action on closed PR."""
+    event_id = uuid.uuid4()
+
+    closed_pr_payload = dict(SAMPLE_CLOSED_PR_PAYLOAD)
+    closed_pr_payload["action"] = "opened"
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=closed_pr_payload,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db_session)
+
+    with patch("app.routes.webhooks.get_db", mock_get_db):
+        with patch("app.routes.webhooks.logger") as mock_logger:
+            from app.routes.webhooks import create_pipeline
+
+            result = await create_pipeline(webhook_event)
+
+            assert result is None
+            mock_logger.info.assert_called_once_with(
+                "PR is closed, skipping pipeline creation",
+                pr_number=123,
+                repo="test-owner/test-repo",
+                action="opened",
+            )
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_pr_reopened_closed_state():
+    """Test that create_pipeline returns None for reopened action on closed PR."""
+    event_id = uuid.uuid4()
+
+    closed_pr_payload = dict(SAMPLE_CLOSED_PR_PAYLOAD)
+    closed_pr_payload["action"] = "reopened"
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=closed_pr_payload,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db_session)
+
+    with patch("app.routes.webhooks.get_db", mock_get_db):
+        with patch("app.routes.webhooks.logger") as mock_logger:
+            from app.routes.webhooks import create_pipeline
+
+            result = await create_pipeline(webhook_event)
+
+            assert result is None
+            mock_logger.info.assert_called_once_with(
+                "PR is closed, skipping pipeline creation",
+                pr_number=123,
+                repo="test-owner/test-repo",
+                action="reopened",
+            )
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_bot_build_closed_pr():
+    """Test that create_pipeline returns None and posts comment for 'bot, build' on closed PR."""
+    event_id = uuid.uuid4()
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=SAMPLE_COMMENT_CLOSED_PR_PAYLOAD,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db_session)
+
+    mock_pr_response = {
+        "number": 42,
+        "state": "closed",
+        "head": {"sha": "abcdef123456"},
+    }
+
+    with patch("app.routes.webhooks.get_db", mock_get_db):
+        with patch("app.routes.webhooks.logger") as mock_logger:
+            with patch(
+                "app.routes.webhooks.create_pr_comment", AsyncMock()
+            ) as mock_comment:
+                with patch(
+                    "app.routes.webhooks.settings.github_status_token", "test-token"
+                ):
+                    with patch("httpx.AsyncClient") as MockClient:
+                        mock_response = MagicMock()
+                        mock_response.json.return_value = mock_pr_response
+                        mock_response.raise_for_status.return_value = None
+
+                        mock_client_instance = AsyncMock()
+                        mock_client_instance.get = AsyncMock(return_value=mock_response)
+                        MockClient.return_value.__aenter__.return_value = (
+                            mock_client_instance
+                        )
+
+                        from app.routes.webhooks import create_pipeline
+
+                        result = await create_pipeline(webhook_event)
+
+                        assert result is None
+                        mock_logger.info.assert_called_once_with(
+                            "PR is closed/merged, ignoring 'bot, build' command",
+                            pr_number=42,
+                            repo="test-owner/test-repo",
+                            pr_state="closed",
+                        )
+                        mock_comment.assert_called_once_with(
+                            git_repo="test-owner/test-repo",
+                            pr_number=42,
+                            comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
+                        )
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_bot_build_merged_pr():
+    """Test that create_pipeline returns None and posts comment for 'bot, build' on merged PR."""
+    event_id = uuid.uuid4()
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=SAMPLE_COMMENT_CLOSED_PR_PAYLOAD,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db_session)
+
+    mock_pr_response = {
+        "number": 42,
+        "state": "merged",
+        "head": {"sha": "abcdef123456"},
+    }
+
+    with patch("app.routes.webhooks.get_db", mock_get_db):
+        with patch("app.routes.webhooks.logger") as mock_logger:
+            with patch(
+                "app.routes.webhooks.create_pr_comment", AsyncMock()
+            ) as mock_comment:
+                with patch(
+                    "app.routes.webhooks.settings.github_status_token", "test-token"
+                ):
+                    with patch("httpx.AsyncClient") as MockClient:
+                        mock_response = MagicMock()
+                        mock_response.json.return_value = mock_pr_response
+                        mock_response.raise_for_status.return_value = None
+
+                        mock_client_instance = AsyncMock()
+                        mock_client_instance.get = AsyncMock(return_value=mock_response)
+                        MockClient.return_value.__aenter__.return_value = (
+                            mock_client_instance
+                        )
+
+                        from app.routes.webhooks import create_pipeline
+
+                        result = await create_pipeline(webhook_event)
+
+                        assert result is None
+                        mock_logger.info.assert_called_once_with(
+                            "PR is closed/merged, ignoring 'bot, build' command",
+                            pr_number=42,
+                            repo="test-owner/test-repo",
+                            pr_state="merged",
+                        )
+                        mock_comment.assert_called_once_with(
+                            git_repo="test-owner/test-repo",
+                            pr_number=42,
+                            comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
+                        )
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_bot_build_open_pr_continues():
+    """Test that create_pipeline continues normally for 'bot, build' on open PR."""
+    event_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=SAMPLE_COMMENT_CLOSED_PR_PAYLOAD,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="test-repo",
+        params={"pr_number": "42", "ref": "refs/pull/42/head"},
+        webhook_event_id=event_id,
+        status=PipelineStatus.PENDING,
+    )
+
+    mock_pipeline_service = AsyncMock()
+    mock_pipeline_service.create_pipeline.return_value = mock_pipeline
+    mock_pipeline_service.start_pipeline.return_value = mock_pipeline
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = mock_pipeline
+    mock_get_db = create_mock_get_db(mock_db_session)
+
+    mock_pr_response = {"number": 42, "state": "open", "head": {"sha": "abcdef123456"}}
+
+    with patch("app.routes.webhooks.get_db", mock_get_db):
+        with patch("app.pipelines.build.get_db", mock_get_db):
+            with patch(
+                "app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service
+            ):
+                with patch("app.routes.webhooks.update_commit_status", AsyncMock()):
+                    with patch("app.routes.webhooks.create_pr_comment", AsyncMock()):
+                        with patch(
+                            "app.routes.webhooks.settings.github_status_token",
+                            "test-token",
+                        ):
+                            with patch("httpx.AsyncClient") as MockClient:
+                                mock_response = MagicMock()
+                                mock_response.json.return_value = mock_pr_response
+                                mock_response.raise_for_status.return_value = None
+
+                                mock_client_instance = AsyncMock()
+                                mock_client_instance.get = AsyncMock(
+                                    return_value=mock_response
+                                )
+                                MockClient.return_value.__aenter__.return_value = (
+                                    mock_client_instance
+                                )
+
+                                from app.routes.webhooks import create_pipeline
+
+                                result = await create_pipeline(webhook_event)
+
+                                assert result == pipeline_id
+                                mock_pipeline_service.create_pipeline.assert_called_once()
+                                mock_pipeline_service.start_pipeline.assert_called_once()
