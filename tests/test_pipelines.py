@@ -1,16 +1,16 @@
 import uuid
-import pytest
+from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from contextlib import asynccontextmanager
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.services import GitHubActionsService
 from app.pipelines.build import BuildPipeline, CallbackData
+from app.services import GitHubActionsService
 from tests.conftest import create_mock_get_db
 
 
@@ -200,7 +200,7 @@ async def test_start_pipeline_branch_mapping(
     )
     assert mock_pipeline.provider_data == {"dispatch_result": "ok"}
 
-    mock_db_session.commit.assert_called_once()
+    assert mock_db_session.commit.call_count == 2
 
 
 @pytest.mark.asyncio

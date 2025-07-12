@@ -7,6 +7,7 @@ from typing import Any, Optional
 import httpx
 import structlog
 from pydantic import BaseModel
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
 from app.database import get_db
@@ -84,6 +85,19 @@ class BuildPipeline:
             pipeline.status = PipelineStatus.RUNNING
             pipeline.started_at = datetime.now()
 
+            if pipeline.app_id in app_build_types:
+                build_type = app_build_types[pipeline.app_id]
+            elif random.random() < 0.7:
+                build_type = "medium"
+            else:
+                build_type = pipeline.params.get("build_type", "default")
+
+            pipeline.params["build_type"] = build_type
+            if hasattr(pipeline, "_sa_instance_state"):
+                flag_modified(pipeline, "params")
+
+            await db.commit()
+
             ref = pipeline.params.get("ref")
             match ref:
                 case "refs/heads/master":
@@ -121,15 +135,7 @@ class BuildPipeline:
                 raise ValueError(f"Failed to create build in flat-manager: {str(e)}")
 
             workflow_id = pipeline.params.get("workflow_id", "build.yml")
-
-            if pipeline.app_id in app_build_types:
-                build_type = app_build_types[pipeline.app_id]
-            elif random.random() < 0.7:
-                build_type = "medium"
-            else:
-                build_type = pipeline.params.get("build_type", "default")
-
-            pipeline.params["build_type"] = build_type
+            build_type = pipeline.params["build_type"]
 
             job_data = {
                 "app_id": pipeline.app_id,
