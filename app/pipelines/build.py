@@ -96,8 +96,6 @@ class BuildPipeline:
             if hasattr(pipeline, "_sa_instance_state"):
                 flag_modified(pipeline, "params")
 
-            await db.commit()
-
             ref = pipeline.params.get("ref")
             match ref:
                 case "refs/heads/master":
@@ -112,6 +110,8 @@ class BuildPipeline:
                     flat_manager_repo = "test"
 
             pipeline.flat_manager_repo = flat_manager_repo
+
+            await db.commit()
 
             build_log_url = f"{settings.base_url}/api/pipelines/{pipeline.id}/log_url"
 

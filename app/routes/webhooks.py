@@ -355,10 +355,14 @@ async def receive_github_webhook(
             pipeline_id = await create_pipeline(event)
 
         except Exception as e:
-            logger.error("Database error", error=str(e))
+            logger.error(
+                "Database error",
+                error=str(e),
+                event={"event_id": str(event.id) if event else None},
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database error occurred while saving webhook event: {e}",
+                detail=f"Database error occurred while processing webhook: {e}",
             )
 
     response = {"message": "Webhook received", "event_id": str(event.id)}
