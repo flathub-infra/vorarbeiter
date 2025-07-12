@@ -436,7 +436,7 @@ async def test_handle_build_completion_cancelled_default_build(
             await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
 
             mock_status.assert_called_once_with(mock_pipeline, "cancelled")
-            mock_issue.assert_called_once_with(mock_pipeline)
+            mock_issue.assert_not_called()  # Cancelled builds should not create issues
 
 
 @pytest.mark.asyncio
@@ -484,7 +484,26 @@ async def test_handle_build_completion_cancelled_no_build_type(
             await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
 
             mock_status.assert_called_once_with(mock_pipeline, "cancelled")
-            mock_issue.assert_called_once_with(mock_pipeline)
+            mock_issue.assert_not_called()  # Cancelled builds should not create issues
+
+
+@pytest.mark.asyncio
+async def test_handle_build_completion_failure_still_creates_issue(
+    github_notifier, mock_pipeline
+):
+    """Test that failure builds still create issues after the cancellation change."""
+    mock_pipeline.params = {"build_type": "default"}
+
+    with patch.object(github_notifier, "notify_build_status") as mock_status:
+        with patch.object(
+            github_notifier, "create_stable_build_failure_issue"
+        ) as mock_issue:
+            await github_notifier.handle_build_completion(mock_pipeline, "failure")
+
+            mock_status.assert_called_once_with(mock_pipeline, "failure")
+            mock_issue.assert_called_once_with(
+                mock_pipeline
+            )  # Failure builds should still create issues
 
 
 @pytest.mark.asyncio

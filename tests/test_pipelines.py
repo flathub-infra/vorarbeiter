@@ -1012,6 +1012,256 @@ async def test_start_pipeline_stores_hardcoded_build_type():
             assert mock_pipeline.params["build_type"] == "large"
 
 
+# New tests for cancellation detection functionality
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_log_url_extracts_run_id(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that run_id is extracted and stored when log_url callback is received."""
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+
+    # Mock the provider's extract_run_id_from_log_url method
+    build_pipeline.provider.extract_run_id_from_log_url = MagicMock(return_value=12345)
+
+    log_url = "https://github.com/flathub/vorarbeiter/actions/runs/12345"
+    callback_data = CallbackData(log_url=log_url)
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch("app.pipelines.build.GitHubNotifier") as mock_notifier:
+            mock_notifier.return_value.handle_build_started = AsyncMock()
+
+            pipeline, updates = await build_pipeline.handle_callback(
+                sample_pipeline.id, callback_data
+            )
+
+    # Verify run_id was extracted and stored
+    build_pipeline.provider.extract_run_id_from_log_url.assert_called_once_with(log_url)
+    assert pipeline.provider_data["run_id"] == 12345
+    assert updates["run_id"] == 12345
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_log_url_handles_missing_run_id(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that missing run_id from log_url is handled gracefully."""
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+
+    # Mock the provider to return None (no run_id found)
+    build_pipeline.provider.extract_run_id_from_log_url = MagicMock(return_value=None)
+
+    log_url = "https://example.com/invalid/log/url"
+    callback_data = CallbackData(log_url=log_url)
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch("app.pipelines.build.GitHubNotifier") as mock_notifier:
+            mock_notifier.return_value.handle_build_started = AsyncMock()
+
+            pipeline, updates = await build_pipeline.handle_callback(
+                sample_pipeline.id, callback_data
+            )
+
+    # Verify that no run_id was stored
+    assert "run_id" not in pipeline.provider_data
+    assert "run_id" not in updates
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_failure_detects_spot_cancellation(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that spot instance cancellation is detected and status is overridden."""
+    # Set up pipeline with provider_data containing run_id and repo info
+    sample_pipeline.provider_data = {
+        "run_id": 12345,
+        "owner": "flathub",
+        "repo": "vorarbeiter",
+    }
+
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+
+    # Mock log content that indicates spot cancellation
+    cancellation_log = """
+    2024-01-01T10:00:00.000Z Starting build...
+    2024-01-01T10:01:00.000Z ##[error]Error: The operation was canceled.
+    """
+
+    build_pipeline.provider.fetch_run_logs = AsyncMock(return_value=cancellation_log)
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch("app.pipelines.build.GitHubNotifier") as mock_notifier:
+            mock_notifier.return_value.handle_build_completion = AsyncMock()
+
+            pipeline, updates = await build_pipeline.handle_callback(
+                sample_pipeline.id, callback_data
+            )
+
+    # Verify that logs were fetched and cancellation was detected
+    build_pipeline.provider.fetch_run_logs.assert_called_once_with(
+        "flathub", "vorarbeiter", 12345
+    )
+
+    # Verify that status was changed from failure to cancelled
+    assert pipeline.status == PipelineStatus.CANCELLED
+    assert updates["pipeline_status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_failure_no_cancellation_detected(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that actual build failures are not overridden."""
+    # Set up pipeline with provider_data containing run_id and repo info
+    sample_pipeline.provider_data = {
+        "run_id": 12345,
+        "owner": "flathub",
+        "repo": "vorarbeiter",
+    }
+
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+
+    # Mock log content that indicates actual build failure
+    failure_log = """
+    2024-01-01T10:00:00.000Z Starting build...
+    2024-01-01T10:01:00.000Z ##[error]Build failed: compilation error
+    2024-01-01T10:02:00.000Z Process completed with exit code 1
+    """
+
+    build_pipeline.provider.fetch_run_logs = AsyncMock(return_value=failure_log)
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch("app.pipelines.build.GitHubNotifier") as mock_notifier:
+            mock_notifier.return_value.handle_build_completion = AsyncMock()
+
+            pipeline, updates = await build_pipeline.handle_callback(
+                sample_pipeline.id, callback_data
+            )
+
+    # Verify that logs were fetched but status was not changed
+    build_pipeline.provider.fetch_run_logs.assert_called_once_with(
+        "flathub", "vorarbeiter", 12345
+    )
+
+    # Verify that status remained as failure
+    assert pipeline.status == PipelineStatus.FAILED
+    assert updates["pipeline_status"] == "failure"
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_failure_missing_run_id(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that failures without run_id are handled gracefully."""
+    # Set up pipeline without run_id in provider_data
+    sample_pipeline.provider_data = {"owner": "flathub", "repo": "vorarbeiter"}
+
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+
+    build_pipeline.provider.fetch_run_logs = AsyncMock()
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch("app.pipelines.build.GitHubNotifier") as mock_notifier:
+            mock_notifier.return_value.handle_build_completion = AsyncMock()
+
+            pipeline, updates = await build_pipeline.handle_callback(
+                sample_pipeline.id, callback_data
+            )
+
+    # Verify that log fetching was not attempted
+    build_pipeline.provider.fetch_run_logs.assert_not_called()
+
+    # Verify that status remained as failure
+    assert pipeline.status == PipelineStatus.FAILED
+    assert updates["pipeline_status"] == "failure"
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_failure_log_fetch_error(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that log fetch errors don't break the callback handling."""
+    # Set up pipeline with provider_data containing run_id and repo info
+    sample_pipeline.provider_data = {
+        "run_id": 12345,
+        "owner": "flathub",
+        "repo": "vorarbeiter",
+    }
+
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+
+    # Mock log fetching to raise an exception
+    build_pipeline.provider.fetch_run_logs = AsyncMock(
+        side_effect=Exception("Log fetch failed")
+    )
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch("app.pipelines.build.GitHubNotifier") as mock_notifier:
+            mock_notifier.return_value.handle_build_completion = AsyncMock()
+
+            pipeline, updates = await build_pipeline.handle_callback(
+                sample_pipeline.id, callback_data
+            )
+
+    # Verify that log fetching was attempted
+    build_pipeline.provider.fetch_run_logs.assert_called_once_with(
+        "flathub", "vorarbeiter", 12345
+    )
+
+    # Verify that status remained as failure (fallback behavior)
+    assert pipeline.status == PipelineStatus.FAILED
+    assert updates["pipeline_status"] == "failure"
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_success_no_cancellation_check(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that success callbacks don't trigger cancellation detection."""
+    sample_pipeline.provider_data = {
+        "run_id": 12345,
+        "owner": "flathub",
+        "repo": "vorarbeiter",
+    }
+
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+
+    build_pipeline.provider.fetch_run_logs = AsyncMock()
+
+    callback_data = CallbackData(status="success")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch("app.pipelines.build.GitHubNotifier") as mock_notifier:
+            mock_notifier.return_value.handle_build_completion = AsyncMock()
+            with patch("app.pipelines.build.FlatManagerClient"):
+                pipeline, updates = await build_pipeline.handle_callback(
+                    sample_pipeline.id, callback_data
+                )
+
+    # Verify that log fetching was not called for success status
+    build_pipeline.provider.fetch_run_logs.assert_not_called()
+
+    # Verify that status is success
+    assert pipeline.status == PipelineStatus.SUCCEEDED
+    assert updates["pipeline_status"] == "success"
+
+
 @pytest.mark.asyncio
 async def test_start_pipeline_stores_parameter_build_type():
     pipeline_id = uuid.uuid4()

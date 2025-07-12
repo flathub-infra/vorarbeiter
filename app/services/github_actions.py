@@ -1,4 +1,7 @@
 import json
+import re
+import zipfile
+from io import BytesIO
 from typing import Any
 
 import httpx
@@ -65,6 +68,51 @@ class GitHubActionsService:
                 "workflow_id": workflow_id,
                 "ref": ref,
             }
+
+    def extract_run_id_from_log_url(self, log_url: str) -> int | None:
+        """Extract run_id from GitHub Actions log URL."""
+        if not log_url:
+            return None
+
+        pattern = r"github\.com/[^/]+/[^/]+/actions/runs/(\d+)"
+        match = re.search(pattern, log_url)
+
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return None
+
+        return None
+
+    async def fetch_run_logs(self, owner: str, repo: str, run_id: int) -> str | None:
+        """Fetch and extract log content from a GitHub Actions run."""
+        try:
+            async with self._get_client() as client:
+                response = await client.get(
+                    f"/repos/{owner}/{repo}/actions/runs/{run_id}/logs"
+                )
+                response.raise_for_status()
+
+                zip_content = BytesIO(response.content)
+                log_content_parts = []
+
+                with zipfile.ZipFile(zip_content) as zip_file:
+                    for file_info in zip_file.filelist:
+                        if file_info.filename.endswith(".txt"):
+                            with zip_file.open(file_info) as log_file:
+                                content = log_file.read().decode(
+                                    "utf-8", errors="ignore"
+                                )
+                                lines = content.split("\n")
+                                if len(lines) > 1000:
+                                    content = "\n".join(lines[-1000:])
+                                log_content_parts.append(content)
+
+                return "\n".join(log_content_parts)
+
+        except Exception:
+            return None
 
     async def cancel(self, job_id: str, provider_data: dict[str, Any]) -> bool:
         run_id = provider_data.get("run_id")

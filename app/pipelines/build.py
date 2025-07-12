@@ -15,6 +15,7 @@ from app.services import github_actions_service
 from app.services.callback import CallbackValidator
 from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
+from app.utils.github_actions_logs import was_spot_cancelled
 
 logger = structlog.get_logger(__name__)
 
@@ -195,6 +196,14 @@ class BuildPipeline:
                     raise ValueError("Log URL already set")
                 pipeline.log_url = callback_data.log_url
                 updates["log_url"] = pipeline.log_url
+
+                run_id = self.provider.extract_run_id_from_log_url(
+                    callback_data.log_url
+                )
+                if run_id:
+                    pipeline.provider_data["run_id"] = run_id
+                    updates["run_id"] = run_id
+
                 await db.commit()
                 github_notifier = GitHubNotifier()
                 await github_notifier.handle_build_started(
@@ -214,6 +223,30 @@ class BuildPipeline:
                     raise ValueError(
                         "status must be 'success', 'failure', or 'cancelled'"
                     )
+
+                if status_value == "failure":
+                    try:
+                        run_id = pipeline.provider_data.get("run_id")
+                        owner = pipeline.provider_data.get("owner")
+                        repo = pipeline.provider_data.get("repo")
+
+                        if run_id and owner and repo:
+                            log_content = await self.provider.fetch_run_logs(
+                                owner, repo, run_id
+                            )
+                            if log_content and was_spot_cancelled(log_content):
+                                logger.info(
+                                    "Detected spot instance cancellation, overriding status",
+                                    pipeline_id=str(pipeline_id),
+                                    run_id=run_id,
+                                )
+                                status_value = "cancelled"
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to check for spot instance cancellation, proceeding with failure status",
+                            pipeline_id=str(pipeline_id),
+                            error=str(e),
+                        )
 
                 match status_value:
                     case "success":
