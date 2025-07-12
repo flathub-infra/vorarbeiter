@@ -200,7 +200,7 @@ async def test_start_pipeline_branch_mapping(
     )
     assert mock_pipeline.provider_data == {"dispatch_result": "ok"}
 
-    assert mock_db_session.commit.call_count == 2
+    mock_db_session.commit.assert_called_once()
 
 
 @pytest.mark.asyncio

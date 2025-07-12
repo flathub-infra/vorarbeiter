@@ -111,8 +111,6 @@ class BuildPipeline:
 
             pipeline.flat_manager_repo = flat_manager_repo
 
-            await db.commit()
-
             build_log_url = f"{settings.base_url}/api/pipelines/{pipeline.id}/log_url"
 
             try:
