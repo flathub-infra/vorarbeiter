@@ -479,16 +479,16 @@ jobs:
               just -f .flathub.justfile build $APP_ID $REF $BUILD_ARCH || exit 1
             '
 
-      - name: Commit screenshots
-        run: |
-          docker run --rm \
-            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
-            --entrypoint="" \
-            -e TMPDIR=/work/tmp \
-            -v "${GITHUB_WORKSPACE}/work:/work" \
-            -w /work \
-            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just -f .flathub.justfile commit-screenshots
+      # - name: Commit screenshots
+      #  run: |
+      #    docker run --rm \
+      #      --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+      #      --entrypoint="" \
+      #      -e TMPDIR=/work/tmp \
+      #      -v "${GITHUB_WORKSPACE}/work:/work" \
+      #      -w /work \
+      #      ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+      #      just -f .flathub.justfile commit-screenshots
 
       - name: Validate build
         run: |
