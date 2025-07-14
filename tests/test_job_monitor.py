@@ -5,7 +5,7 @@ import pytest
 
 from app.models import Pipeline, PipelineStatus
 from app.services.job_monitor import JobMonitor
-from app.utils.flat_manager import JobStatus, JobKind
+from app.utils.flat_manager import JobKind, JobStatus
 
 
 @pytest.fixture
@@ -538,9 +538,7 @@ async def test_process_update_repo_job_failed(job_monitor, mock_db):
 
         assert result is True
         assert pipeline.status == PipelineStatus.FAILED
-        mock_create_issue.assert_called_once_with(
-            pipeline, "update-repo", 99999, job_response
-        )
+        mock_create_issue.assert_not_called()
 
 
 @pytest.mark.asyncio

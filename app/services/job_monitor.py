@@ -1,10 +1,11 @@
-import structlog
 from datetime import datetime
+
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Pipeline, PipelineStatus
-from app.utils.flat_manager import FlatManagerClient, JobResponse, JobStatus, JobKind
+from app.utils.flat_manager import FlatManagerClient, JobKind, JobResponse, JobStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -247,9 +248,6 @@ class JobMonitor:
                 )
                 await self._notify_flat_manager_job_completed(
                     pipeline, "update-repo", pipeline.update_repo_job_id, success=False
-                )
-                await self._create_job_failure_issue(
-                    pipeline, "update-repo", pipeline.update_repo_job_id, job_response
                 )
                 return True
             else:
