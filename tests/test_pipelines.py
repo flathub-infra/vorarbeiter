@@ -970,7 +970,7 @@ async def test_start_pipeline_stores_default_build_type():
 
             await build_pipeline.start_pipeline(pipeline_id)
 
-            assert mock_pipeline.params["build_type"] in ["medium", "default"]
+            assert mock_pipeline.params["build_type"] == "medium"
 
 
 @pytest.mark.asyncio
