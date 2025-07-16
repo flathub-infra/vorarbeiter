@@ -124,19 +124,48 @@ async def test_update_commit_status_invalid_state(mock_settings):
 
 
 @pytest.mark.asyncio
-async def test_update_commit_status_request_error(mock_settings):
+async def test_update_commit_status_request_error_retry(mock_settings):
     with patch("httpx.AsyncClient") as MockClient:
-        mock_client_instance = AsyncMock()
-        mock_client_instance.post = AsyncMock(
-            side_effect=httpx.RequestError("Network error")
-        )
-        MockClient.return_value.__aenter__.return_value = mock_client_instance
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            mock_response_success = MagicMock()
+            mock_response_success.raise_for_status = MagicMock()
 
-        await update_commit_status(
-            sha="abc123", state="success", git_repo="flathub/test-app"
-        )
+            mock_client_instance = AsyncMock()
+            mock_client_instance.post = AsyncMock(
+                side_effect=[
+                    httpx.RequestError("Network error"),
+                    httpx.RequestError("Network error"),
+                    mock_response_success,
+                ]
+            )
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
 
-        mock_client_instance.post.assert_called_once()
+            await update_commit_status(
+                sha="abc123", state="success", git_repo="flathub/test-app"
+            )
+
+            assert mock_client_instance.post.call_count == 3
+            assert mock_sleep.call_count == 2
+            assert mock_sleep.call_args_list[0][0][0] == 1.0
+            assert mock_sleep.call_args_list[1][0][0] == 2.0
+
+
+@pytest.mark.asyncio
+async def test_update_commit_status_request_error_max_retries(mock_settings):
+    with patch("httpx.AsyncClient") as MockClient:
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            mock_client_instance = AsyncMock()
+            mock_client_instance.post = AsyncMock(
+                side_effect=httpx.RequestError("Network error")
+            )
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+
+            await update_commit_status(
+                sha="abc123", state="success", git_repo="flathub/test-app"
+            )
+
+            assert mock_client_instance.post.call_count == 4
+            assert mock_sleep.call_count == 3
 
 
 @pytest.mark.asyncio
@@ -159,6 +188,68 @@ async def test_update_commit_status_http_error(mock_settings):
         )
 
         mock_client_instance.post.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_update_commit_status_retry_on_500_error(mock_settings):
+    with patch("httpx.AsyncClient") as MockClient:
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            mock_response_500 = MagicMock()
+            mock_response_500.status_code = 500
+            mock_response_500.text = "Internal Server Error"
+
+            mock_response_success = MagicMock()
+            mock_response_success.raise_for_status = MagicMock()
+
+            mock_client_instance = AsyncMock()
+            mock_client_instance.post = AsyncMock(
+                side_effect=[
+                    httpx.HTTPStatusError(
+                        "HTTP error", request=MagicMock(), response=mock_response_500
+                    ),
+                    httpx.HTTPStatusError(
+                        "HTTP error", request=MagicMock(), response=mock_response_500
+                    ),
+                    mock_response_success,
+                ]
+            )
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+
+            await update_commit_status(
+                sha="abc123", state="success", git_repo="flathub/test-app"
+            )
+
+            assert mock_client_instance.post.call_count == 3
+            assert mock_sleep.call_count == 2
+            assert mock_sleep.call_args_list[0][0][0] == 1.0
+            assert mock_sleep.call_args_list[1][0][0] == 2.0
+
+
+@pytest.mark.asyncio
+async def test_update_commit_status_max_retries_exceeded(mock_settings):
+    with patch("httpx.AsyncClient") as MockClient:
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            mock_response_500 = MagicMock()
+            mock_response_500.status_code = 500
+            mock_response_500.text = "Internal Server Error"
+
+            mock_client_instance = AsyncMock()
+            mock_client_instance.post = AsyncMock(
+                side_effect=httpx.HTTPStatusError(
+                    "HTTP error", request=MagicMock(), response=mock_response_500
+                )
+            )
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+
+            await update_commit_status(
+                sha="abc123", state="success", git_repo="flathub/test-app"
+            )
+
+            assert mock_client_instance.post.call_count == 4
+            assert mock_sleep.call_count == 3
+            assert mock_sleep.call_args_list[0][0][0] == 1.0
+            assert mock_sleep.call_args_list[1][0][0] == 2.0
+            assert mock_sleep.call_args_list[2][0][0] == 4.0
 
 
 @pytest.mark.asyncio

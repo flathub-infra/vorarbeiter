@@ -1,3 +1,4 @@
+import asyncio
 import structlog
 
 import httpx
@@ -57,43 +58,86 @@ async def update_commit_status(
     if description:
         payload["description"] = description
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            logger.info(
-                "Successfully updated GitHub status",
+    max_retries = 3
+    retry_count = 0
+    base_delay = 1.0
+
+    while retry_count <= max_retries:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=10.0,
+                )
+                response.raise_for_status()
+                logger.info(
+                    "Successfully updated GitHub status",
+                    git_repo=git_repo,
+                    commit=sha,
+                    state=state,
+                )
+                return
+        except httpx.RequestError as e:
+            if retry_count < max_retries:
+                delay = base_delay * (2**retry_count)
+                logger.warning(
+                    "Request error updating GitHub status, retrying after delay",
+                    git_repo=git_repo,
+                    commit=sha,
+                    error=str(e),
+                    retry_count=retry_count + 1,
+                    max_retries=max_retries,
+                    delay_seconds=delay,
+                )
+                retry_count += 1
+                await asyncio.sleep(delay)
+                continue
+            else:
+                logger.error(
+                    "Request error updating GitHub status",
+                    git_repo=git_repo,
+                    commit=sha,
+                    error=str(e),
+                    retry_count=retry_count,
+                    max_retries=max_retries,
+                )
+                return
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 500 and retry_count < max_retries:
+                delay = base_delay * (2**retry_count)
+                logger.warning(
+                    "GitHub API returned 500, retrying after delay",
+                    git_repo=git_repo,
+                    commit=sha,
+                    status_code=e.response.status_code,
+                    retry_count=retry_count + 1,
+                    max_retries=max_retries,
+                    delay_seconds=delay,
+                )
+                retry_count += 1
+                await asyncio.sleep(delay)
+                continue
+            else:
+                logger.error(
+                    "HTTP error updating GitHub status",
+                    git_repo=git_repo,
+                    commit=sha,
+                    status_code=e.response.status_code,
+                    response_text=e.response.text,
+                    retry_count=retry_count,
+                    max_retries=max_retries,
+                )
+                return
+        except Exception as e:
+            logger.error(
+                "Unexpected error updating GitHub status",
                 git_repo=git_repo,
                 commit=sha,
-                state=state,
+                error=str(e),
             )
-    except httpx.RequestError as e:
-        logger.error(
-            "Request error updating GitHub status",
-            git_repo=git_repo,
-            commit=sha,
-            error=str(e),
-        )
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "HTTP error updating GitHub status",
-            git_repo=git_repo,
-            commit=sha,
-            status_code=e.response.status_code,
-            response_text=e.response.text,
-        )
-    except Exception as e:
-        logger.error(
-            "Unexpected error updating GitHub status",
-            git_repo=git_repo,
-            commit=sha,
-            error=str(e),
-        )
+            return
 
 
 async def create_pr_comment(git_repo: str, pr_number: int, comment: str) -> None:
