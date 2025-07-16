@@ -182,12 +182,6 @@ build app_id git_ref build_arch:
         --override-source-date-epoch 1321009871 \
         builddir "$manifest"
 
-commit-screenshots:
-    #!/usr/bin/env bash
-    set -euxo pipefail
-    mkdir -p builddir/files/share/app-info/media
-    ostree commit --repo=repo --canonical-permissions --branch=screenshots/{{arch()}} builddir/files/share/app-info/media
-
 validate-build:
     #!/usr/bin/env bash
     set -euxo pipefail
