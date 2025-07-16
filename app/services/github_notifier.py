@@ -87,7 +87,7 @@ class GitHubNotifier:
             or not isinstance(sha, str)
             or not isinstance(git_repo, str)
         ):
-            logger.error(
+            logger.info(
                 "Missing required params for GitHub status update",
                 pipeline_id=str(pipeline.id),
                 has_sha=bool(sha),
