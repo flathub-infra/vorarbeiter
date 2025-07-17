@@ -41,6 +41,7 @@ app_build_types = {
     "org.gnome.Fractal": "large",
     "com.pot_app.pot": "large",
     "org.mamedev.MAME": "large",
+    "org.catacombing.kumo": "large",
 }
 
 
