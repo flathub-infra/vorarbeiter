@@ -229,12 +229,66 @@ async def test_handle_callback_failure(build_pipeline, mock_db, sample_pipeline)
     callback_data = CallbackData(status="failure")
 
     with patch("app.pipelines.build.get_db", mock_get_db):
-        pipeline, updates = await build_pipeline.handle_callback(
-            sample_pipeline.id, callback_data
-        )
+        with patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled:
+            mock_check_cancelled.return_value = False
+            pipeline, updates = await build_pipeline.handle_callback(
+                sample_pipeline.id, callback_data
+            )
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_failure_reclassified_as_cancelled(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that a 'failure' callback gets reclassified as 'cancelled' when spot instance termination is detected."""
+    mock_db.get.return_value = sample_pipeline
+
+    mock_get_db = create_mock_get_db(mock_db)
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled:
+            mock_check_cancelled.return_value = True  # Simulate cancellation detected
+            pipeline, updates = await build_pipeline.handle_callback(
+                sample_pipeline.id, callback_data
+            )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    assert pipeline.finished_at is not None
+    assert updates["pipeline_status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_failure_cancellation_check_error(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that if cancellation check fails, the build is still marked as failed."""
+    mock_db.get.return_value = sample_pipeline
+
+    mock_get_db = create_mock_get_db(mock_db)
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled:
+            mock_check_cancelled.side_effect = Exception("API error")
+            pipeline, updates = await build_pipeline.handle_callback(
+                sample_pipeline.id, callback_data
+            )
+
+    assert pipeline.status == PipelineStatus.FAILED
+    assert pipeline.finished_at is not None
+    assert updates["pipeline_status"] == "failure"
 
 
 @pytest.fixture

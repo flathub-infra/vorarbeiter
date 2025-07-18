@@ -12,6 +12,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
 from app.services import github_actions_service
+from app.services.github_actions import GitHubActionsService
 from app.services.callback import CallbackValidator
 from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
@@ -221,7 +222,29 @@ class BuildPipeline:
                         pipeline.status = PipelineStatus.SUCCEEDED
                         pipeline.finished_at = datetime.now()
                     case "failure":
-                        pipeline.status = PipelineStatus.FAILED
+                        github_actions = GitHubActionsService()
+                        try:
+                            was_cancelled = (
+                                await github_actions.check_run_was_cancelled(
+                                    pipeline.provider_data
+                                )
+                            )
+                            if was_cancelled:
+                                logger.info(
+                                    "Build reclassified from failed to cancelled",
+                                    pipeline_id=str(pipeline_id),
+                                )
+                                pipeline.status = PipelineStatus.CANCELLED
+                                status_value = "cancelled"
+                            else:
+                                pipeline.status = PipelineStatus.FAILED
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to check if build was cancelled, treating as failed",
+                                pipeline_id=str(pipeline_id),
+                                error=str(e),
+                            )
+                            pipeline.status = PipelineStatus.FAILED
                         pipeline.finished_at = datetime.now()
                     case "cancelled":
                         pipeline.status = PipelineStatus.CANCELLED
