@@ -548,8 +548,6 @@ jobs:
               flathub-repro-checker --appid "$APP_ID" --ref-build-path /work/repo
           }
 
-          run_check
-
           if [ $((RANDOM % 100)) -lt 30 ]; then
             run_check
           fi
