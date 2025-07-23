@@ -545,7 +545,7 @@ jobs:
               -e GITHUB_REPOSITORY \
               -e GITHUB_RUN_ID \
               ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-              flathub-repro-checker --json --appid "$APP_ID" --ref-build-path /work/repo
+              flathub-repro-checker --appid "$APP_ID" --ref-build-path /work/repo
           }
 
           run_check
