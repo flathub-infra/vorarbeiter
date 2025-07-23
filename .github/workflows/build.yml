@@ -526,6 +526,38 @@ jobs:
           oras login ghcr.io --password "${{ secrets.GITHUB_TOKEN }}" -u "${{ github.actor }}" || exit 0
           oras push ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest .flatpak-builder || exit 0
 
+      - name: Run reproducibility check
+        if: ${{ inputs.flat_manager_repo == 'stable' && inputs.git_ref == 'refs/heads/master' && matrix.arch == 'x86_64' }}
+        continue-on-error: true
+        run: |
+          run_check() {
+            docker run --rm \
+              --entrypoint="" \
+              --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+              --security-opt apparmor=unconfined \
+              --cap-drop all \
+              -v /proc:/host/proc \
+              -v "${GITHUB_WORKSPACE}/work:/work" \
+              -e TMPDIR=/work/tmp \
+              -w /work \
+              -e APP_ID \
+              ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+              flathub-repro-checker --json --appid "$APP_ID" --ref-build-path /work/repo
+          }
+
+          if [ $((RANDOM % 100)) -lt 30 ]; then
+            run_check
+          fi
+
+      - name: Upload reproducibility check results
+        continue-on-error: true
+        # 4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: diffoscope-results-${{ github.run_id }}-${{ github.job }}-${{ github.run_attempt }}
+          path: ./work/diffoscope_result-*
+          retention-days: 30
+
       - name: Get free space
         if: always()
         run: |
