@@ -1,0 +1,50 @@
+name: Reprocheck pipeline
+run-name: reprocheck ${{ inputs.app_id }}
+
+concurrency:
+  group: reprocheck-${{ inputs.app_id }}-${{ inputs.build_pipeline_id }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_id:
+        description: 'Application ID'
+        required: true
+      build_pipeline_id:
+        description: 'Build pipeline ID'
+        required: true
+      callback_url:
+        description: 'Callback URL'
+        required: true
+      callback_token:
+        description: 'Callback token'
+        required: true
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'default'
+
+jobs:
+  hello-world:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "hello world"
+
+  callback:
+    runs-on: ubuntu-latest
+    needs: [hello-world]
+    if: ${{ always() }}
+    steps:
+      - name: Report job status
+        run: |
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
+
+          status="success"
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
+            -d "{\"status\": \"${status}\"}" \
+            "${{ inputs.callback_url }}"

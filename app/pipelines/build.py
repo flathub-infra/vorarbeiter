@@ -108,30 +108,58 @@ class BuildPipeline:
                     flat_manager_repo = "test"
 
             pipeline.flat_manager_repo = flat_manager_repo
+            workflow_id = pipeline.params.get("workflow_id", "build.yml")
+            build_type = pipeline.params["build_type"]
+
+            requires_flat_manager = workflow_id != "reprocheck.yml"
 
             build_log_url = f"{settings.base_url}/api/pipelines/{pipeline.id}/log_url"
 
-            try:
-                build_data = await self.flat_manager.create_build(
-                    repo=flat_manager_repo, build_log_url=build_log_url
-                )
-
-                build_id = build_data.get("id")
-                if build_id is None:
-                    raise ValueError(
-                        "Failed to get build ID from flat-manager response"
+            upload_token = None
+            if requires_flat_manager:
+                try:
+                    build_data = await self.flat_manager.create_build(
+                        repo=flat_manager_repo, build_log_url=build_log_url
                     )
 
-                pipeline.build_id = build_id
+                    build_id = build_data.get("id")
+                    if build_id is None:
+                        raise ValueError(
+                            "Failed to get build ID from flat-manager response"
+                        )
 
-                upload_token = await self.flat_manager.create_token_subset(
-                    build_id=build_id, app_id=pipeline.app_id
+                    pipeline.build_id = build_id
+
+                    upload_token = await self.flat_manager.create_token_subset(
+                        build_id=build_id, app_id=pipeline.app_id
+                    )
+                except Exception as e:
+                    raise ValueError(
+                        f"Failed to create build in flat-manager: {str(e)}"
+                    )
+
+            inputs = {
+                "app_id": pipeline.app_id,
+                "git_ref": pipeline.params.get("ref", "master"),
+                "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
+                "callback_token": pipeline.callback_token,
+                "build_type": build_type,
+            }
+
+            if requires_flat_manager:
+                assert pipeline.build_id is not None
+                inputs.update(
+                    {
+                        "build_url": self.flat_manager.get_build_url(pipeline.build_id),
+                        "flat_manager_repo": flat_manager_repo,
+                        "flat_manager_token": upload_token,
+                    }
                 )
-            except Exception as e:
-                raise ValueError(f"Failed to create build in flat-manager: {str(e)}")
 
-            workflow_id = pipeline.params.get("workflow_id", "build.yml")
-            build_type = pipeline.params["build_type"]
+            if workflow_id == "reprocheck.yml":
+                build_pipeline_id = pipeline.params.get("build_pipeline_id")
+                if build_pipeline_id:
+                    inputs["build_pipeline_id"] = build_pipeline_id
 
             job_data = {
                 "app_id": pipeline.app_id,
@@ -141,16 +169,7 @@ class BuildPipeline:
                     "repo": "vorarbeiter",
                     "workflow_id": workflow_id,
                     "ref": "main",
-                    "inputs": {
-                        "app_id": pipeline.app_id,
-                        "git_ref": pipeline.params.get("ref", "master"),
-                        "build_url": self.flat_manager.get_build_url(build_id),
-                        "flat_manager_repo": flat_manager_repo,
-                        "flat_manager_token": upload_token,
-                        "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
-                        "callback_token": pipeline.callback_token,
-                        "build_type": build_type,
-                    },
+                    "inputs": inputs,
                 },
             }
 
@@ -251,7 +270,10 @@ class BuildPipeline:
                         pipeline.finished_at = datetime.now()
 
                 await db.commit()
-                if status_value == "success":
+                if (
+                    status_value == "success"
+                    and pipeline.params.get("workflow_id", "build.yml") == "build.yml"
+                ):
                     flat_manager = None
                     if pipeline.params.get("pr_number"):
                         flat_manager = FlatManagerClient(
@@ -328,7 +350,7 @@ class BuildPipeline:
                             "Pipeline succeeded but has no build_id, skipping commit",
                             pipeline_id=str(pipeline_id),
                         )
-                else:
+                elif pipeline.params.get("workflow_id", "build.yml") == "build.yml":
                     github_notifier = GitHubNotifier()
                     await github_notifier.handle_build_completion(
                         pipeline, status_value, flat_manager_client=None
@@ -355,3 +377,51 @@ class BuildPipeline:
                 raise ValueError("Invalid callback token")
 
             return pipeline
+
+    async def handle_publication(self, pipeline: Pipeline) -> None:
+        """Handle all post-publication actions for a pipeline."""
+        if pipeline.flat_manager_repo == "stable" and not pipeline.params.get(
+            "reprocheck_pipeline_id"
+        ):
+            await self._dispatch_reprocheck_workflow(pipeline)
+
+    async def _dispatch_reprocheck_workflow(self, pipeline: Pipeline) -> None:
+        """Dispatch reprocheck workflow for a published stable build."""
+        try:
+            reprocheck_params = {
+                "build_pipeline_id": str(pipeline.id),
+                "owner": "flathub-infra",
+                "repo": "vorarbeiter",
+                "workflow_id": "reprocheck.yml",
+                "ref": "main",
+            }
+
+            reprocheck_pipeline = await self.create_pipeline(
+                app_id=pipeline.app_id,
+                params=reprocheck_params,
+            )
+
+            reprocheck_pipeline = await self.start_pipeline(reprocheck_pipeline.id)
+
+            async with get_db() as db:
+                db_pipeline = await db.get(Pipeline, pipeline.id)
+                if db_pipeline:
+                    db_pipeline.params["reprocheck_pipeline_id"] = str(
+                        reprocheck_pipeline.id
+                    )
+                    await db.commit()
+
+            logger.info(
+                "Reprocheck workflow dispatched after update-repo completion",
+                pipeline_id=str(pipeline.id),
+                reprocheck_pipeline_id=str(reprocheck_pipeline.id),
+                update_repo_job_id=pipeline.update_repo_job_id,
+            )
+
+        except Exception as e:
+            logger.error(
+                "Failed to dispatch reprocheck workflow",
+                pipeline_id=str(pipeline.id),
+                update_repo_job_id=pipeline.update_repo_job_id,
+                error=str(e),
+            )

@@ -238,6 +238,19 @@ class JobMonitor:
                 await self._notify_flat_manager_job_completed(
                     pipeline, "update-repo", pipeline.update_repo_job_id, success=True
                 )
+
+                from app.pipelines.build import BuildPipeline
+
+                build_pipeline = BuildPipeline()
+                try:
+                    await build_pipeline.handle_publication(pipeline)
+                except Exception as e:
+                    logger.error(
+                        "Error in post-publication handling",
+                        pipeline_id=str(pipeline.id),
+                        error=str(e),
+                    )
+
                 return True
             elif job_status == JobStatus.BROKEN:
                 pipeline.status = PipelineStatus.FAILED
