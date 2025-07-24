@@ -7,6 +7,7 @@ import httpx
 import structlog
 from pydantic import BaseModel
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
@@ -378,12 +379,14 @@ class BuildPipeline:
 
             return pipeline
 
-    async def handle_publication(self, pipeline: Pipeline) -> None:
+    async def handle_publication(self, db: AsyncSession, pipeline: Pipeline) -> None:
         """Handle all post-publication actions for a pipeline."""
         if pipeline.flat_manager_repo == "stable" and not pipeline.repro_pipeline_id:
-            await self._dispatch_reprocheck_workflow(pipeline)
+            await self._dispatch_reprocheck_workflow(db, pipeline)
 
-    async def _dispatch_reprocheck_workflow(self, pipeline: Pipeline) -> None:
+    async def _dispatch_reprocheck_workflow(
+        self, db: AsyncSession, pipeline: Pipeline
+    ) -> None:
         """Dispatch reprocheck workflow for a published stable build."""
         try:
             reprocheck_params = {
@@ -401,11 +404,7 @@ class BuildPipeline:
 
             reprocheck_pipeline = await self.start_pipeline(reprocheck_pipeline.id)
 
-            async with get_db() as db:
-                db_pipeline = await db.get(Pipeline, pipeline.id)
-                if db_pipeline:
-                    db_pipeline.repro_pipeline_id = reprocheck_pipeline.id
-                    await db.commit()
+            pipeline.repro_pipeline_id = reprocheck_pipeline.id
 
             logger.info(
                 "Reprocheck workflow dispatched after update-repo completion",

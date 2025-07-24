@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 from datetime import datetime
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines.build import BuildPipeline
@@ -65,7 +66,8 @@ async def test_reprocheck_pipeline_skips_flat_manager_build_creation(
 
         with patch.object(build_pipeline, "start_pipeline") as mock_start:
             mock_start.return_value = mock_reprocheck_pipeline
-            await build_pipeline._dispatch_reprocheck_workflow(stable_pipeline)
+            mock_db = AsyncMock(spec=AsyncSession)
+            await build_pipeline._dispatch_reprocheck_workflow(mock_db, stable_pipeline)
 
         # Verify pipeline was created with reprocheck workflow_id
         create_call_args = mock_create.call_args
