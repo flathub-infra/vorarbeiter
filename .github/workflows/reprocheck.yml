@@ -11,6 +11,9 @@ on:
       app_id:
         description: 'Application ID'
         required: true
+      git_ref:
+        description: 'Git reference (unused, for backwards compatibility)'
+        required: true
       build_pipeline_id:
         description: 'Build pipeline ID'
         required: true
