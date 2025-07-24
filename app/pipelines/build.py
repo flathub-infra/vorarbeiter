@@ -380,9 +380,7 @@ class BuildPipeline:
 
     async def handle_publication(self, pipeline: Pipeline) -> None:
         """Handle all post-publication actions for a pipeline."""
-        if pipeline.flat_manager_repo == "stable" and not pipeline.params.get(
-            "reprocheck_pipeline_id"
-        ):
+        if pipeline.flat_manager_repo == "stable" and not pipeline.repro_pipeline_id:
             await self._dispatch_reprocheck_workflow(pipeline)
 
     async def _dispatch_reprocheck_workflow(self, pipeline: Pipeline) -> None:
@@ -406,9 +404,7 @@ class BuildPipeline:
             async with get_db() as db:
                 db_pipeline = await db.get(Pipeline, pipeline.id)
                 if db_pipeline:
-                    db_pipeline.params["reprocheck_pipeline_id"] = str(
-                        reprocheck_pipeline.id
-                    )
+                    db_pipeline.repro_pipeline_id = reprocheck_pipeline.id
                     await db.commit()
 
             logger.info(

@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any
+import uuid
 
 from pydantic import BaseModel, field_validator
 
@@ -21,7 +22,7 @@ class PipelineSummary(BaseModel):
     commit_job_id: int | None = None
     publish_job_id: int | None = None
     update_repo_job_id: int | None = None
-    repro_pipeline_id: int | None = None
+    repro_pipeline_id: uuid.UUID | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -40,7 +41,7 @@ class PipelineResponse(BaseModel):
     commit_job_id: int | None = None
     publish_job_id: int | None = None
     update_repo_job_id: int | None = None
-    repro_pipeline_id: int | None = None
+    repro_pipeline_id: uuid.UUID | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None

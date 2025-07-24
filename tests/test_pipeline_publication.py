@@ -60,7 +60,8 @@ def stable_pipeline_with_reprocheck():
         id=uuid.uuid4(),
         app_id="org.test.App",
         status=PipelineStatus.PUBLISHED,
-        params={"reprocheck_pipeline_id": "existing-reprocheck-id"},
+        params={},
+        repro_pipeline_id=uuid.uuid4(),
         flat_manager_repo="stable",
         build_id=123,
         update_repo_job_id=456,
@@ -152,9 +153,7 @@ async def test_dispatch_reprocheck_workflow_creates_pipeline_and_dispatches(
 
         mock_db_session.get.assert_called_once_with(Pipeline, stable_pipeline.id)
         mock_db_session.commit.assert_called_once()
-        assert stable_pipeline.params["reprocheck_pipeline_id"] == str(
-            reprocheck_pipeline_id
-        )
+        assert stable_pipeline.repro_pipeline_id == reprocheck_pipeline_id
 
 
 @pytest.mark.asyncio
