@@ -390,7 +390,6 @@ class BuildPipeline:
                         )
 
                 updates["pipeline_status"] = status_value
-                return pipeline, updates
             await db.commit()
             return pipeline, updates
 
