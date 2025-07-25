@@ -7,7 +7,6 @@ import httpx
 import structlog
 from pydantic import BaseModel
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
@@ -28,6 +27,7 @@ class CallbackData(BaseModel):
     is_extra_data: Optional[bool] = None
     end_of_life: Optional[str] = None
     end_of_life_rebase: Optional[str] = None
+    build_pipeline_id: Optional[str] = None
 
 
 app_build_types = {
@@ -357,6 +357,39 @@ class BuildPipeline:
                         pipeline, status_value, flat_manager_client=None
                     )
 
+                if (
+                    pipeline.params.get("workflow_id") == "reprocheck.yml"
+                    and hasattr(callback_data, "build_pipeline_id")
+                    and callback_data.build_pipeline_id
+                ):
+                    try:
+                        build_pipeline_id = uuid.UUID(callback_data.build_pipeline_id)
+                        original_pipeline = await db.get(Pipeline, build_pipeline_id)
+                        if (
+                            original_pipeline
+                            and not original_pipeline.repro_pipeline_id
+                        ):
+                            original_pipeline.repro_pipeline_id = pipeline.id
+                            await db.commit()
+                            logger.info(
+                                "Updated original pipeline with reprocheck pipeline ID",
+                                original_pipeline_id=str(build_pipeline_id),
+                                reprocheck_pipeline_id=str(pipeline.id),
+                            )
+                    except (ValueError, TypeError) as e:
+                        logger.error(
+                            "Invalid build_pipeline_id in reprocheck callback",
+                            build_pipeline_id=callback_data.build_pipeline_id,
+                            error=str(e),
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Failed to update original pipeline with reprocheck ID",
+                            build_pipeline_id=callback_data.build_pipeline_id,
+                            reprocheck_pipeline_id=str(pipeline.id),
+                            error=str(e),
+                        )
+
                 updates["pipeline_status"] = status_value
                 return pipeline, updates
             await db.commit()
@@ -379,14 +412,12 @@ class BuildPipeline:
 
             return pipeline
 
-    async def handle_publication(self, db: AsyncSession, pipeline: Pipeline) -> None:
+    async def handle_publication(self, pipeline: Pipeline) -> None:
         """Handle all post-publication actions for a pipeline."""
         if pipeline.flat_manager_repo == "stable" and not pipeline.repro_pipeline_id:
-            await self._dispatch_reprocheck_workflow(db, pipeline)
+            await self._dispatch_reprocheck_workflow(pipeline)
 
-    async def _dispatch_reprocheck_workflow(
-        self, db: AsyncSession, pipeline: Pipeline
-    ) -> None:
+    async def _dispatch_reprocheck_workflow(self, pipeline: Pipeline) -> None:
         """Dispatch reprocheck workflow for a published stable build."""
         try:
             reprocheck_params = {
@@ -403,8 +434,6 @@ class BuildPipeline:
             )
 
             reprocheck_pipeline = await self.start_pipeline(reprocheck_pipeline.id)
-
-            pipeline.repro_pipeline_id = reprocheck_pipeline.id
 
             logger.info(
                 "Reprocheck workflow dispatched after update-repo completion",

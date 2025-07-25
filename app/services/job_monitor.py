@@ -243,7 +243,7 @@ class JobMonitor:
 
                 build_pipeline = BuildPipeline()
                 try:
-                    await build_pipeline.handle_publication(db, pipeline)
+                    await build_pipeline.handle_publication(pipeline)
                 except Exception as e:
                     logger.error(
                         "Error in post-publication handling",

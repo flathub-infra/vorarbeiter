@@ -1,17 +1,11 @@
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from datetime import datetime
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines.build import BuildPipeline
-
-
-@pytest.fixture
-def mock_db():
-    return AsyncMock(spec=AsyncSession)
 
 
 @pytest.fixture
@@ -73,46 +67,42 @@ def stable_pipeline_with_reprocheck():
 
 @pytest.mark.asyncio
 async def test_handle_publication_dispatches_reprocheck_for_stable_repo(
-    build_pipeline, stable_pipeline, mock_db
+    build_pipeline, stable_pipeline
 ):
     """Test that handle_publication dispatches reprocheck for stable repos without existing reprocheck."""
     with patch.object(build_pipeline, "_dispatch_reprocheck_workflow") as mock_dispatch:
         mock_dispatch.return_value = None
 
-        await build_pipeline.handle_publication(mock_db, stable_pipeline)
+        await build_pipeline.handle_publication(stable_pipeline)
 
-        mock_dispatch.assert_called_once_with(mock_db, stable_pipeline)
+        mock_dispatch.assert_called_once_with(stable_pipeline)
 
 
 @pytest.mark.asyncio
-async def test_handle_publication_skips_non_stable_repo(
-    build_pipeline, beta_pipeline, mock_db
-):
+async def test_handle_publication_skips_non_stable_repo(build_pipeline, beta_pipeline):
     """Test that handle_publication does NOT dispatch reprocheck for non-stable repos."""
     with patch.object(build_pipeline, "_dispatch_reprocheck_workflow") as mock_dispatch:
-        await build_pipeline.handle_publication(mock_db, beta_pipeline)
+        await build_pipeline.handle_publication(beta_pipeline)
 
         mock_dispatch.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_handle_publication_skips_existing_reprocheck(
-    build_pipeline, stable_pipeline_with_reprocheck, mock_db
+    build_pipeline, stable_pipeline_with_reprocheck
 ):
     """Test that handle_publication does NOT dispatch reprocheck if reprocheck_pipeline_id already exists."""
     with patch.object(build_pipeline, "_dispatch_reprocheck_workflow") as mock_dispatch:
-        await build_pipeline.handle_publication(
-            mock_db, stable_pipeline_with_reprocheck
-        )
+        await build_pipeline.handle_publication(stable_pipeline_with_reprocheck)
 
         mock_dispatch.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_dispatch_reprocheck_workflow_creates_pipeline_and_dispatches(
-    build_pipeline, stable_pipeline, mock_db
+    build_pipeline, stable_pipeline
 ):
-    """Test that _dispatch_reprocheck_workflow creates pipeline, dispatches workflow, and updates original pipeline."""
+    """Test that _dispatch_reprocheck_workflow creates pipeline and dispatches workflow."""
     reprocheck_pipeline_id = uuid.uuid4()
     mock_reprocheck_pipeline = Pipeline(
         id=reprocheck_pipeline_id,
@@ -133,7 +123,7 @@ async def test_dispatch_reprocheck_workflow_creates_pipeline_and_dispatches(
         mock_create.return_value = mock_reprocheck_pipeline
         mock_start.return_value = mock_reprocheck_pipeline
 
-        await build_pipeline._dispatch_reprocheck_workflow(mock_db, stable_pipeline)
+        await build_pipeline._dispatch_reprocheck_workflow(stable_pipeline)
 
         mock_create.assert_called_once_with(
             app_id=stable_pipeline.app_id,
@@ -147,12 +137,11 @@ async def test_dispatch_reprocheck_workflow_creates_pipeline_and_dispatches(
         )
 
         mock_start.assert_called_once_with(reprocheck_pipeline_id)
-        assert stable_pipeline.repro_pipeline_id == reprocheck_pipeline_id
 
 
 @pytest.mark.asyncio
 async def test_dispatch_reprocheck_workflow_handles_errors_gracefully(
-    build_pipeline, stable_pipeline, mock_db
+    build_pipeline, stable_pipeline
 ):
     """Test that _dispatch_reprocheck_workflow handles errors gracefully and logs them."""
     with (
@@ -162,7 +151,7 @@ async def test_dispatch_reprocheck_workflow_handles_errors_gracefully(
         mock_create.side_effect = Exception("Test error")
 
         # Should not raise exception
-        await build_pipeline._dispatch_reprocheck_workflow(mock_db, stable_pipeline)
+        await build_pipeline._dispatch_reprocheck_workflow(stable_pipeline)
 
         # Should log error
         mock_logger.error.assert_called_once()

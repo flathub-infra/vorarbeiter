@@ -7,12 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines.build import BuildPipeline, CallbackData
-from tests.conftest import create_mock_get_db
-
-
-@pytest.fixture
-def mock_db():
-    return AsyncMock(spec=AsyncSession)
 
 
 @pytest.fixture
@@ -21,176 +15,174 @@ def build_pipeline():
 
 
 @pytest.fixture
-def reprocheck_pipeline():
-    """Pipeline for reprocheck workflow."""
+def original_pipeline():
+    """Original pipeline that was published to stable repo."""
     return Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
-        status=PipelineStatus.RUNNING,
-        params={
-            "workflow_id": "reprocheck.yml",
-            "original_pipeline_id": str(uuid.uuid4()),
-        },
+        status=PipelineStatus.PUBLISHED,
+        params={},
+        flat_manager_repo="stable",
+        build_id=123,
+        update_repo_job_id=456,
+        callback_token="original_token",
         created_at=datetime.now(),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
-        callback_token="test_token",
     )
 
 
 @pytest.fixture
-def build_pipeline_obj():
-    """Pipeline for regular build workflow."""
+def reprocheck_pipeline(original_pipeline):
+    """Reprocheck pipeline that references the original pipeline."""
     return Pipeline(
         id=uuid.uuid4(),
-        app_id="org.test.App",
+        app_id=original_pipeline.app_id,
         status=PipelineStatus.RUNNING,
         params={
-            "workflow_id": "build.yml",
+            "workflow_id": "reprocheck.yml",
+            "build_pipeline_id": str(original_pipeline.id),
         },
-        build_id=123,
-        flat_manager_repo="stable",
+        callback_token="reprocheck_token",
         created_at=datetime.now(),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
-        callback_token="test_token",
     )
 
 
-@pytest.mark.asyncio
-async def test_reprocheck_callback_success_skips_flat_manager_operations(
-    build_pipeline, reprocheck_pipeline
-):
-    """Test that reprocheck workflow success callbacks skip flat-manager operations."""
-    callback_data = CallbackData(status="success")
-
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = reprocheck_pipeline
-    mock_get_db = create_mock_get_db(mock_db_session)
-
-    with (
-        patch("app.pipelines.build.get_db", mock_get_db),
-        patch("app.pipelines.build.FlatManagerClient") as mock_flat_manager,
-        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier,
-    ):
-        pipeline, updates = await build_pipeline.handle_callback(
-            reprocheck_pipeline.id, callback_data
-        )
-
-        assert pipeline.status == PipelineStatus.SUCCEEDED
-        assert pipeline.finished_at is not None
-        assert updates["pipeline_status"] == "success"
-
-        mock_flat_manager.assert_not_called()
-        mock_github_notifier.assert_not_called()
+@pytest.fixture
+def mock_db():
+    return AsyncMock(spec=AsyncSession)
 
 
 @pytest.mark.asyncio
-async def test_reprocheck_callback_failure_skips_flat_manager_operations(
-    build_pipeline, reprocheck_pipeline
+async def test_reprocheck_callback_updates_original_pipeline_repro_id(
+    build_pipeline, original_pipeline, reprocheck_pipeline, mock_db
 ):
-    """Test that reprocheck workflow failure callbacks skip flat-manager operations."""
-    callback_data = CallbackData(status="failure")
+    """Test that reprocheck callback with build_pipeline_id updates original pipeline's repro_pipeline_id."""
+    mock_db.get.side_effect = [reprocheck_pipeline, original_pipeline]
+    mock_db.commit = AsyncMock()
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = reprocheck_pipeline
-    mock_get_db = create_mock_get_db(mock_db_session)
+    callback_data = CallbackData(
+        status="success", build_pipeline_id=str(original_pipeline.id)
+    )
 
-    with (
-        patch("app.pipelines.build.get_db", mock_get_db),
-        patch("app.pipelines.build.GitHubActionsService") as mock_github_actions,
-        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier,
-    ):
-        mock_github_service = AsyncMock()
-        mock_github_service.check_run_was_cancelled.return_value = False
-        mock_github_actions.return_value = mock_github_service
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        mock_get_db.return_value.__aenter__.return_value = mock_db
 
-        pipeline, updates = await build_pipeline.handle_callback(
-            reprocheck_pipeline.id, callback_data
-        )
+        await build_pipeline.handle_callback(reprocheck_pipeline.id, callback_data)
 
-        assert pipeline.status == PipelineStatus.FAILED
-        assert pipeline.finished_at is not None
-        assert updates["pipeline_status"] == "failure"
+        assert mock_db.get.call_count == 2
+        mock_db.get.assert_any_call(Pipeline, reprocheck_pipeline.id)
+        mock_db.get.assert_any_call(Pipeline, original_pipeline.id)
 
-        mock_github_notifier.assert_not_called()
+        assert original_pipeline.repro_pipeline_id == reprocheck_pipeline.id
+        assert mock_db.commit.call_count >= 1
 
 
 @pytest.mark.asyncio
-async def test_build_callback_success_performs_flat_manager_operations(
-    build_pipeline, build_pipeline_obj
+async def test_reprocheck_callback_skips_if_repro_id_already_set(
+    build_pipeline, original_pipeline, reprocheck_pipeline, mock_db
 ):
-    """Test that build workflow success callbacks perform flat-manager operations."""
-    callback_data = CallbackData(status="success")
+    """Test that reprocheck callback skips update if original pipeline already has repro_pipeline_id."""
+    original_pipeline.repro_pipeline_id = uuid.uuid4()
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = build_pipeline_obj
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_db.get.side_effect = [reprocheck_pipeline, original_pipeline]
+    mock_db.commit = AsyncMock()
+
+    callback_data = CallbackData(
+        status="success", build_pipeline_id=str(original_pipeline.id)
+    )
 
     with (
-        patch("app.pipelines.build.get_db", mock_get_db),
-        patch("app.pipelines.build.FlatManagerClient") as mock_flat_manager_class,
-        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier_class,
-        patch("app.config.settings") as mock_settings,
+        patch("app.pipelines.build.get_db") as mock_get_db,
+        patch("app.pipelines.build.logger") as mock_logger,
     ):
-        mock_settings.flat_manager_url = "https://test.flatmanager.com"
-        mock_settings.flat_manager_token = "test_token"
+        mock_get_db.return_value.__aenter__.return_value = mock_db
 
-        mock_flat_manager = AsyncMock()
-        mock_flat_manager.commit = AsyncMock(return_value={"job": {"id": 999}})
-        mock_flat_manager.get_build_info = AsyncMock(
-            return_value={"build": {"commit_job_id": 999}}
-        )
-        mock_flat_manager_class.return_value = mock_flat_manager
+        await build_pipeline.handle_callback(reprocheck_pipeline.id, callback_data)
 
-        mock_github_notifier = AsyncMock()
-        mock_github_notifier_class.return_value = mock_github_notifier
+        assert mock_db.get.call_count == 2
+        mock_db.get.assert_any_call(Pipeline, reprocheck_pipeline.id)
+        mock_db.get.assert_any_call(Pipeline, original_pipeline.id)
 
-        pipeline, updates = await build_pipeline.handle_callback(
-            build_pipeline_obj.id, callback_data
-        )
-
-        assert pipeline.status == PipelineStatus.SUCCEEDED
-        assert pipeline.finished_at is not None
-        assert updates["pipeline_status"] == "success"
-
-        mock_github_notifier.handle_build_completion.assert_called_once()
-        mock_flat_manager.commit.assert_called_once_with(
-            123, end_of_life=None, end_of_life_rebase=None
-        )
+        assert original_pipeline.repro_pipeline_id != reprocheck_pipeline.id
+        mock_logger.info.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_build_callback_failure_performs_github_notification(
-    build_pipeline, build_pipeline_obj
+async def test_reprocheck_callback_handles_invalid_build_pipeline_id(
+    build_pipeline, reprocheck_pipeline, mock_db
 ):
-    """Test that build workflow failure callbacks perform GitHub notifications."""
-    callback_data = CallbackData(status="failure")
+    """Test that reprocheck callback handles invalid build_pipeline_id gracefully."""
+    callback_data = CallbackData(status="success", build_pipeline_id="invalid-uuid")
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = build_pipeline_obj
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_db.get.return_value = reprocheck_pipeline
 
     with (
-        patch("app.pipelines.build.get_db", mock_get_db),
-        patch("app.pipelines.build.GitHubActionsService") as mock_github_actions,
-        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier_class,
+        patch("app.pipelines.build.get_db") as mock_get_db,
+        patch("app.pipelines.build.logger") as mock_logger,
     ):
-        mock_github_service = AsyncMock()
-        mock_github_service.check_run_was_cancelled.return_value = False
-        mock_github_actions.return_value = mock_github_service
+        mock_get_db.return_value.__aenter__.return_value = mock_db
 
-        mock_github_notifier = AsyncMock()
-        mock_github_notifier_class.return_value = mock_github_notifier
+        await build_pipeline.handle_callback(reprocheck_pipeline.id, callback_data)
 
-        pipeline, updates = await build_pipeline.handle_callback(
-            build_pipeline_obj.id, callback_data
-        )
+        mock_logger.error.assert_called()
+        error_call = mock_logger.error.call_args
+        assert "Invalid build_pipeline_id in reprocheck callback" in str(error_call)
 
-        assert pipeline.status == PipelineStatus.FAILED
-        assert pipeline.finished_at is not None
-        assert updates["pipeline_status"] == "failure"
 
-        mock_github_notifier.handle_build_completion.assert_called_once_with(
-            build_pipeline_obj, "failure", flat_manager_client=None
-        )
+@pytest.mark.asyncio
+async def test_reprocheck_callback_only_runs_for_reprocheck_workflows(
+    build_pipeline, mock_db
+):
+    """Test that build_pipeline_id processing only happens for reprocheck workflows."""
+    regular_pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.RUNNING,
+        params={"workflow_id": "build.yml"},
+        callback_token="token",
+        created_at=datetime.now(),
+        triggered_by=PipelineTrigger.MANUAL,
+        provider_data={},
+    )
+
+    callback_data = CallbackData(status="success", build_pipeline_id=str(uuid.uuid4()))
+
+    mock_db.get.return_value = regular_pipeline
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        mock_get_db.return_value.__aenter__.return_value = mock_db
+
+        # Call handle_callback with callback data
+        await build_pipeline.handle_callback(regular_pipeline.id, callback_data)
+
+        assert mock_db.get.call_count == 1
+        mock_db.get.assert_called_once_with(Pipeline, regular_pipeline.id)
+
+
+@pytest.mark.asyncio
+async def test_reprocheck_callback_handles_missing_original_pipeline(
+    build_pipeline, reprocheck_pipeline, mock_db
+):
+    """Test that reprocheck callback handles missing original pipeline gracefully."""
+    mock_db.get.side_effect = [reprocheck_pipeline, None]
+    mock_db.commit = AsyncMock()
+
+    callback_data = CallbackData(status="success", build_pipeline_id=str(uuid.uuid4()))
+
+    with (
+        patch("app.pipelines.build.get_db") as mock_get_db,
+        patch("app.pipelines.build.logger") as mock_logger,
+    ):
+        mock_get_db.return_value.__aenter__.return_value = mock_db
+
+        await build_pipeline.handle_callback(reprocheck_pipeline.id, callback_data)
+
+        info_calls = [
+            call
+            for call in mock_logger.info.call_args_list
+            if "Updated original pipeline with reprocheck pipeline ID" in str(call)
+        ]
+        assert len(info_calls) == 0

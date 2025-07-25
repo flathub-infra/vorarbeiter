@@ -79,7 +79,7 @@ async def test_process_update_repo_job_success_calls_handle_publication(
         # Verify BuildPipeline.handle_publication was called
         mock_build_pipeline_class.assert_called_once()
         mock_build_pipeline.handle_publication.assert_called_once_with(
-            mock_db, stable_pipeline_publishing
+            stable_pipeline_publishing
         )
 
         # Verify notification was sent
@@ -122,7 +122,7 @@ async def test_process_update_repo_job_success_handles_publication_errors(
 
         # Verify BuildPipeline.handle_publication was called
         mock_build_pipeline.handle_publication.assert_called_once_with(
-            mock_db, stable_pipeline_publishing
+            stable_pipeline_publishing
         )
 
 

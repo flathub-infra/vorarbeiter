@@ -49,5 +49,5 @@ jobs:
           curl -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
-            -d "{\"status\": \"${status}\"}" \
+            -d "{\"status\": \"${status}\", \"build_pipeline_id\": \"${{ inputs.build_pipeline_id }}\"}" \
             "${{ inputs.callback_url }}"
