@@ -41,7 +41,7 @@ jobs:
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
         run: |
-          uv run pytest -v
+          uv run pytest -v -n 4
 
   docker:
     needs: lint
