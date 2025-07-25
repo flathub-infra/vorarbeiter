@@ -64,8 +64,11 @@ async def get_db(*, use_replica: bool = False) -> AsyncGenerator[AsyncSession]:
         AsyncReaderSessionLocal if use_replica else AsyncWriterSessionLocal
     )
     async with session_factory() as session:
-        async with session.begin():
-            try:
-                yield session
-            finally:
-                await session.close()
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
