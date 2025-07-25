@@ -77,7 +77,6 @@ async def test_reprocheck_callback_updates_original_pipeline_repro_id(
         mock_db.get.assert_any_call(Pipeline, original_pipeline.id)
 
         assert original_pipeline.repro_pipeline_id == reprocheck_pipeline.id
-        assert mock_db.commit.call_count >= 1
 
 
 @pytest.mark.asyncio

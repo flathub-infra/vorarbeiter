@@ -370,7 +370,6 @@ class BuildPipeline:
                             and not original_pipeline.repro_pipeline_id
                         ):
                             original_pipeline.repro_pipeline_id = pipeline.id
-                            await db.commit()
                             logger.info(
                                 "Updated original pipeline with reprocheck pipeline ID",
                                 original_pipeline_id=str(build_pipeline_id),
