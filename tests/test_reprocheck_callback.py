@@ -106,7 +106,13 @@ async def test_reprocheck_callback_skips_if_repro_id_already_set(
         mock_db.get.assert_any_call(Pipeline, original_pipeline.id)
 
         assert original_pipeline.repro_pipeline_id != reprocheck_pipeline.id
-        mock_logger.info.assert_not_called()
+        assert mock_logger.info.call_count == 1
+        update_calls = [
+            call
+            for call in mock_logger.info.call_args_list
+            if "Updated original pipeline with reprocheck pipeline ID" in str(call)
+        ]
+        assert len(update_calls) == 0
 
 
 @pytest.mark.asyncio

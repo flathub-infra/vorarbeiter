@@ -357,6 +357,17 @@ class BuildPipeline:
                         pipeline, status_value, flat_manager_client=None
                     )
 
+                if pipeline.params.get("workflow_id") == "reprocheck.yml":
+                    logger.info(
+                        "Processing reprocheck callback",
+                        pipeline_id=str(pipeline_id),
+                        has_build_pipeline_id=hasattr(
+                            callback_data, "build_pipeline_id"
+                        ),
+                        build_pipeline_id=getattr(
+                            callback_data, "build_pipeline_id", None
+                        ),
+                    )
                 if (
                     pipeline.params.get("workflow_id") == "reprocheck.yml"
                     and hasattr(callback_data, "build_pipeline_id")
@@ -370,7 +381,7 @@ class BuildPipeline:
                             and not original_pipeline.repro_pipeline_id
                         ):
                             original_pipeline.repro_pipeline_id = pipeline.id
-                            db.add(original_pipeline)
+                            await db.flush()
                             logger.info(
                                 "Updated original pipeline with reprocheck pipeline ID",
                                 original_pipeline_id=str(build_pipeline_id),
