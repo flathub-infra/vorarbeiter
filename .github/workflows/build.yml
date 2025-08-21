@@ -542,6 +542,9 @@ jobs:
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
 
+          echo "needs results:"
+          echo "${{ toJson(needs) }}"
+
           if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
             status="failure"
           elif [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
