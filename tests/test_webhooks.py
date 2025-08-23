@@ -48,10 +48,34 @@ SAMPLE_COMMENT_PAYLOAD = {
 }
 
 # Sample payload that should be ignored
-SAMPLE_IGNORED_PAYLOAD = {
+SAMPLE_IGNORED_PAYLOAD_1 = {
     "repository": {"full_name": "test-owner/test-repo"},
     "sender": {"login": "test-actor"},
     "action": "closed",
+}
+
+# Ignore bot, build inside a quoted comment (reply)
+SAMPLE_IGNORED_PAYLOAD_2 = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "created",
+    "comment": {"body": "> foobar a long line.\r\n> \r\n> bot, build\r\n\r\nok!"},
+}
+
+# Ignore bot, build inside a code ticks
+SAMPLE_IGNORED_PAYLOAD_3 = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "created",
+    "comment": {"body": "`bot, build`"},
+}
+
+# Ignore bot, build inside a code ticks
+SAMPLE_IGNORED_PAYLOAD_4 = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "created",
+    "comment": {"body": "`I want to bot, build`"},
 }
 
 
@@ -320,7 +344,15 @@ def test_should_not_store_event():
     """Test should_store_event returns False for other events."""
     from app.routes.webhooks import should_store_event
 
-    assert should_store_event(SAMPLE_IGNORED_PAYLOAD) is False
+    payloads = [
+        SAMPLE_IGNORED_PAYLOAD_1,
+        SAMPLE_IGNORED_PAYLOAD_2,
+        SAMPLE_IGNORED_PAYLOAD_3,
+        SAMPLE_IGNORED_PAYLOAD_4,
+    ]
+
+    for payload in payloads:
+        assert should_store_event(payload) is False
 
 
 def test_receive_github_webhook_ignore_event(client: TestClient, mock_db_session):
@@ -332,7 +364,7 @@ def test_receive_github_webhook_ignore_event(client: TestClient, mock_db_session
 
     with patch("app.routes.webhooks.settings.github_webhook_secret", ""):
         response = client.post(
-            "/api/webhooks/github", json=SAMPLE_IGNORED_PAYLOAD, headers=headers
+            "/api/webhooks/github", json=SAMPLE_IGNORED_PAYLOAD_1, headers=headers
         )
 
         assert response.status_code == 202
