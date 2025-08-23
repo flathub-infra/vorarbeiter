@@ -230,8 +230,8 @@ def should_store_event(payload: dict) -> bool:
     - A new PR is opened
     - A PR is updated
     - A new commit happens to master, beta or branch/*
-    - PR comment contains "bot, build"
-    - Issue comment contains "bot, retry"
+    - PR comment contains "bot, build" not inside quotes or inline code blocks
+    - Issue comment contains "bot, retry" not inside quotes or inline code blocks
     """
     ref = payload.get("ref", "")
     comment = payload.get("comment", {}).get("body", "")
@@ -249,11 +249,23 @@ def should_store_event(payload: dict) -> bool:
         ):
             return True
 
-    if "comment" in payload and "bot, build" in comment:
-        return True
+    if "comment" in payload:
+        comment_lines = []
+        for line in comment.splitlines():
+            if line.lstrip().startswith(">"):
+                continue
+            if line.lstrip().startswith("`") and line.lstrip().endswith("`"):
+                continue
+            if "`bot, build`" in line:
+                continue
+            comment_lines.append(line)
+        filtered_comment = "\n".join(comment_lines)
 
-    if "comment" in payload and "bot, retry" in comment.lower():
-        return True
+        if "bot, build" in filtered_comment:
+            return True
+
+        if "bot, retry" in filtered_comment.lower():
+            return True
 
     return False
 
