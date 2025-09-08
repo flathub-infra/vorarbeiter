@@ -124,7 +124,7 @@ download-sources app_id:
     sleep_seconds=7
 
     for (( retry_count=0; retry_count<$max_retries; retry_count++ )); do
-        if flatpak-builder --force-clean --sandbox --download-only builddir "$manifest"; then
+        if flatpak-builder --allow-missing-runtimes --force-clean --sandbox --download-only builddir "$manifest"; then
             exit 0
         fi
 
