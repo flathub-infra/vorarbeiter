@@ -169,12 +169,15 @@ build app_id git_ref build_arch:
         extra_args="$extra_args --bundle-sources"
     fi
 
+    if [ "$ref_branch" != "test" ]; then
+        extra_args="$extra_args --mirror-screenshots-url=https://dl.flathub.org/media"
+    fi
+
     flatpak-builder -v \
         --force-clean --sandbox --delete-build-dirs \
         --user \
         $extra_args \
         --disable-rofiles-fuse \
-        --mirror-screenshots-url=https://dl.flathub.org/media \
         --repo repo \
         --default-branch "$ref_branch" \
         --subject "${subject}" \
