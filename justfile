@@ -160,18 +160,19 @@ build app_id git_ref build_arch:
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
     subject=$(just -f .flathub.justfile _get_build_subject)
 
-    deps_args="--install-deps-from=flathub"
+    extra_args="--install-deps-from=flathub"
     if [ "$ref_branch" = "beta" ] || [ "$ref_branch" = "test" ]; then
-        deps_args="$deps_args --install-deps-from=flathub-beta"
+        extra_args="$extra_args --install-deps-from=flathub-beta"
     fi
 
     if [ "{{build_arch}}" = "x86_64" ]; then
-        deps_args="$deps_args --bundle-sources"
+        extra_args="$extra_args --bundle-sources"
     fi
 
     flatpak-builder -v \
         --force-clean --sandbox --delete-build-dirs \
-        --user $deps_args \
+        --user \
+        $extra_args \
         --disable-rofiles-fuse \
         --mirror-screenshots-url=https://dl.flathub.org/media \
         --repo repo \
