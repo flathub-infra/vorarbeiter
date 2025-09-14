@@ -40,12 +40,14 @@ detect-appid $path:
     def detect_appid(dirname):
         files = []
         ret = (None, None)
-        appid = None
 
         for ext in ("yml", "yaml", "json"):
             files.extend(glob.glob(f"{dirname}/*.{ext}"))
 
         for filename in files:
+            appid = None
+            manifest_file = os.path.basename(filename)
+
             if os.path.isfile(filename):
                 ext = filename.split(".")[-1]
 
@@ -70,14 +72,17 @@ detect-appid $path:
                                         appid = json_object.get_string_member("app-id")
 
                 if not appid:
+                    print(f"Did not find any app-id from file {manifest_file}")
                     continue
 
                 if appid:
-                    manifest_file = os.path.basename(filename)
-                    if os.path.splitext(manifest_file)[0] != appid:
-                        continue
-                    ret = (manifest_file, appid)
-
+                    if os.path.splitext(manifest_file)[0] == appid:
+                        print(f"Found appid: {appid}")
+                        with open("app_id", "w") as f:
+                            f.write(f"{appid}\n")
+                        return (manifest_file, appid)
+                    else:
+                        print(f"app-id {appid} and filename (without extension) {manifest_file} does not match, discarding")
         return ret
 
 
@@ -87,8 +92,6 @@ detect-appid $path:
     if manifest_file is None or appid is None:
         print("Failed to detect appid")
         sys.exit(1)
-
-    print(appid)
 
 checkout repo ref:
     #!/usr/bin/env bash

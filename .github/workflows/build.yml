@@ -160,16 +160,20 @@ jobs:
             -e APP_ID \
             -e TMPDIR=/work/tmp \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just -f .flathub.justfile detect-appid /work > app_id
+            just -f .flathub.justfile detect-appid /work
 
-          echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
+          APP_ID_FILE=${GITHUB_WORKSPACE}/work/app_id
+
+          test -f "$APP_ID_FILE" || { echo "Failed to find file $APP_ID_FILE"; exit 1; }
+
+          echo "APP_ID=$(cat $APP_ID_FILE)" >> $GITHUB_ENV
 
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
           curl -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
-            -d "{\"app_id\": \"$(cat app_id)\"}" \
+            -d "{\"app_id\": \"$(cat $APP_ID_FILE)\"}" \
             "${{ inputs.callback_url }}"
 
       - name: Validate manifest
@@ -417,9 +421,13 @@ jobs:
             -w /work \
             -e APP_ID \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just -f .flathub.justfile detect-appid /work > app_id
+            just -f .flathub.justfile detect-appid /work
 
-          echo "APP_ID=$(cat app_id)" >> $GITHUB_ENV
+          APP_ID_FILE=${GITHUB_WORKSPACE}/work/app_id
+
+          test -f "$APP_ID_FILE" || { echo "Failed to find file $APP_ID_FILE"; exit 1; }
+
+          echo "APP_ID=$(cat $APP_ID_FILE)" >> $GITHUB_ENV
 
       - name: Set up ORAS
         if: ${{ github.event.inputs.app_id != 'flathub' }}
