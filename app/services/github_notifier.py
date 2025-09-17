@@ -216,7 +216,7 @@ class GitHubNotifier:
             log_url = pipeline.log_url
 
             title = "Stable build failed"
-            body = f"The stable build pipeline for `{app_id}` failed.\n\nCommit SHA: `{sha}`\n"
+            body = f"The stable build pipeline for `{app_id}` failed.\n\nCommit SHA: {sha}\n"
 
             if log_url:
                 body += f"Build log: {log_url}"
@@ -282,7 +282,7 @@ class GitHubNotifier:
 
             body = f"The {job_type} job for `{app_id}` failed in the {pipeline.flat_manager_repo} repository.\n\n"
             body += "**Build Information:**\n"
-            body += f"- Commit SHA: `{sha}`\n"
+            body += f"- Commit SHA: {sha}\n"
 
             if pipeline.build_id:
                 body += f"- Build ID: {pipeline.build_id}\n"

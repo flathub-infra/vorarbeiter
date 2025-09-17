@@ -318,7 +318,7 @@ async def test_create_stable_build_failure_issue(github_notifier, mock_pipeline)
 
         expected_body = (
             "The stable build pipeline for `org.test.App` failed.\n\n"
-            "Commit SHA: `abc123def456`\n"
+            "Commit SHA: abc123def456\n"
             "Build log: https://example.com/logs/123\n\n"
             "cc @flathub/build-moderation"
         )
@@ -353,7 +353,7 @@ async def test_create_stable_build_failure_issue_no_log_url(
 
         expected_body = (
             "The stable build pipeline for `org.test.App` failed.\n\n"
-            "Commit SHA: `abc123def456`\n"
+            "Commit SHA: abc123def456\n"
             "Build log URL not available.\n\n"
             "cc @flathub/build-moderation"
         )
@@ -498,7 +498,7 @@ async def test_create_stable_job_failure_issue_commit(github_notifier, mock_pipe
         expected_body = (
             "The commit job for `org.test.App` failed in the stable repository.\n\n"
             "**Build Information:**\n"
-            "- Commit SHA: `abc123def456`\n"
+            "- Commit SHA: abc123def456\n"
             "- Build ID: 123\n"
             "- Build log: https://example.com/logs/123\n\n"
             "**Job Details:**\n"
@@ -536,7 +536,7 @@ async def test_create_stable_job_failure_issue_publish(github_notifier, mock_pip
         expected_body = (
             "The publish job for `org.test.App` failed in the stable repository.\n\n"
             "**Build Information:**\n"
-            "- Commit SHA: `abc123def456`\n"
+            "- Commit SHA: abc123def456\n"
             "- Build ID: 123\n"
             "- Build log: https://example.com/logs/123\n\n"
             "**Job Details:**\n"
@@ -575,7 +575,7 @@ async def test_create_stable_job_failure_issue_update_repo(
         expected_body = (
             "The update-repo job for `org.test.App` failed in the stable repository.\n\n"
             "**Build Information:**\n"
-            "- Commit SHA: `abc123def456`\n"
+            "- Commit SHA: abc123def456\n"
             "- Build ID: 123\n"
             "- Build log: https://example.com/logs/123\n\n"
             "**Job Details:**\n"

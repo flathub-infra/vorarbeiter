@@ -574,13 +574,13 @@ async def test_receive_webhook_creates_pipeline(client, mock_db_session):
 # Test data for retry functionality
 SAMPLE_ISSUE_BODY_STABLE = """The stable build pipeline for `test-app` failed.
 
-Commit SHA: `abc123456789`
+Commit SHA: abc123456789
 Build log: https://example.com/log/123"""
 
 SAMPLE_ISSUE_BODY_JOB_FAILURE = """The commit job for `test-app` failed in the stable repository.
 
 **Build Information:**
-- Commit SHA: `abc123456789`
+- Commit SHA: abc123456789
 - Build ID: 456
 - Build log: https://example.com/log/123
 

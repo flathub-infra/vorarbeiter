@@ -23,10 +23,10 @@ logger = structlog.get_logger(__name__)
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
 STABLE_BUILD_FAILURE_PATTERN = re.compile(
-    r"The stable build pipeline for `.+?` failed\.\n\nCommit SHA: `(.+?)`"
+    r"The stable build pipeline for `.+?` failed\.\n\nCommit SHA: ([0-9a-fA-F]+)"
 )
 JOB_FAILURE_PATTERN = re.compile(
-    r"The (\w+) job for `.+?` failed in the (\w+) repository\.\n\n.*?Commit SHA: `(.+?)`",
+    r"The (\w+) job for `.+?` failed in the (\w+) repository\.\n\n.*?Commit SHA: ([0-9a-fA-F]+)",
     re.DOTALL,
 )
 

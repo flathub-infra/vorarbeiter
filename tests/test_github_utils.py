@@ -601,7 +601,7 @@ async def test_get_issue_details_success(mock_settings):
         mock_response.json.return_value = {
             "number": 123,
             "title": "Build failed",
-            "body": "The stable build pipeline for `test-app` failed.\n\nCommit SHA: `abc123`",
+            "body": "The stable build pipeline for `test-app` failed.\n\nCommit SHA: abc123",
             "state": "open",
         }
 
