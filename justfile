@@ -173,7 +173,7 @@ build app_id git_ref build_arch:
     fi
 
     if [ "$ref_branch" != "test" ]; then
-        extra_args="$extra_args --mirror-screenshots-url=https://dl.flathub.org/media"
+        extra_args="$extra_args --mirror-screenshots-url=https://dl.flathub.org/media --compose-url-policy=full"
     fi
 
     flatpak-builder -v \
