@@ -540,6 +540,7 @@ jobs:
           timeout 5 df -hHl || true
           timeout 30 du -sh "${GITHUB_WORKSPACE}/work/repo" || true
 
+  # Update callback logic if adding new jobs before this
   callback:
     runs-on: ubuntu-latest
     needs: [check-event-type, update-log-url, validate-manifest, setup-matrix, build]
@@ -553,12 +554,13 @@ jobs:
           echo "needs results:"
           echo "${{ toJson(needs) }}"
 
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            status="failure"
-          elif [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-            status="cancelled"
-          else
+          # Should be the last job before this "callback" job
+          if [[ "${{ contains(needs.build.result, 'success') }}" == "true" ]]; then
             status="success"
+          elif [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            status="failure"
+          else
+            status="cancelled"
           fi
 
           curl -X POST \
