@@ -23,6 +23,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           activate-environment: true
+          python-version: 3.13
 
       - name: Set up venv
         run: |
