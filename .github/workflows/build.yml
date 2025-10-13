@@ -433,6 +433,22 @@ jobs:
         if: ${{ github.event.inputs.app_id != 'flathub' }}
         uses: oras-project/setup-oras@v1
 
+      - name: Delete image if too large
+        if: ${{ github.event.inputs.app_id != 'flathub' }}
+        run: |
+          app_id_lc=${APP_ID,,}
+          IMAGE="ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest"
+
+          SIZE_MAX=$((6 * 1024 * 1024 * 1024))
+          SIZE=$(oras manifest get "$IMAGE" 2>/dev/null | jq '[.layers[].size] | add' 2>/dev/null || echo 0)
+
+          echo "Image size: $SIZE bytes"
+
+          if [ "$SIZE" -gt "$SIZE_MAX" ]; then
+            echo "Image exceeds $SIZE_MAX bytes. Deleting"
+            oras manifest delete --password "${{ secrets.GITHUB_TOKEN }}" -u "${{ github.actor }}" --force "$IMAGE" || exit 0
+          fi
+
       - name: Fetch build cache
         if: ${{ github.event.inputs.app_id != 'flathub' }}
         run: |
