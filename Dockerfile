@@ -2,6 +2,7 @@ FROM debian:stable AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY pyproject.toml uv.lock /
 ENV UV_PYTHON_INSTALL_DIR=/python
+RUN uv python install 3.13
 RUN uv venv && uv sync
 
 FROM debian:stable-slim
