@@ -6,7 +6,7 @@ import uuid
 import httpx
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
-
+from typing import Any
 from app.config import settings
 from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
@@ -250,6 +250,14 @@ def should_store_event(payload: dict) -> bool:
             return True
 
     if "comment" in payload:
+        repo_full_name = payload.get("repository", {}).get("full_name")
+        comment_author = payload.get("comment", {}).get("user", {}).get("login")
+
+        if comment_author in ("github-actions[bot]",) and repo_full_name not in (
+            "flathub/flathub",
+        ):
+            return False
+
         comment_lines = []
         for line in comment.splitlines():
             if line.lstrip().startswith(">"):
@@ -268,6 +276,41 @@ def should_store_event(payload: dict) -> bool:
             return True
 
     return False
+
+
+async def is_submodule_only_pr(
+    payload: dict[str, Any], github_token: str | None = None
+) -> bool:
+    repo, number = (
+        payload.get("repository", {}).get("full_name"),
+        payload.get("pull_request", {}).get("number"),
+    )
+
+    if not (repo and number):
+        return False
+
+    # Public API, token is only required if requests exceed some per
+    # minute limit
+    url = f"https://api.github.com/repos/{repo}/pulls/{number}/files"
+    headers = {}
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, headers=headers)
+            r.raise_for_status()
+            files = r.json()
+    except (httpx.HTTPError, ValueError) as err:
+        logger.error("Error fetching PR file details from GitHub", error=str(err))
+        return False
+
+    if not files:
+        return False
+
+    return all(
+        "patch" in f and f["patch"] and "Subproject commit" in f["patch"] for f in files
+    )
 
 
 @webhooks_router.post(
@@ -344,10 +387,19 @@ async def receive_github_webhook(
     if repo_name in ignored_repos and (is_pr_event or is_push_event):
         return {"message": "Webhook received but ignored due to repository filter."}
 
-    if repo_name.split("/")[1] in app_build_types and is_pr_event:
-        return {
-            "message": "Pull request webhook received but ignored due to large app."
-        }
+    if is_pr_event:
+        if repo_name.split("/")[1] in app_build_types:
+            return {
+                "message": "Pull request webhook received but ignored due to large app."
+            }
+
+        if actor_login in ("dependabot[bot]", "renovate[bot]"):
+            return {"message": "Webhook received but ignored due to actor filter."}
+
+        if actor_login in ("github-actions[bot]",) and await is_submodule_only_pr(
+            payload
+        ):
+            return {"message": "Webhook received but ignored PR changes filter."}
 
     event = WebhookEvent(
         id=delivery_id,
