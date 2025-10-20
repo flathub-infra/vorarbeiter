@@ -27,7 +27,7 @@ SAMPLE_GITHUB_PAYLOAD = {
             "sha": "abcdef123456",
         },
         "base": {
-            "ref": "main",
+            "ref": "master",
         },
     },
 }
@@ -77,6 +77,22 @@ SAMPLE_IGNORED_PAYLOAD_4 = {
     "sender": {"login": "test-actor"},
     "action": "created",
     "comment": {"body": "`I want to bot, build`"},
+}
+
+SAMPLE_IGNORED_PAYLOAD_5 = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "opened",
+    "pull_request": {
+        "number": 123,
+        "head": {
+            "ref": "feature-branch",
+            "sha": "abcdef123456",
+        },
+        "base": {
+            "ref": "abracadabra",
+        },
+    },
 }
 
 SAMPLE_IGNORED_BOT_PR_PAYLOAD = {
@@ -386,6 +402,7 @@ def test_should_not_store_event():
         SAMPLE_IGNORED_PAYLOAD_2,
         SAMPLE_IGNORED_PAYLOAD_3,
         SAMPLE_IGNORED_PAYLOAD_4,
+        SAMPLE_IGNORED_PAYLOAD_5,
         SAMPLE_GITHUB_ACTIONS_BOT_PAYLOAD,
     ]
 

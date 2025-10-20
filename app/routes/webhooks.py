@@ -238,8 +238,16 @@ def should_store_event(payload: dict) -> bool:
 
     if "pull_request" in payload:
         pr_action = payload.get("action", "")
+        # If the PR is not meant to merged in an "official" branch
+        # no point in triggerring a build from that
+        # If ref is None for whatever reason it falls back to returning True
+        target_ref = payload.get("pull_request", {}).get("base", {}).get("ref")
         if pr_action in ["opened", "synchronize", "reopened"]:
-            return True
+            return (
+                not target_ref
+                or target_ref in ("master", "beta")
+                or target_ref.startswith("branch/")
+            )
 
     if "commits" in payload and ref:
         if ref in (
