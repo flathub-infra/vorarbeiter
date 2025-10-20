@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import json
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import Mock, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.main import app
 from app.models import Pipeline, PipelineStatus
+from app.routes.webhooks import is_submodule_only_pr
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from tests.conftest import create_mock_get_db
 
@@ -76,6 +77,36 @@ SAMPLE_IGNORED_PAYLOAD_4 = {
     "sender": {"login": "test-actor"},
     "action": "created",
     "comment": {"body": "`I want to bot, build`"},
+}
+
+SAMPLE_IGNORED_BOT_PR_PAYLOAD = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "dependabot[bot]"},
+    "action": "opened",
+    "pull_request": {
+        "number": 123,
+        "head": {
+            "ref": "feature-branch",
+            "sha": "abcdef123456",
+        },
+        "base": {
+            "ref": "main",
+        },
+    },
+}
+
+SAMPLE_GITHUB_ACTIONS_BOT_PAYLOAD = {
+    "repository": {"full_name": "some-user/some-repo"},
+    "sender": {"login": "github-actions[bot]"},
+    "action": "created",
+    "comment": {"body": "bot, build", "user": {"login": "github-actions[bot]"}},
+}
+
+SAMPLE_GITHUB_ACTIONS_BOT_FLATHUB_PAYLOAD = {
+    "repository": {"full_name": "flathub/flathub"},
+    "sender": {"login": "github-actions[bot]"},
+    "action": "created",
+    "comment": {"body": "bot, build", "user": {"login": "github-actions[bot]"}},
 }
 
 
@@ -340,6 +371,12 @@ def test_should_store_event_comment_with_bot_build():
     assert should_store_event(SAMPLE_COMMENT_PAYLOAD) is True
 
 
+def test_should_store_event_github_bot_flathub_repo():
+    from app.routes.webhooks import should_store_event
+
+    assert should_store_event(SAMPLE_GITHUB_ACTIONS_BOT_FLATHUB_PAYLOAD) is True
+
+
 def test_should_not_store_event():
     """Test should_store_event returns False for other events."""
     from app.routes.webhooks import should_store_event
@@ -349,6 +386,7 @@ def test_should_not_store_event():
         SAMPLE_IGNORED_PAYLOAD_2,
         SAMPLE_IGNORED_PAYLOAD_3,
         SAMPLE_IGNORED_PAYLOAD_4,
+        SAMPLE_GITHUB_ACTIONS_BOT_PAYLOAD,
     ]
 
     for payload in payloads:
@@ -373,6 +411,108 @@ def test_receive_github_webhook_ignore_event(client: TestClient, mock_db_session
         assert response_data["event_id"] == delivery_id
 
         mock_db_session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_receive_github_webhook_ignores_bot_pr(client, mock_db_session):
+    headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch("app.routes.webhooks.get_db", return_value=AsyncMock()),
+    ):
+        response = client.post(
+            "/api/webhooks/github",
+            json=SAMPLE_IGNORED_BOT_PR_PAYLOAD,
+            headers=headers,
+        )
+
+        assert response.status_code == 202
+        assert "ignored due to actor filter" in response.json()["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_files_response,expected",
+    [
+        (  # Submodule-only PR
+            [
+                {
+                    "filename": "submodule-dir",
+                    "patch": "@@ -1 +1 @@\n-Subproject commit f21291a3b3440182699ef5ef5d228046f08dd66c\n+Subproject commit 65374641cdedb0664879196b62127f76a106185a",
+                },
+            ],
+            True,
+        ),
+        (  # Normal PR
+            [
+                {"filename": "file1.txt", "patch": "Some content"},
+                {"filename": "file2.txt", "patch": "Other content"},
+            ],
+            False,
+        ),
+        (  # Empty files list
+            [],
+            False,
+        ),
+        (  # Submodule and normal file
+            [
+                {
+                    "filename": "submodule-dir",
+                    "patch": "@@ -1 +1 @@\n-Subproject commit abc\n+Subproject commit def",
+                },
+                {"filename": "file.txt", "patch": "Some content"},
+            ],
+            False,
+        ),
+    ],
+)
+async def test_is_submodule_only_pr(mock_files_response, expected):
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "pull_request": {"number": 123},
+    }
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = Mock(return_value=mock_files_response)
+    mock_response.raise_for_status = Mock()
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.get = AsyncMock(return_value=mock_response)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        result = await is_submodule_only_pr(payload)
+        assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_receive_github_webhook_ignores_submodule_only_pr(
+    client, mock_db_session
+):
+    headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
+
+    sample_payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "sender": {"login": "github-actions[bot]"},
+        "action": "synchronize",
+        "pull_request": {"number": 123},
+    }
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch("app.routes.webhooks.get_db", return_value=AsyncMock()),
+        patch("app.routes.webhooks.is_submodule_only_pr", AsyncMock(return_value=True)),
+    ):
+        response = client.post(
+            "/api/webhooks/github", json=sample_payload, headers=headers
+        )
+
+        assert response.status_code == 202
+        data = response.json()
+        assert "ignored PR changes filter" in data["message"]
 
 
 @pytest.mark.asyncio
