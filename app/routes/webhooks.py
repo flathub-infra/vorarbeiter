@@ -242,11 +242,10 @@ def should_store_event(payload: dict) -> bool:
             return True
 
     if "commits" in payload and ref:
-        if (
-            ref.startswith("refs/heads/master")
-            or ref.startswith("refs/heads/beta")
-            or ref.startswith("refs/heads/branch/")
-        ):
+        if ref in (
+            "refs/heads/master",
+            "refs/heads/beta",
+        ) or ref.startswith("refs/heads/branch/"):
             return True
 
     if "comment" in payload:
