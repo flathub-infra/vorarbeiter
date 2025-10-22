@@ -904,10 +904,6 @@ async def test_handle_issue_retry_success():
         patch("app.routes.webhooks.validate_retry_permissions", return_value=True),
         patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
         patch(
-            "app.routes.webhooks.get_issue_details",
-            AsyncMock(return_value={"user": {"login": "flathubbot"}}),
-        ),
-        patch(
             "app.routes.webhooks.get_workflow_run_title",
             AsyncMock(return_value="Build from refs/heads/master"),
         ),
@@ -939,10 +935,6 @@ async def test_handle_issue_retry_permission_denied():
         patch("app.routes.webhooks.validate_retry_permissions", return_value=False),
         patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
         patch(
-            "app.routes.webhooks.get_issue_details",
-            AsyncMock(return_value={"user": {"login": "flathubbot"}}),
-        ),
-        patch(
             "app.routes.webhooks.get_workflow_run_title", AsyncMock(return_value=None)
         ),
     ):
@@ -973,10 +965,6 @@ async def test_handle_issue_retry_invalid_issue():
     with (
         patch("app.routes.webhooks.validate_retry_permissions", return_value=True),
         patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
-        patch(
-            "app.routes.webhooks.get_issue_details",
-            AsyncMock(return_value={"user": {"login": "flathubbot"}}),
-        ),
         patch(
             "app.routes.webhooks.get_workflow_run_title", AsyncMock(return_value=None)
         ),

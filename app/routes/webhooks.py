@@ -17,7 +17,6 @@ from app.utils.github import (
     create_pr_comment,
     update_commit_status,
     is_issue_edited,
-    get_issue_details,
     get_workflow_run_title,
 )
 
@@ -168,39 +167,6 @@ async def handle_issue_retry(
             git_repo=git_repo,
             issue_number=issue_number,
             comment="❌ Failed to verify issue status. Please see the logs.",
-        )
-        return None
-
-    issue_details = await get_issue_details(
-        git_repo=git_repo, issue_number=issue_number
-    )
-
-    if issue_details is None:
-        logger.error(
-            "Failed to fetch issue details, aborting retry",
-            repo=git_repo,
-            issue_number=issue_number,
-        )
-        await add_issue_comment(
-            git_repo=git_repo,
-            issue_number=issue_number,
-            comment="❌ Failed to verify issue details. Please see the logs.",
-        )
-        return None
-
-    issue_author = issue_details.get("user", {}).get("login", "")
-
-    if issue_author != "flathubbot":
-        logger.info(
-            "Issue not opened by 'flathubbot', aborting retry",
-            repo=git_repo,
-            issue_number=issue_number,
-            issue_author=issue_author,
-        )
-        await add_issue_comment(
-            git_repo=git_repo,
-            issue_number=issue_number,
-            comment="❌ Retries are only allowed on issues created by 'flathubbot'.",
         )
         return None
 
