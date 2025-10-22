@@ -440,7 +440,7 @@ async def receive_github_webhook(
         if actor_login in ("github-actions[bot]",) and await is_submodule_only_pr(
             payload
         ):
-            return {"message": "Webhook received but ignored PR changes filter."}
+            return {"message": "Webhook received but ignored due to PR changes filter."}
 
     event = WebhookEvent(
         id=delivery_id,

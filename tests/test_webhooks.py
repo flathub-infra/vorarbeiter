@@ -529,7 +529,7 @@ async def test_receive_github_webhook_ignores_submodule_only_pr(
 
         assert response.status_code == 202
         data = response.json()
-        assert "ignored PR changes filter" in data["message"]
+        assert "ignored due to PR changes filter" in data["message"]
 
 
 @pytest.mark.asyncio
