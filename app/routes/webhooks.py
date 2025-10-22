@@ -16,6 +16,7 @@ from app.utils.github import (
     close_github_issue,
     create_pr_comment,
     update_commit_status,
+    is_issue_edited,
 )
 
 logger = structlog.get_logger(__name__)
@@ -116,6 +117,33 @@ async def handle_issue_retry(
     if "/" not in git_repo:
         logger.warning(
             "Invalid repository format", repo=git_repo, issue_number=issue_number
+        )
+        return None
+
+    was_edited = await is_issue_edited(git_repo=git_repo, issue_number=issue_number)
+
+    if was_edited:
+        logger.info(
+            "Issue body was edited, aborting retry",
+            repo=git_repo,
+            issue_number=issue_number,
+        )
+        await add_issue_comment(
+            git_repo=git_repo,
+            issue_number=issue_number,
+            comment="❌ Unable to retry as the issue was edited.",
+        )
+        return None
+    elif was_edited is None:
+        logger.error(
+            "Failed to check issue edit status, aborting retry",
+            repo=git_repo,
+            issue_number=issue_number,
+        )
+        await add_issue_comment(
+            git_repo=git_repo,
+            issue_number=issue_number,
+            comment="❌ Failed to verify issue status. Please see the logs.",
         )
         return None
 
