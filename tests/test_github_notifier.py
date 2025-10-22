@@ -320,7 +320,9 @@ async def test_create_stable_build_failure_issue(github_notifier, mock_pipeline)
             "The stable build pipeline for `org.test.App` failed.\n\n"
             "Commit SHA: abc123def456\n"
             "Build log: https://example.com/logs/123\n\n"
-            "You can retry the build by commenting `bot, retry` in this issue.\n\n"
+            "Please check the logs for details. "
+            "If the failure was unexpected, you can retry the build "
+            "by commenting `bot, retry` in this issue.\n\n"
             "cc @flathub/build-moderation"
         )
 

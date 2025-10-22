@@ -224,7 +224,11 @@ class GitHubNotifier:
                 body += "Build log URL not available."
 
             if log_url:
-                body += "\n\nYou can retry the build by commenting `bot, retry` in this issue."
+                body += (
+                    "\n\nPlease check the logs for details. "
+                    "If the failure was unexpected, you can retry the build "
+                    "by commenting `bot, retry` in this issue."
+                )
 
             body += "\n\ncc @flathub/build-moderation"
 
