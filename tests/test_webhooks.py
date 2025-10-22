@@ -807,33 +807,6 @@ async def test_handle_issue_retry_invalid_issue():
             assert "Could not parse build parameters" in kwargs["comment"]
 
 
-@pytest.mark.asyncio
-async def test_handle_issue_retry_max_retries():
-    from app.routes.webhooks import handle_issue_retry
-
-    event_id = uuid.uuid4()
-    body_with_retries = (
-        SAMPLE_ISSUE_BODY_STABLE + "\n\n> This is retry 3 of the original build."
-    )
-
-    with patch("app.routes.webhooks.validate_retry_permissions", return_value=True):
-        with patch(
-            "app.routes.webhooks.add_issue_comment", AsyncMock()
-        ) as mock_comment:
-            result = await handle_issue_retry(
-                git_repo="flathub/test-app",
-                issue_number=123,
-                issue_body=body_with_retries,
-                comment_author="test-user",
-                webhook_event_id=event_id,
-            )
-
-            assert result is None
-            mock_comment.assert_called_once()
-            args, kwargs = mock_comment.call_args
-            assert "Maximum retry limit" in kwargs["comment"]
-
-
 SAMPLE_CLOSED_PR_PAYLOAD = {
     "repository": {"full_name": "test-owner/test-repo"},
     "sender": {"login": "test-actor"},

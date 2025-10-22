@@ -223,10 +223,6 @@ class GitHubNotifier:
             else:
                 body += "Build log URL not available."
 
-            retry_count = pipeline.params.get("retry_count", 0)
-            if retry_count > 0:
-                body += f"\n\n> This is retry {retry_count} of the original build."
-
             body += "\n\ncc @flathub/build-moderation"
 
             issue_url = await create_github_issue(
@@ -305,10 +301,6 @@ class GitHubNotifier:
                 else:
                     body += "\n**Error Details:**\n```\n"
                     body += log_content + "\n```\n"
-
-            retry_count = pipeline.params.get("retry_count", 0)
-            if retry_count > 0:
-                body += f"\n\n> This is retry {retry_count} of the original build."
 
             body += "\ncc @flathub/build-moderation"
 
