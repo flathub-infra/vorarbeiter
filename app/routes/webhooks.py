@@ -150,22 +150,6 @@ async def handle_issue_retry(
         return None
 
     build_params["app_id"] = app_id
-
-    retry_count = 1
-    existing_retry_pattern = re.search(
-        r"This is retry (\d+) of the original build", issue_body
-    )
-    if existing_retry_pattern:
-        retry_count = int(existing_retry_pattern.group(1)) + 1
-        if retry_count > 3:
-            await add_issue_comment(
-                git_repo=git_repo,
-                issue_number=issue_number,
-                comment="❌ Maximum retry limit (3) reached for this build. Please investigate the underlying issue.",
-            )
-            return None
-
-    build_params["retry_count"] = retry_count
     build_params["retry_from_issue"] = issue_number
 
     try:
@@ -191,7 +175,7 @@ async def handle_issue_retry(
         await add_issue_comment(
             git_repo=git_repo,
             issue_number=issue_number,
-            comment=f"🔄 Retrying build (attempt {retry_count}): [view build]({build_url})",
+            comment=f"🔄 Retrying build: [view build]({build_url})",
         )
 
         await close_github_issue(git_repo=git_repo, issue_number=issue_number)
@@ -201,7 +185,6 @@ async def handle_issue_retry(
             pipeline_id=str(pipeline.id),
             repo=git_repo,
             issue_number=issue_number,
-            retry_count=retry_count,
             triggered_by=comment_author,
         )
 
