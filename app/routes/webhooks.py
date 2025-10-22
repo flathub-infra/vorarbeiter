@@ -113,6 +113,12 @@ async def handle_issue_retry(
     comment_author: str,
     webhook_event_id: uuid.UUID,
 ) -> uuid.UUID | None:
+    if "/" not in git_repo:
+        logger.warning(
+            "Invalid repository format", repo=git_repo, issue_number=issue_number
+        )
+        return None
+
     if not await validate_retry_permissions(git_repo, comment_author):
         logger.warning(
             "User does not have permission to trigger retries",
@@ -124,12 +130,6 @@ async def handle_issue_retry(
             git_repo=git_repo,
             issue_number=issue_number,
             comment=f"❌ @{comment_author} does not have permission to trigger retries.",
-        )
-        return None
-
-    if "/" not in git_repo:
-        logger.warning(
-            "Invalid repository format", repo=git_repo, issue_number=issue_number
         )
         return None
 
