@@ -18,6 +18,7 @@ from app.utils.github import (
     update_commit_status,
     is_issue_edited,
     get_issue_details,
+    get_workflow_run_title,
 )
 
 logger = structlog.get_logger(__name__)
@@ -25,7 +26,9 @@ logger = structlog.get_logger(__name__)
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
 STABLE_BUILD_FAILURE_PATTERN = re.compile(
-    r"The stable build pipeline for `.+?` failed\.\n\nCommit SHA: ([0-9a-fA-F]+)"
+    r"The stable build pipeline for `.+?` failed\.\s*\n"
+    r"Commit SHA: ([0-9a-fA-F]+)\s*\n"
+    r"Build log: (https://github\.com/flathub-infra/vorarbeiter/actions/runs/\d+)"
 )
 JOB_FAILURE_PATTERN = re.compile(
     r"The (\w+) job for `.+?` failed in the (\w+) repository\.\n\n.*?Commit SHA: ([0-9a-fA-F]+)",
@@ -33,15 +36,35 @@ JOB_FAILURE_PATTERN = re.compile(
 )
 
 
-def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
+async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
     stable_match = STABLE_BUILD_FAILURE_PATTERN.search(issue_body)
     if stable_match:
-        sha = stable_match.group(1)
+        sha, build_url = stable_match.groups()
+        run_id = int(build_url.rstrip("/").split("/")[-1])
+
+        ref = "refs/heads/master"
+
+        title = await get_workflow_run_title(run_id)
+        if title:
+            ref_match = re.search(r"from (refs/heads/\S+)", title)
+            if ref_match:
+                extracted_ref = ref_match.group(1)
+                if extracted_ref in (
+                    "refs/heads/master",
+                    "refs/heads/beta",
+                ) or extracted_ref.startswith("refs/heads/branch/"):
+                    ref = extracted_ref
+
+        if ref == "refs/heads/beta":
+            flat_mgr_repo = "beta"
+        else:
+            flat_mgr_repo = "stable"
+
         return {
             "sha": sha,
             "repo": git_repo,
-            "ref": "refs/heads/master",
-            "flat_manager_repo": "stable",
+            "ref": ref,
+            "flat_manager_repo": flat_mgr_repo,
             "issue_type": "build_failure",
         }
 
@@ -197,7 +220,7 @@ async def handle_issue_retry(
 
     app_id = git_repo.split("/", 1)[1]
 
-    build_params = parse_failure_issue(issue_body, git_repo)
+    build_params = await parse_failure_issue(issue_body, git_repo)
     if not build_params:
         logger.warning(
             "Could not parse build parameters from issue",
