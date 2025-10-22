@@ -50,12 +50,16 @@ def setup_logging() -> None:
         "uvicorn.error",
         "fastapi",
         "httpx",
+        "gql",
     ]:
         logger = logging.getLogger(logger_name)
         logger.propagate = False
         logger.handlers = []
         logger.addHandler(handler)
-        logger.setLevel(log_level)
+        if logger_name == "gql":
+            logger.setLevel(logging.WARNING)
+        else:
+            logger.setLevel(log_level)
 
 
 def get_logger(name: str) -> Any:

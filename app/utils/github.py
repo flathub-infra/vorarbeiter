@@ -4,6 +4,25 @@ import structlog
 import httpx
 
 from app.config import settings
+from gql import gql, Client
+from gql.transport.requests import RequestsHTTPTransport
+from gql.transport.exceptions import (
+    TransportQueryError,
+    TransportServerError,
+    TransportProtocolError,
+    TransportError,
+    TransportClosed,
+    TransportAlreadyConnected,
+)
+
+GQL_EXCEPTIONS = (
+    TransportQueryError,
+    TransportServerError,
+    TransportProtocolError,
+    TransportError,
+    TransportClosed,
+    TransportAlreadyConnected,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -414,3 +433,100 @@ async def get_issue_details(git_repo: str, issue_number: int) -> dict | None:
             error=str(e),
         )
     return None
+
+
+async def is_issue_edited(git_repo: str, issue_number: int) -> bool | None:
+    if not settings.github_status_token:
+        logger.warning(
+            "GITHUB_STATUS_TOKEN is not set. Cannot check issue edit status."
+        )
+        return None
+
+    if not git_repo or "/" not in git_repo:
+        logger.error("Invalid git_repo format. Expected 'owner/repo'.")
+        return None
+
+    owner, name = git_repo.split("/", 1)
+
+    transport = RequestsHTTPTransport(
+        url="https://api.github.com/graphql",
+        headers={"Authorization": f"Bearer {settings.github_status_token}"},
+    )
+    client = Client(transport=transport, fetch_schema_from_transport=False)
+
+    gql_check_issue_edited = gql(
+        """
+        query ($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) {
+            issue(number: $number) {
+              createdAt
+              lastEditedAt
+            }
+          }
+        }
+        """
+    )
+
+    try:
+        data = client.execute(
+            gql_check_issue_edited,
+            variable_values={"owner": owner, "name": name, "number": issue_number},
+        )
+
+        issue_data = data.get("repository", {}).get("issue")
+        if not issue_data:
+            logger.error(
+                "Issue not found in GraphQL response",
+                git_repo=git_repo,
+                issue_number=issue_number,
+            )
+            return None
+
+        created_at = issue_data.get("createdAt")
+        last_edited_at = issue_data.get("lastEditedAt")
+
+        if last_edited_at is None:
+            logger.info(
+                "Issue was not edited",
+                git_repo=git_repo,
+                issue_number=issue_number,
+                created_at=created_at,
+            )
+            return False
+
+        if created_at and last_edited_at and created_at != last_edited_at:
+            logger.info(
+                "Issue was edited",
+                git_repo=git_repo,
+                issue_number=issue_number,
+                created_at=created_at,
+                last_edited_at=last_edited_at,
+            )
+            return True
+
+        logger.info(
+            "Issue was not edited",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            created_at=created_at,
+        )
+        return False
+
+    except GQL_EXCEPTIONS as err:
+        logger.error(
+            "GraphQL exception while checking issue edit status",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            error=str(err),
+            exc_info=True,
+        )
+        return None
+    except Exception as e:
+        logger.error(
+            "Unexpected error checking issue edit status",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            error=str(e),
+            exc_info=True,
+        )
+        return None
