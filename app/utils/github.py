@@ -530,3 +530,56 @@ async def is_issue_edited(git_repo: str, issue_number: int) -> bool | None:
             exc_info=True,
         )
         return None
+
+
+async def get_workflow_run_title(run_id: int) -> str | None:
+    if not settings.github_status_token:
+        logger.warning(
+            "GITHUB_STATUS_TOKEN is not set. Cannot fetch workflow run title."
+        )
+        return None
+
+    repo = "flathub-infra/vorarbeiter"
+    url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {settings.github_status_token}",
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                url,
+                headers=headers,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            run_data = response.json()
+            title = run_data.get("display_title", "") or run_data.get("name", "")
+
+            logger.info(
+                "Successfully fetched workflow run title",
+                run_id=run_id,
+                title=title,
+            )
+            return title
+    except httpx.RequestError as e:
+        logger.error(
+            "Request error fetching workflow run title",
+            run_id=run_id,
+            error=str(e),
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "HTTP error fetching workflow run title",
+            run_id=run_id,
+            status_code=e.response.status_code,
+            response_text=e.response.text,
+        )
+    except Exception as e:
+        logger.error(
+            "Unexpected error fetching workflow run title",
+            run_id=run_id,
+            error=str(e),
+        )
+    return None

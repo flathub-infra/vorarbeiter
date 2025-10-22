@@ -575,7 +575,7 @@ async def test_receive_webhook_creates_pipeline(client, mock_db_session):
 SAMPLE_ISSUE_BODY_STABLE = """The stable build pipeline for `test-app` failed.
 
 Commit SHA: abc123456789
-Build log: https://example.com/log/123"""
+Build log: https://github.com/flathub-infra/vorarbeiter/actions/runs/123456789"""
 
 SAMPLE_ISSUE_BODY_JOB_FAILURE = """The commit job for `test-app` failed in the stable repository.
 
@@ -604,10 +604,11 @@ SAMPLE_RETRY_COMMENT_PAYLOAD = {
 }
 
 
-def test_parse_failure_issue_stable_build():
+@pytest.mark.asyncio
+async def test_parse_failure_issue_stable_build():
     from app.routes.webhooks import parse_failure_issue
 
-    result = parse_failure_issue(SAMPLE_ISSUE_BODY_STABLE, "flathub/test-app")
+    result = await parse_failure_issue(SAMPLE_ISSUE_BODY_STABLE, "flathub/test-app")
 
     assert result is not None
     assert result["sha"] == "abc123456789"
@@ -617,10 +618,13 @@ def test_parse_failure_issue_stable_build():
     assert result["issue_type"] == "build_failure"
 
 
-def test_parse_failure_issue_job_failure():
+@pytest.mark.asyncio
+async def test_parse_failure_issue_job_failure():
     from app.routes.webhooks import parse_failure_issue
 
-    result = parse_failure_issue(SAMPLE_ISSUE_BODY_JOB_FAILURE, "flathub/test-app")
+    result = await parse_failure_issue(
+        SAMPLE_ISSUE_BODY_JOB_FAILURE, "flathub/test-app"
+    )
 
     assert result is not None
     assert result["sha"] == "abc123456789"
@@ -631,11 +635,12 @@ def test_parse_failure_issue_job_failure():
     assert result["job_type"] == "commit"
 
 
-def test_parse_failure_issue_invalid():
+@pytest.mark.asyncio
+async def test_parse_failure_issue_invalid():
     from app.routes.webhooks import parse_failure_issue
 
     invalid_body = "This is not a build failure issue."
-    result = parse_failure_issue(invalid_body, "flathub/test-app")
+    result = await parse_failure_issue(invalid_body, "flathub/test-app")
 
     assert result is None
 
@@ -738,24 +743,33 @@ async def test_handle_issue_retry_success():
     mock_pipeline_service.create_pipeline.return_value = mock_pipeline
     mock_pipeline_service.start_pipeline.return_value = mock_pipeline
 
-    with patch("app.routes.webhooks.validate_retry_permissions", return_value=True):
-        with patch(
-            "app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service
-        ):
-            with patch("app.routes.webhooks.update_commit_status", AsyncMock()):
-                with patch("app.routes.webhooks.add_issue_comment", AsyncMock()):
-                    with patch("app.routes.webhooks.close_github_issue", AsyncMock()):
-                        result = await handle_issue_retry(
-                            git_repo="flathub/test-app",
-                            issue_number=123,
-                            issue_body=SAMPLE_ISSUE_BODY_STABLE,
-                            comment_author="test-user",
-                            webhook_event_id=event_id,
-                        )
+    with (
+        patch("app.routes.webhooks.validate_retry_permissions", return_value=True),
+        patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
+        patch(
+            "app.routes.webhooks.get_issue_details",
+            AsyncMock(return_value={"user": {"login": "flathubbot"}}),
+        ),
+        patch(
+            "app.routes.webhooks.get_workflow_run_title",
+            AsyncMock(return_value="Build from refs/heads/master"),
+        ),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+        patch("app.routes.webhooks.add_issue_comment", AsyncMock()),
+        patch("app.routes.webhooks.close_github_issue", AsyncMock()),
+    ):
+        result = await handle_issue_retry(
+            git_repo="flathub/test-app",
+            issue_number=123,
+            issue_body=SAMPLE_ISSUE_BODY_STABLE,
+            comment_author="test-user",
+            webhook_event_id=event_id,
+        )
 
-                        assert result == pipeline_id
-                        mock_pipeline_service.create_pipeline.assert_called_once()
-                        mock_pipeline_service.start_pipeline.assert_called_once()
+        assert result == pipeline_id
+        mock_pipeline_service.create_pipeline.assert_called_once()
+        mock_pipeline_service.start_pipeline.assert_called_once()
 
 
 @pytest.mark.asyncio
