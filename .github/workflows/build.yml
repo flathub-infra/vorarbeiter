@@ -250,9 +250,9 @@ jobs:
                   timeout = 60*9
                   match arch:
                       case "x86_64":
-                          runner = f"runs-on=${{ github.run_id }}-${{ github.run_attempt }}/runner={build_type}-amd64/tag=arch-amd64"
+                          runner = f"runs-on=${{ github.run_id }}-${{ github.run_attempt }}/runner={build_type}-amd64/tag=arch-amd64/retry=false"
                       case "aarch64":
-                          runner = f"runs-on=${{ github.run_id }}-${{ github.run_attempt }}/runner={build_type}-arm64/tag=arch-arm64"
+                          runner = f"runs-on=${{ github.run_id }}-${{ github.run_attempt }}/runner={build_type}-arm64/tag=arch-arm64/retry=false"
                       case _:
                           print(f"Error: Unsupported architecture: {arch}")
                           exit(1)
