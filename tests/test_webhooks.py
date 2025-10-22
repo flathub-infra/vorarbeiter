@@ -921,7 +921,17 @@ async def test_handle_issue_retry_permission_denied():
 
     event_id = uuid.uuid4()
 
-    with patch("app.routes.webhooks.validate_retry_permissions", return_value=False):
+    with (
+        patch("app.routes.webhooks.validate_retry_permissions", return_value=False),
+        patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
+        patch(
+            "app.routes.webhooks.get_issue_details",
+            AsyncMock(return_value={"user": {"login": "flathubbot"}}),
+        ),
+        patch(
+            "app.routes.webhooks.get_workflow_run_title", AsyncMock(return_value=None)
+        ),
+    ):
         with patch(
             "app.routes.webhooks.add_issue_comment", AsyncMock()
         ) as mock_comment:
@@ -946,7 +956,17 @@ async def test_handle_issue_retry_invalid_issue():
     event_id = uuid.uuid4()
     invalid_body = "This is not a build failure issue."
 
-    with patch("app.routes.webhooks.validate_retry_permissions", return_value=True):
+    with (
+        patch("app.routes.webhooks.validate_retry_permissions", return_value=True),
+        patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
+        patch(
+            "app.routes.webhooks.get_issue_details",
+            AsyncMock(return_value={"user": {"login": "flathubbot"}}),
+        ),
+        patch(
+            "app.routes.webhooks.get_workflow_run_title", AsyncMock(return_value=None)
+        ),
+    ):
         with patch(
             "app.routes.webhooks.add_issue_comment", AsyncMock()
         ) as mock_comment:
