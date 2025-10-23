@@ -90,6 +90,34 @@ def log_zip_without_cancellation():
     return zip_buffer.getvalue()
 
 
+@pytest.fixture
+def cancelled_annotations():
+    """Create annotations list with cancellation message."""
+    return [
+        {
+            "message": "The operation was canceled.",
+            "annotation_level": "failure",
+        }
+    ]
+
+
+@pytest.fixture
+def normal_failure_annotations():
+    """Create annotations list without cancellation message."""
+    return [
+        {
+            "message": "Build failed due to compilation errors",
+            "annotation_level": "failure",
+        }
+    ]
+
+
+@pytest.fixture
+def empty_annotations():
+    """Create empty annotations list."""
+    return []
+
+
 @pytest.mark.asyncio
 async def test_get_workflow_run_details_success(
     github_actions_service, mock_httpx_get, cancelled_run_response
@@ -189,37 +217,19 @@ async def test_download_run_logs_exception(github_actions_service, mock_httpx_ge
 
 @pytest.mark.asyncio
 async def test_check_run_was_cancelled_via_api(
-    github_actions_service, sample_provider_data
+    github_actions_service, sample_provider_data, cancelled_annotations
 ):
-    """Test cancellation detection via API conclusion."""
-    with patch.object(
-        github_actions_service, "get_workflow_run_details"
-    ) as mock_get_details:
-        mock_get_details.return_value = {"conclusion": "cancelled"}
-
-        result = await github_actions_service.check_run_was_cancelled(
-            sample_provider_data
-        )
-
-        assert result is True
-        mock_get_details.assert_called_once_with("flathub", "actions", 12345)
-
-
-@pytest.mark.asyncio
-async def test_check_run_was_cancelled_via_logs(
-    github_actions_service, sample_provider_data
-):
-    """Test cancellation detection via log content."""
+    """Test cancellation detection via check-run annotations."""
     with (
         patch.object(
             github_actions_service, "get_workflow_run_details"
         ) as mock_get_details,
-        patch.object(github_actions_service, "download_run_logs") as mock_download_logs,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
     ):
-        mock_get_details.return_value = {"conclusion": "failure"}
-        mock_download_logs.return_value = (
-            "Job started\nThe operation was canceled.\nCleanup"
-        )
+        mock_get_details.return_value = {"run_attempt": 1}
+        mock_get_annotations.return_value = cancelled_annotations
 
         result = await github_actions_service.check_run_was_cancelled(
             sample_provider_data
@@ -227,24 +237,49 @@ async def test_check_run_was_cancelled_via_logs(
 
         assert result is True
         mock_get_details.assert_called_once_with("flathub", "actions", 12345)
-        mock_download_logs.assert_called_once_with("flathub", "actions", 12345)
+        mock_get_annotations.assert_called_once_with("flathub", "actions", 12345)
+
+
+@pytest.mark.asyncio
+async def test_check_run_was_cancelled_via_logs(
+    github_actions_service, sample_provider_data, cancelled_annotations
+):
+    """Test cancellation detection via check-run annotations."""
+    with (
+        patch.object(
+            github_actions_service, "get_workflow_run_details"
+        ) as mock_get_details,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
+    ):
+        mock_get_details.return_value = {"run_attempt": 1}
+        mock_get_annotations.return_value = cancelled_annotations
+
+        result = await github_actions_service.check_run_was_cancelled(
+            sample_provider_data
+        )
+
+        assert result is True
+        mock_get_details.assert_called_once_with("flathub", "actions", 12345)
+        mock_get_annotations.assert_called_once_with("flathub", "actions", 12345)
 
 
 @pytest.mark.asyncio
 async def test_check_run_was_cancelled_not_cancelled(
-    github_actions_service, sample_provider_data
+    github_actions_service, sample_provider_data, normal_failure_annotations
 ):
     """Test when run was not cancelled."""
     with (
         patch.object(
             github_actions_service, "get_workflow_run_details"
         ) as mock_get_details,
-        patch.object(github_actions_service, "download_run_logs") as mock_download_logs,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
     ):
-        mock_get_details.return_value = {"conclusion": "failure"}
-        mock_download_logs.return_value = (
-            "Job started\nBuild failed due to errors\nCleanup"
-        )
+        mock_get_details.return_value = {"run_attempt": 1}
+        mock_get_annotations.return_value = normal_failure_annotations
 
         result = await github_actions_service.check_run_was_cancelled(
             sample_provider_data
@@ -298,10 +333,12 @@ async def test_check_run_was_cancelled_api_failures(
         patch.object(
             github_actions_service, "get_workflow_run_details"
         ) as mock_get_details,
-        patch.object(github_actions_service, "download_run_logs") as mock_download_logs,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
     ):
         mock_get_details.return_value = None
-        mock_download_logs.return_value = None
+        mock_get_annotations.return_value = None
 
         result = await github_actions_service.check_run_was_cancelled(
             sample_provider_data
@@ -312,24 +349,26 @@ async def test_check_run_was_cancelled_api_failures(
 
 @pytest.mark.asyncio
 async def test_check_run_was_cancelled_logs_fallback(
-    github_actions_service, sample_provider_data
+    github_actions_service, sample_provider_data, cancelled_annotations
 ):
-    """Test that logs are checked when API details are unavailable."""
+    """Test annotations check when API details fail (annotations are always checked)."""
     with (
         patch.object(
             github_actions_service, "get_workflow_run_details"
         ) as mock_get_details,
-        patch.object(github_actions_service, "download_run_logs") as mock_download_logs,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
     ):
         mock_get_details.return_value = None
-        mock_download_logs.return_value = "The operation was canceled."
+        mock_get_annotations.return_value = cancelled_annotations
 
         result = await github_actions_service.check_run_was_cancelled(
             sample_provider_data
         )
 
         assert result is True
-        mock_download_logs.assert_called_once_with("flathub", "actions", 12345)
+        mock_get_annotations.assert_called_once_with("flathub", "actions", 12345)
 
 
 @pytest.mark.asyncio
@@ -355,16 +394,10 @@ async def test_check_run_was_cancelled_retry_attempt_via_logs(
     github_actions_service, sample_provider_data, cancelled_retry_run_response
 ):
     """Test that cancelled retry attempts are treated as failures via logs."""
-    with (
-        patch.object(
-            github_actions_service, "get_workflow_run_details"
-        ) as mock_get_details,
-        patch.object(github_actions_service, "download_run_logs") as mock_download_logs,
-    ):
+    with patch.object(
+        github_actions_service, "get_workflow_run_details"
+    ) as mock_get_details:
         mock_get_details.return_value = cancelled_retry_run_response
-        mock_download_logs.return_value = (
-            "Job started\nThe operation was canceled.\nCleanup"
-        )
 
         result = await github_actions_service.check_run_was_cancelled(
             sample_provider_data
@@ -376,46 +409,53 @@ async def test_check_run_was_cancelled_retry_attempt_via_logs(
 
 @pytest.mark.asyncio
 async def test_check_run_was_cancelled_missing_run_attempt_defaults_to_1(
-    github_actions_service, sample_provider_data
+    github_actions_service, sample_provider_data, cancelled_annotations
 ):
     """Test that missing run_attempt defaults to 1 and is treated as cancellation."""
-    with patch.object(
-        github_actions_service, "get_workflow_run_details"
-    ) as mock_get_details:
-        # Response without run_attempt field
-        mock_get_details.return_value = {
-            "id": 12345,
-            "status": "completed",
-            "conclusion": "cancelled",
-        }
-
-        result = await github_actions_service.check_run_was_cancelled(
-            sample_provider_data
-        )
-
-        assert result is True
-        mock_get_details.assert_called_once_with("flathub", "actions", 12345)
-
-
-@pytest.mark.asyncio
-async def test_check_run_was_cancelled_retry_via_logs_only(
-    github_actions_service, sample_provider_data
-):
-    """Test retry detection when only logs are available (API details failed)."""
     with (
         patch.object(
             github_actions_service, "get_workflow_run_details"
         ) as mock_get_details,
-        patch.object(github_actions_service, "download_run_logs") as mock_download_logs,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
     ):
-        mock_get_details.return_value = None
-        mock_download_logs.return_value = "The operation was canceled."
+        # Response without run_attempt field
+        mock_get_details.return_value = {
+            "id": 12345,
+            "status": "completed",
+        }
+        mock_get_annotations.return_value = cancelled_annotations
 
         result = await github_actions_service.check_run_was_cancelled(
             sample_provider_data
         )
 
-        # Should return True since we can't determine attempt number without API details
         assert result is True
         mock_get_details.assert_called_once_with("flathub", "actions", 12345)
-        mock_download_logs.assert_called_once_with("flathub", "actions", 12345)
+        mock_get_annotations.assert_called_once_with("flathub", "actions", 12345)
+
+
+@pytest.mark.asyncio
+async def test_check_run_was_cancelled_retry_via_logs_only(
+    github_actions_service, sample_provider_data, cancelled_annotations
+):
+    """Test retry detection when only annotations are available (API details failed)."""
+    with (
+        patch.object(
+            github_actions_service, "get_workflow_run_details"
+        ) as mock_get_details,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
+    ):
+        mock_get_details.return_value = None
+        mock_get_annotations.return_value = cancelled_annotations
+
+        result = await github_actions_service.check_run_was_cancelled(
+            sample_provider_data
+        )
+
+        assert result is True
+        mock_get_details.assert_called_once_with("flathub", "actions", 12345)
+        mock_get_annotations.assert_called_once_with("flathub", "actions", 12345)

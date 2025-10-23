@@ -583,3 +583,101 @@ async def get_workflow_run_title(run_id: int) -> str | None:
             error=str(e),
         )
     return None
+
+
+async def get_check_run_annotations(
+    owner: str,
+    repo: str,
+    run_id: int,
+) -> list[dict] | None:
+    """Get annotations from all check-runs for a workflow run.
+
+    Returns a list of annotation dicts with 'message' and 'annotation_level' keys,
+    or None if there was an error.
+    """
+    if not settings.github_status_token:
+        logger.warning(
+            "GITHUB_STATUS_TOKEN is not set. Cannot fetch check-run annotations."
+        )
+        return None
+
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {settings.github_status_token}",
+    }
+
+    annotations: list[dict[str, str]] = []
+
+    try:
+        async with httpx.AsyncClient() as client:
+            jobs_url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+            response = await client.get(
+                jobs_url,
+                headers=headers,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            jobs = response.json().get("jobs", [])
+
+            for job in jobs:
+                if check_run_url := job.get("check_run_url"):
+                    try:
+                        annotations_response = await client.get(
+                            f"{check_run_url}/annotations",
+                            headers=headers,
+                            timeout=10.0,
+                        )
+                        if annotations_response.status_code == 200:
+                            annotations.extend(
+                                {
+                                    "message": a.get("message"),
+                                    "annotation_level": a.get("annotation_level"),
+                                }
+                                for a in annotations_response.json()
+                            )
+                    except httpx.HTTPError as e:
+                        logger.warning(
+                            "Failed to fetch annotations for job",
+                            job_id=job.get("id"),
+                            owner=owner,
+                            repo=repo,
+                            run_id=run_id,
+                            error=str(e),
+                        )
+                        continue
+
+            logger.info(
+                "Successfully fetched check-run annotations",
+                owner=owner,
+                repo=repo,
+                run_id=run_id,
+                annotation_count=len(annotations),
+            )
+            return annotations
+
+    except httpx.RequestError as e:
+        logger.error(
+            "Request error fetching jobs",
+            owner=owner,
+            repo=repo,
+            run_id=run_id,
+            error=str(e),
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "HTTP error fetching jobs",
+            owner=owner,
+            repo=repo,
+            run_id=run_id,
+            status_code=e.response.status_code,
+            response_text=e.response.text,
+        )
+    except Exception as e:
+        logger.error(
+            "Unexpected error fetching check-run annotations",
+            owner=owner,
+            repo=repo,
+            run_id=run_id,
+            error=str(e),
+        )
+    return None
