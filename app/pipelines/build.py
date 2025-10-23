@@ -217,6 +217,19 @@ class BuildPipeline:
                     raise ValueError("Log URL already set")
                 pipeline.log_url = callback_data.log_url
                 updates["log_url"] = pipeline.log_url
+
+                try:
+                    run_id = callback_data.log_url.rstrip("/").split("/")[-1]
+                    if pipeline.provider_data is None:
+                        pipeline.provider_data = {}
+                    pipeline.provider_data["run_id"] = run_id
+                except (IndexError, AttributeError):
+                    logger.warning(
+                        "Failed to extract run_id from log_url",
+                        log_url=callback_data.log_url,
+                        pipeline_id=str(pipeline_id),
+                    )
+
                 await db.commit()
                 github_notifier = GitHubNotifier()
                 await github_notifier.handle_build_started(
@@ -271,6 +284,37 @@ class BuildPipeline:
                         pipeline.finished_at = datetime.now()
 
                 await db.commit()
+
+                if (
+                    status_value == "cancelled"
+                    and pipeline.flat_manager_repo in ["stable", "beta"]
+                    and not pipeline.params.get("auto_retried")
+                ):
+                    retry_params = pipeline.params.copy()
+                    retry_params["auto_retried"] = True
+
+                    try:
+                        retry_pipeline = await self.create_pipeline(
+                            app_id=pipeline.app_id,
+                            params=retry_params,
+                            webhook_event_id=pipeline.webhook_event_id,
+                        )
+                        retry_pipeline = await self.start_pipeline(
+                            pipeline_id=retry_pipeline.id
+                        )
+                        logger.info(
+                            "Auto-retrying cancelled build",
+                            original_pipeline_id=str(pipeline_id),
+                            retry_pipeline_id=str(retry_pipeline.id),
+                            flat_manager_repo=pipeline.flat_manager_repo,
+                        )
+                        return pipeline, updates
+                    except Exception as e:
+                        logger.error(
+                            "Failed to auto-retry cancelled build",
+                            pipeline_id=str(pipeline_id),
+                            error=str(e),
+                        )
                 if (
                     status_value == "success"
                     and pipeline.params.get("workflow_id", "build.yml") == "build.yml"

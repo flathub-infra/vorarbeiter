@@ -1142,3 +1142,159 @@ async def test_start_pipeline_build_type_precedence():
             await build_pipeline.start_pipeline(pipeline_id)
 
             assert mock_pipeline.params["build_type"] == "large"
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_auto_retry_stable_cancelled(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that a cancelled stable build is automatically retried once."""
+    sample_pipeline.flat_manager_repo = "stable"
+    sample_pipeline.params = {"branch": "main"}
+    mock_db.get.return_value = sample_pipeline
+    mock_db.flush = AsyncMock()
+
+    mock_get_db = create_mock_get_db(mock_db)
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled:
+            mock_check_cancelled.return_value = True
+            with patch.object(
+                build_pipeline, "create_pipeline", new_callable=AsyncMock
+            ) as mock_create:
+                with patch.object(
+                    build_pipeline, "start_pipeline", new_callable=AsyncMock
+                ) as mock_start:
+                    retry_pipeline = Pipeline(
+                        id=uuid.uuid4(),
+                        app_id="org.flathub.Test",
+                        status=PipelineStatus.PENDING,
+                        params={"branch": "main", "auto_retried": True},
+                        created_at=datetime.now(),
+                        triggered_by=PipelineTrigger.MANUAL,
+                        provider_data={},
+                        callback_token="test_token",
+                    )
+                    mock_create.return_value = retry_pipeline
+                    mock_start.return_value = retry_pipeline
+
+                    pipeline, updates = await build_pipeline.handle_callback(
+                        sample_pipeline.id, callback_data
+                    )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    mock_create.assert_called_once()
+    mock_start.assert_called_once()
+    call_args = mock_create.call_args
+    assert call_args.kwargs["params"]["auto_retried"] is True
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_auto_retry_beta_cancelled(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that a cancelled beta build is automatically retried once."""
+    sample_pipeline.flat_manager_repo = "beta"
+    sample_pipeline.params = {"branch": "main"}
+    mock_db.get.return_value = sample_pipeline
+    mock_db.flush = AsyncMock()
+
+    mock_get_db = create_mock_get_db(mock_db)
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled:
+            mock_check_cancelled.return_value = True
+            with patch.object(
+                build_pipeline, "create_pipeline", new_callable=AsyncMock
+            ) as mock_create:
+                with patch.object(
+                    build_pipeline, "start_pipeline", new_callable=AsyncMock
+                ) as mock_start:
+                    retry_pipeline = Pipeline(
+                        id=uuid.uuid4(),
+                        app_id="org.flathub.Test",
+                        status=PipelineStatus.PENDING,
+                        params={"branch": "main", "auto_retried": True},
+                        created_at=datetime.now(),
+                        triggered_by=PipelineTrigger.MANUAL,
+                        provider_data={},
+                        callback_token="test_token",
+                    )
+                    mock_create.return_value = retry_pipeline
+                    mock_start.return_value = retry_pipeline
+
+                    pipeline, updates = await build_pipeline.handle_callback(
+                        sample_pipeline.id, callback_data
+                    )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    mock_create.assert_called_once()
+    mock_start.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_no_auto_retry_test_cancelled(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that test builds are NOT automatically retried when cancelled."""
+    sample_pipeline.flat_manager_repo = "test"
+    sample_pipeline.params = {"branch": "main"}
+    mock_db.get.return_value = sample_pipeline
+    mock_db.flush = AsyncMock()
+
+    mock_get_db = create_mock_get_db(mock_db)
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled:
+            mock_check_cancelled.return_value = True
+            with patch.object(
+                build_pipeline, "create_pipeline", new_callable=AsyncMock
+            ) as mock_create:
+                pipeline, updates = await build_pipeline.handle_callback(
+                    sample_pipeline.id, callback_data
+                )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_callback_no_auto_retry_already_retried(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Test that already-retried builds are NOT retried again."""
+    sample_pipeline.flat_manager_repo = "stable"
+    sample_pipeline.params = {"branch": "main", "auto_retried": True}
+    mock_db.get.return_value = sample_pipeline
+    mock_db.flush = AsyncMock()
+
+    mock_get_db = create_mock_get_db(mock_db)
+
+    callback_data = CallbackData(status="failure")
+
+    with patch("app.pipelines.build.get_db", mock_get_db):
+        with patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled:
+            mock_check_cancelled.return_value = True
+            with patch.object(
+                build_pipeline, "create_pipeline", new_callable=AsyncMock
+            ) as mock_create:
+                pipeline, updates = await build_pipeline.handle_callback(
+                    sample_pipeline.id, callback_data
+                )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    mock_create.assert_not_called()

@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.utils.github import get_check_run_annotations
 
 
 class GitHubActionsService:
@@ -135,7 +136,7 @@ class GitHubActionsService:
             return None
 
     async def check_run_was_cancelled(self, provider_data: dict[str, Any]) -> bool:
-        """Check if a GitHub Actions run was cancelled due to spot instance termination."""
+        """Check if a GitHub Actions run was cancelled by GitHub."""
         run_id = provider_data.get("run_id")
         owner = provider_data.get("owner")
         repo = provider_data.get("repo")
@@ -161,27 +162,26 @@ class GitHubActionsService:
             return False
 
         run_details = await self.get_workflow_run_details(owner, repo, run_id_int)
-        if run_details and run_details.get("conclusion") == "cancelled":
+        if run_details:
             run_attempt = run_details.get("run_attempt", 1)
             if run_attempt > 1:
                 self.logger.info(
-                    f"Run {run_id_int} attempt {run_attempt} cancelled - treating as failure since this is a retry"
+                    f"Run {run_id_int} attempt {run_attempt} - treating as failure since this is a retry"
                 )
                 return False
-            self.logger.info(
-                f"Run {run_id_int} detected as cancelled via API conclusion"
-            )
-            return True
 
-        log_content = await self.download_run_logs(owner, repo, run_id_int)
-        if log_content and "The operation was canceled." in log_content:
-            run_attempt = run_details.get("run_attempt", 1) if run_details else 1
-            if run_attempt > 1:
+        annotations = await get_check_run_annotations(owner, repo, run_id_int)
+        if annotations is None:
+            self.logger.warning(
+                "Failed to fetch job annotations for cancellation detection"
+            )
+            return False
+
+        for annotation in annotations:
+            if annotation.get("message") == "The operation was canceled.":
                 self.logger.info(
-                    f"Run {run_id_int} attempt {run_attempt} cancelled via logs - treating as failure since this is a retry"
+                    f"Run {run_id_int} detected as cancelled by GitHub via job annotation"
                 )
-                return False
-            self.logger.info(f"Run {run_id_int} detected as cancelled via log content")
-            return True
+                return True
 
         return False
