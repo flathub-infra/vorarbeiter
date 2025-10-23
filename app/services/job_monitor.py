@@ -426,6 +426,47 @@ class JobMonitor:
                 error=str(e),
             )
 
+    async def _report_published_job_status(
+        self, pipeline: Pipeline, job_id: int, job_type: str
+    ) -> bool:
+        """Report job status for a PUBLISHED pipeline.
+
+        Fetches current job status and notifies if completed or failed.
+        Returns True if a notification was sent, False otherwise.
+        """
+        try:
+            job_response = await self.flat_manager.get_job(job_id)
+            job_status = JobStatus(job_response["status"])
+
+            if job_status == JobStatus.ENDED:
+                logger.info(
+                    f"Reporting completed {job_type} job status for published pipeline",
+                    pipeline_id=str(pipeline.id),
+                    job_id=job_id,
+                )
+                await self._notify_flat_manager_job_completed(
+                    pipeline, job_type, job_id, success=True
+                )
+                return True
+            elif job_status == JobStatus.BROKEN:
+                logger.info(
+                    f"Reporting failed {job_type} job status for published pipeline",
+                    pipeline_id=str(pipeline.id),
+                    job_id=job_id,
+                )
+                await self._notify_flat_manager_job_completed(
+                    pipeline, job_type, job_id, success=False
+                )
+                return True
+        except Exception as e:
+            logger.error(
+                f"Failed to check {job_type} job status for published pipeline",
+                pipeline_id=str(pipeline.id),
+                job_id=job_id,
+                error=str(e),
+            )
+        return False
+
     async def _check_published_pipeline_jobs(
         self, db: AsyncSession, pipeline: Pipeline
     ) -> bool:
@@ -433,81 +474,19 @@ class JobMonitor:
         updated = False
 
         if pipeline.publish_job_id and pipeline.flat_manager_repo in ["beta", "stable"]:
-            try:
-                job_response = await self.flat_manager.get_job(pipeline.publish_job_id)
-                job_status = JobStatus(job_response["status"])
-
-                if job_status == JobStatus.ENDED:
-                    logger.info(
-                        "Reporting completed publish job status for published pipeline",
-                        pipeline_id=str(pipeline.id),
-                        publish_job_id=pipeline.publish_job_id,
-                    )
-                    await self._notify_flat_manager_job_completed(
-                        pipeline, "publish", pipeline.publish_job_id, success=True
-                    )
-                    updated = True
-                elif job_status == JobStatus.BROKEN:
-                    logger.info(
-                        "Reporting failed publish job status for published pipeline",
-                        pipeline_id=str(pipeline.id),
-                        publish_job_id=pipeline.publish_job_id,
-                    )
-                    await self._notify_flat_manager_job_completed(
-                        pipeline, "publish", pipeline.publish_job_id, success=False
-                    )
-                    updated = True
-            except Exception as e:
-                logger.error(
-                    "Failed to check publish job status for published pipeline",
-                    pipeline_id=str(pipeline.id),
-                    publish_job_id=pipeline.publish_job_id,
-                    error=str(e),
-                )
+            if await self._report_published_job_status(
+                pipeline, pipeline.publish_job_id, "publish"
+            ):
+                updated = True
 
         if pipeline.update_repo_job_id and pipeline.flat_manager_repo in [
             "beta",
             "stable",
         ]:
-            try:
-                job_response = await self.flat_manager.get_job(
-                    pipeline.update_repo_job_id
-                )
-                job_status = JobStatus(job_response["status"])
-
-                if job_status == JobStatus.ENDED:
-                    logger.info(
-                        "Reporting completed update-repo job status for published pipeline",
-                        pipeline_id=str(pipeline.id),
-                        update_repo_job_id=pipeline.update_repo_job_id,
-                    )
-                    await self._notify_flat_manager_job_completed(
-                        pipeline,
-                        "update-repo",
-                        pipeline.update_repo_job_id,
-                        success=True,
-                    )
-                    updated = True
-                elif job_status == JobStatus.BROKEN:
-                    logger.info(
-                        "Reporting failed update-repo job status for published pipeline",
-                        pipeline_id=str(pipeline.id),
-                        update_repo_job_id=pipeline.update_repo_job_id,
-                    )
-                    await self._notify_flat_manager_job_completed(
-                        pipeline,
-                        "update-repo",
-                        pipeline.update_repo_job_id,
-                        success=False,
-                    )
-                    updated = True
-            except Exception as e:
-                logger.error(
-                    "Failed to check update-repo job status for published pipeline",
-                    pipeline_id=str(pipeline.id),
-                    update_repo_job_id=pipeline.update_repo_job_id,
-                    error=str(e),
-                )
+            if await self._report_published_job_status(
+                pipeline, pipeline.update_repo_job_id, "update-repo"
+            ):
+                updated = True
 
         return updated
 
