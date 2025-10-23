@@ -27,6 +27,10 @@ on:
         description: 'Build type'
         required: true
         default: 'default'
+      spot:
+        description: 'Use spot instances'
+        required: false
+        default: 'true'
 
 jobs:
   hello-world:
