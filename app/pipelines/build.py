@@ -223,6 +223,7 @@ class BuildPipeline:
                     if pipeline.provider_data is None:
                         pipeline.provider_data = {}
                     pipeline.provider_data["run_id"] = run_id
+                    flag_modified(pipeline, "provider_data")
                 except (IndexError, AttributeError):
                     logger.warning(
                         "Failed to extract run_id from log_url",
