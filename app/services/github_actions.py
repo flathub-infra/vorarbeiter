@@ -148,7 +148,10 @@ class GitHubActionsService:
 
         if not all([run_id, owner, repo]):
             logger.warning(
-                "Missing required provider_data fields for cancellation check"
+                "Missing required provider_data fields for cancellation check",
+                has_run_id=bool(run_id),
+                has_owner=bool(owner),
+                has_repo=bool(repo),
             )
             return False
 
