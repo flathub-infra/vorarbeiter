@@ -145,6 +145,7 @@ class BuildPipeline:
                 "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
                 "callback_token": pipeline.callback_token,
                 "build_type": build_type,
+                "spot": "true" if pipeline.params.get("use_spot", True) else "false",
             }
 
             if requires_flat_manager:
@@ -293,6 +294,7 @@ class BuildPipeline:
                 ):
                     retry_params = pipeline.params.copy()
                     retry_params["auto_retried"] = True
+                    retry_params["use_spot"] = False
 
                     try:
                         retry_pipeline = await self.create_pipeline(
