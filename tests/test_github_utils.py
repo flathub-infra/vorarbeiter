@@ -1,6 +1,7 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
+import pytest
 
 from app.utils.github import (
     add_issue_comment,
@@ -70,19 +71,6 @@ async def test_update_commit_status_custom_context(mock_settings):
 
         call_json = mock_client_instance.post.call_args[1]["json"]
         assert call_json["context"] == "builds/aarch64"
-
-
-@pytest.mark.asyncio
-async def test_update_commit_status_no_token():
-    with patch("app.utils.github.settings") as mock_settings:
-        mock_settings.github_status_token = ""
-
-        with patch("httpx.AsyncClient") as MockClient:
-            await update_commit_status(
-                sha="abc123", state="success", git_repo="flathub/test-app"
-            )
-
-            MockClient.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -289,19 +277,6 @@ async def test_create_pr_comment_success(mock_settings):
         )
         assert call_args[1]["json"]["body"] == "Build started!"
         assert call_args[1]["headers"]["Authorization"] == "token test-token"
-
-
-@pytest.mark.asyncio
-async def test_create_pr_comment_no_token():
-    with patch("app.utils.github.settings") as mock_settings:
-        mock_settings.github_status_token = ""
-
-        with patch("httpx.AsyncClient") as MockClient:
-            await create_pr_comment(
-                git_repo="flathub/test-app", pr_number=42, comment="Test comment"
-            )
-
-            MockClient.assert_not_called()
 
 
 @pytest.mark.asyncio

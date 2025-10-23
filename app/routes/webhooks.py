@@ -86,10 +86,6 @@ async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
 
 
 async def validate_retry_permissions(git_repo: str, user_login: str) -> bool:
-    if not settings.github_status_token:
-        logger.warning("GITHUB_STATUS_TOKEN not set. Skipping permission check.")
-        return False
-
     url = f"https://api.github.com/repos/{git_repo}/collaborators/{user_login}"
     headers = {
         "Accept": "application/vnd.github.v3+json",

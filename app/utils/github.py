@@ -35,10 +35,6 @@ async def update_commit_status(
     description: str | None = None,
     context: str = "builds/x86_64",
 ) -> None:
-    if not settings.github_status_token:
-        logger.warning("GITHUB_STATUS_TOKEN is not set. Skipping status update.")
-        return
-
     if not git_repo:
         logger.error(
             "Missing git_repo for GitHub status update. Skipping status update."
@@ -160,10 +156,6 @@ async def update_commit_status(
 
 
 async def create_pr_comment(git_repo: str, pr_number: int, comment: str) -> None:
-    if not settings.github_status_token:
-        logger.warning("GITHUB_STATUS_TOKEN is not set. Skipping PR comment creation.")
-        return
-
     if not git_repo:
         logger.error("Missing git_repo for GitHub PR comment. Skipping PR comment.")
         return
@@ -436,12 +428,6 @@ async def get_issue_details(git_repo: str, issue_number: int) -> dict | None:
 
 
 async def is_issue_edited(git_repo: str, issue_number: int) -> bool | None:
-    if not settings.github_status_token:
-        logger.warning(
-            "GITHUB_STATUS_TOKEN is not set. Cannot check issue edit status."
-        )
-        return None
-
     if not git_repo or "/" not in git_repo:
         logger.error("Invalid git_repo format. Expected 'owner/repo'.")
         return None
@@ -533,12 +519,6 @@ async def is_issue_edited(git_repo: str, issue_number: int) -> bool | None:
 
 
 async def get_workflow_run_title(run_id: int) -> str | None:
-    if not settings.github_status_token:
-        logger.warning(
-            "GITHUB_STATUS_TOKEN is not set. Cannot fetch workflow run title."
-        )
-        return None
-
     repo = "flathub-infra/vorarbeiter"
     url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
     headers = {
@@ -595,12 +575,6 @@ async def get_check_run_annotations(
     Returns a list of annotation dicts with 'message' and 'annotation_level' keys,
     or None if there was an error.
     """
-    if not settings.github_status_token:
-        logger.warning(
-            "GITHUB_STATUS_TOKEN is not set. Cannot fetch check-run annotations."
-        )
-        return None
-
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "Authorization": f"token {settings.github_status_token}",
