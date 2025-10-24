@@ -1241,10 +1241,10 @@ async def test_handle_callback_auto_retry_beta_cancelled(
 
 
 @pytest.mark.asyncio
-async def test_handle_callback_auto_retry_test_cancelled(
+async def test_handle_callback_no_auto_retry_test_cancelled(
     build_pipeline, mock_db, sample_pipeline
 ):
-    """Test that test builds are automatically retried once when cancelled."""
+    """Test that test builds are NOT automatically retried when cancelled."""
     sample_pipeline.flat_manager_repo = "test"
     sample_pipeline.params = {"branch": "main"}
     mock_db.get.return_value = sample_pipeline
@@ -1262,29 +1262,12 @@ async def test_handle_callback_auto_retry_test_cancelled(
             with patch.object(
                 build_pipeline, "create_pipeline", new_callable=AsyncMock
             ) as mock_create:
-                with patch.object(
-                    build_pipeline, "start_pipeline", new_callable=AsyncMock
-                ) as mock_start:
-                    retry_pipeline = Pipeline(
-                        id=uuid.uuid4(),
-                        app_id="org.flathub.Test",
-                        status=PipelineStatus.PENDING,
-                        params={"branch": "main", "auto_retried": True},
-                        created_at=datetime.now(),
-                        triggered_by=PipelineTrigger.MANUAL,
-                        provider_data={},
-                        callback_token="test_token",
-                    )
-                    mock_create.return_value = retry_pipeline
-                    mock_start.return_value = retry_pipeline
-
-                    pipeline, updates = await build_pipeline.handle_callback(
-                        sample_pipeline.id, callback_data
-                    )
+                pipeline, updates = await build_pipeline.handle_callback(
+                    sample_pipeline.id, callback_data
+                )
 
     assert pipeline.status == PipelineStatus.CANCELLED
-    mock_create.assert_called_once()
-    mock_start.assert_called_once()
+    mock_create.assert_not_called()
 
 
 @pytest.mark.asyncio

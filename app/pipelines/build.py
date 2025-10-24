@@ -289,7 +289,7 @@ class BuildPipeline:
 
                 if (
                     status_value == "cancelled"
-                    and pipeline.flat_manager_repo in ["stable", "beta", "test"]
+                    and pipeline.flat_manager_repo in ["stable", "beta"]
                     and not pipeline.params.get("auto_retried")
                 ):
                     retry_params = pipeline.params.copy()
