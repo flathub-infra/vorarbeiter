@@ -476,7 +476,7 @@ async def receive_github_webhook(
 async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     payload = event.payload
     app_id = f"{event.repository.split('/')[-1]}"
-    params = {"repo": event.repository}
+    params: dict[str, Any] = {"repo": event.repository}
     sha = None
 
     if "pull_request" in payload and payload.get("action") in [
@@ -569,6 +569,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             {
                 "pr_number": str(pr_number),
                 "ref": pr_ref,
+                "use_spot": False,
             }
         )
 
