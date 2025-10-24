@@ -524,98 +524,94 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             }
         )
 
-    elif "comment" in payload and "bot, build" in payload.get("comment", {}).get(
-        "body", ""
-    ):
-        issue = payload.get("issue", {})
-        pr_url = issue.get("pull_request", {}).get("url", "")
-        pr_number = issue.get("number")
-        repo = event.repository
-
-        if not pr_url or pr_number is None:
-            return None
-
-        pr_ref = f"refs/pull/{pr_number}/head"
-
-        github_api_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
-        headers = {
-            "Accept": "application/vnd.github.v3+json",
-            "Authorization": f"token {settings.github_status_token}",
-        }
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(github_api_url, headers=headers)
-                response.raise_for_status()
-                pr_data = response.json()
-                sha = pr_data.get("head", {}).get("sha")
-
-                pr_state = pr_data.get("state")
-                if pr_state in ["closed", "merged"]:
-                    logger.info(
-                        "PR is closed/merged, ignoring 'bot, build' command",
-                        pr_number=pr_number,
-                        repo=repo,
-                        pr_state=pr_state,
-                    )
-                    await create_pr_comment(
-                        git_repo=repo,
-                        pr_number=pr_number,
-                        comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
-                    )
-                    return None
-        except httpx.RequestError as e:
-            logger.error("Error fetching PR details from GitHub", error=str(e))
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "GitHub API error",
-                status_code=e.response.status_code,
-                response_text=e.response.text,
-            )
-
-        params.update(
-            {
-                "pr_number": str(pr_number),
-                "ref": pr_ref,
-                "use_spot": False,
-            }
-        )
-
-    elif (
-        "comment" in payload
-        and "bot, retry" in payload.get("comment", {}).get("body", "").lower()
-    ):
+    elif "comment" in payload:
+        comment_body = payload.get("comment", {}).get("body", "").lower()
         issue = payload.get("issue", {})
         issue_number = issue.get("number")
         issue_body = issue.get("body", "")
         comment_author = payload.get("comment", {}).get("user", {}).get("login", "")
         issue_author = issue.get("user", {}).get("login", "")
+        pr_url = issue.get("pull_request", {}).get("url", "")
+        repo = event.repository
 
-        if not issue_number or not issue_body:
-            logger.error("Missing issue number or body for retry request")
-            return None
+        if "bot, build" in comment_body:
+            if not pr_url or issue_number is None:
+                return None
 
-        if issue_author != "flathubbot":
-            logger.info(
-                "Retry comment on issue not created by flathubbot, ignoring",
-                issue_author=issue_author,
-                issue_number=issue_number,
+            pr_ref = f"refs/pull/{issue_number}/head"
+
+            github_api_url = f"https://api.github.com/repos/{repo}/pulls/{issue_number}"
+            headers = {
+                "Accept": "application/vnd.github.v3+json",
+                "Authorization": f"token {settings.github_status_token}",
+            }
+
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(github_api_url, headers=headers)
+                    response.raise_for_status()
+                    pr_data = response.json()
+                    sha = pr_data.get("head", {}).get("sha")
+
+                    pr_state = pr_data.get("state")
+                    if pr_state in ["closed", "merged"]:
+                        logger.info(
+                            "PR is closed/merged, ignoring 'bot, build' command",
+                            pr_number=issue_number,
+                            repo=repo,
+                            pr_state=pr_state,
+                        )
+                        await create_pr_comment(
+                            git_repo=repo,
+                            pr_number=issue_number,
+                            comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
+                        )
+                        return None
+            except httpx.RequestError as e:
+                logger.error("Error fetching PR details from GitHub", error=str(e))
+            except httpx.HTTPStatusError as e:
+                logger.error(
+                    "GitHub API error",
+                    status_code=e.response.status_code,
+                    response_text=e.response.text,
+                )
+
+            params.update(
+                {
+                    "pr_number": str(issue_number),
+                    "ref": pr_ref,
+                    "use_spot": False,
+                }
             )
-            return None
 
-        if issue.get("pull_request"):
-            logger.info("Retry comment on PR, ignoring (only for build failure issues)")
-            return None
+        elif "bot, retry" in comment_body:
+            if not issue_number or not issue_body:
+                logger.error("Missing issue number or body for retry request")
+                return None
 
-        retry_pipeline_id = await handle_issue_retry(
-            git_repo=event.repository,
-            issue_number=issue_number,
-            issue_body=issue_body,
-            comment_author=comment_author,
-            webhook_event_id=event.id,
-        )
+            if issue_author != "flathubbot":
+                logger.info(
+                    "Retry comment on issue not created by flathubbot, ignoring",
+                    issue_author=issue_author,
+                    issue_number=issue_number,
+                )
+                return None
 
-        return retry_pipeline_id
+            if issue.get("pull_request"):
+                logger.info(
+                    "Retry comment on PR, ignoring (only for build failure issues)"
+                )
+                return None
+
+            retry_pipeline_id = await handle_issue_retry(
+                git_repo=event.repository,
+                issue_number=issue_number,
+                issue_body=issue_body,
+                comment_author=comment_author,
+                webhook_event_id=event.id,
+            )
+
+            return retry_pipeline_id
 
     if sha:
         params["sha"] = sha
