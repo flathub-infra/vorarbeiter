@@ -162,6 +162,7 @@ class GitHubNotifier:
             pr_number = int(pr_number_str)
             log_url = pipeline.log_url
             comment = ""
+            footnote = "<sub>You can use `bot, build` to restart the build.</sub>"
 
             if status == "committed":
                 if pipeline.build_id and self.flat_manager:
@@ -172,9 +173,9 @@ class GitHubNotifier:
                 else:
                     comment = f"✅ [Test build succeeded]({log_url})."
             elif status == "failure":
-                comment = f"❌ [Test build]({log_url}) failed."
+                comment = f"❌ [Test build]({log_url}) failed.\n\n{footnote}"
             elif status == "cancelled":
-                comment = f"❌ [Test build]({log_url}) was cancelled."
+                comment = f"❌ [Test build]({log_url}) was cancelled.\n\n{footnote}"
 
             if comment:
                 await create_pr_comment(
