@@ -578,6 +578,18 @@ jobs:
           rm -rf .flatpak-builder/cache
           rm -rf .flatpak-builder/ccache/bin
 
+          NO_DOWNLOAD_CACHE=(
+            "io.github.ungoogled_software.ungoogled_chromium"
+          )
+
+          for id in "${NO_DOWNLOAD_CACHE[@]}"; do
+            if [ "$APP_ID" = "$id" ]; then
+              rm -rf .flatpak-builder/downloads
+              rm -rf .flatpak-builder/git
+              break
+            fi
+          done
+
           app_id_lc=${APP_ID,,}
           oras login ghcr.io --password "${{ secrets.GITHUB_TOKEN }}" -u "${{ github.actor }}" || exit 0
           oras push ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest .flatpak-builder || exit 0
