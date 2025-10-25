@@ -319,11 +319,12 @@ async def close_github_issue(git_repo: str, issue_number: int) -> bool:
     return False
 
 
-async def add_issue_comment(git_repo: str, issue_number: int, comment: str) -> bool:
+async def add_issue_comment(
+    git_repo: str, issue_number: int, comment: str, check_duplicates: bool = False
+) -> bool:
     if not git_repo:
         logger.error("Missing git_repo for GitHub issue comment. Skipping comment.")
         return False
-
     if not issue_number:
         logger.error("Missing issue number. Skipping comment.")
         return False
@@ -337,6 +338,23 @@ async def add_issue_comment(git_repo: str, issue_number: int, comment: str) -> b
 
     try:
         async with httpx.AsyncClient() as client:
+            if check_duplicates:
+                comments_response = await client.get(
+                    url,
+                    headers=headers,
+                    timeout=10.0,
+                )
+                comments_response.raise_for_status()
+                existing_comments = comments_response.json()
+                for existing_comment in existing_comments:
+                    if comment in existing_comment.get("body", ""):
+                        logger.info(
+                            "Comment with same body already exists on GitHub issue. Skipping.",
+                            git_repo=git_repo,
+                            issue_number=issue_number,
+                        )
+                        return True
+
             response = await client.post(
                 url,
                 headers=headers,
