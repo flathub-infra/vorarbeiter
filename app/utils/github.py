@@ -580,7 +580,7 @@ async def get_check_run_annotations(
         "Authorization": f"token {settings.github_status_token}",
     }
 
-    annotations: list[dict[str, str]] = []
+    annotations: list[dict[str | None, str | None]] = []
 
     try:
         async with httpx.AsyncClient() as client:
