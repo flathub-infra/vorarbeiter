@@ -125,6 +125,13 @@ SAMPLE_GITHUB_ACTIONS_BOT_FLATHUB_PAYLOAD = {
     "comment": {"body": "bot, build", "user": {"login": "github-actions[bot]"}},
 }
 
+SAMPLE_ADMIN_PING_COMMENT_PAYLOAD = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "created",
+    "comment": {"body": "bot, contact admins"},
+}
+
 
 @pytest.fixture
 def mock_db_session():
@@ -327,6 +334,12 @@ def test_webhook_with_invalid_signature(client: TestClient):
     finally:
         # Restore the original setting
         settings.github_webhook_secret = original_secret
+
+
+def test_should_store_event_admin_ping():
+    from app.routes.webhooks import should_store_event
+
+    assert should_store_event(SAMPLE_ADMIN_PING_COMMENT_PAYLOAD) is True
 
 
 def test_should_store_event_pr_opened():
@@ -726,6 +739,54 @@ async def test_receive_webhook_creates_pipeline(client, mock_db_session):
 
                 assert mock_db_session.add.called
                 assert mock_db_session.commit.called
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_admin_ping():
+    event_id = uuid.uuid4()
+    comment_payload = dict(SAMPLE_COMMENT_PAYLOAD)
+    comment_payload["issue"] = {
+        "number": 99,
+        "pull_request": {
+            "url": "https://api.github.com/repos/test-owner/test-repo/pulls/99"
+        },
+    }
+    comment_payload["comment"] = {
+        "body": "bot, contact admins",
+        "id": 54321,
+        "user": {"login": "test-user"},
+        "html_url": "https://github.com/test-owner/test-repo/pull/99#comment-54321",
+    }
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=comment_payload,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db_session)
+
+    with (
+        patch(
+            "app.routes.webhooks.add_issue_comment", new_callable=AsyncMock
+        ) as mock_add_comment,
+        patch("app.routes.webhooks.get_db", mock_get_db),
+    ):
+        from app.routes.webhooks import create_pipeline
+
+        result = await create_pipeline(webhook_event)
+
+        assert result is None
+
+        mock_add_comment.assert_awaited_once_with(
+            git_repo="test-owner/test-repo",
+            issue_number=99,
+            comment="Contacted Flathub admins: cc @flathub/build-moderation",
+            check_duplicates=True,
+        )
 
 
 # Test data for retry functionality
