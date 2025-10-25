@@ -249,7 +249,9 @@ async def test_notify_pr_build_complete_failure(github_notifier, mock_pipeline):
             pr_number=42,
             comment=(
                 "❌ [Test build](https://example.com/logs/123) failed.\n\n"
-                "<sub>You can use `bot, build` to restart the build.</sub>"
+                "<details><summary>Help</summary>\n\n"
+                "- <code>bot, build</code> - Restart the test build"
+                "</details>"
             ),
         )
 
@@ -302,7 +304,9 @@ async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline
             pr_number=42,
             comment=(
                 "❌ [Test build](https://example.com/logs/123) was cancelled.\n\n"
-                "<sub>You can use `bot, build` to restart the build.</sub>"
+                "<details><summary>Help</summary>\n\n"
+                "- <code>bot, build</code> - Restart the test build"
+                "</details>"
             ),
         )
 

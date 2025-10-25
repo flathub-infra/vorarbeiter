@@ -162,7 +162,11 @@ class GitHubNotifier:
             pr_number = int(pr_number_str)
             log_url = pipeline.log_url
             comment = ""
-            footnote = "<sub>You can use `bot, build` to restart the build.</sub>"
+            footnote = (
+                "<details><summary>Help</summary>\n\n"
+                "- <code>bot, build</code> - Restart the test build"
+                "</details>"
+            )
 
             if status == "committed":
                 if pipeline.build_id and self.flat_manager:
