@@ -300,7 +300,7 @@ def should_store_event(payload: dict) -> bool:
         for line in comment.splitlines():
             if line.lstrip().startswith(">"):
                 continue
-            if line.lstrip().startswith(("`", "<code>")) and line.lstrip().endswith(
+            if line.lstrip().startswith(("`", "<code>")) and line.rstrip().endswith(
                 ("`", "</code>")
             ):
                 continue
