@@ -262,6 +262,7 @@ def should_store_event(payload: dict) -> bool:
     - A new commit happens to master, beta or branch/*
     - PR comment contains "bot, build" not inside quotes or inline code blocks
     - Issue comment contains "bot, retry" not inside quotes or inline code blocks
+    - Comment contains "bot, contact admins" not inside quotes or inline code blocks
     """
     ref = payload.get("ref", "")
     comment = payload.get("comment", {}).get("body", "")
@@ -308,6 +309,8 @@ def should_store_event(payload: dict) -> bool:
                     "<code>bot, build</code>",
                     "`bot, retry`",
                     "<code>bot, retry</code>",
+                    "`bot, contact admins`",
+                    "<code>bot, contact admins</code>",
                 )
             ):
                 continue
@@ -318,6 +321,9 @@ def should_store_event(payload: dict) -> bool:
             return True
 
         if "bot, retry" in filtered_comment.lower():
+            return True
+
+        if "bot, contact admins" in filtered_comment.lower():
             return True
 
     return False
@@ -534,7 +540,20 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         pr_url = issue.get("pull_request", {}).get("url", "")
         repo = event.repository
 
-        if "bot, build" in comment_body:
+        if "bot, contact admins" in comment_body:
+            if issue_number is None:
+                logger.error("Missing issue number for admin ping")
+            else:
+                logger.info("Handling admin ping")
+                await add_issue_comment(
+                    git_repo=repo,
+                    issue_number=issue_number,
+                    comment="Contacted Flathub admins: cc @flathub/build-moderation",
+                    check_duplicates=True,
+                )
+            return None
+
+        elif "bot, build" in comment_body:
             if not pr_url or issue_number is None:
                 return None
 
