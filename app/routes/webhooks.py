@@ -301,7 +301,15 @@ def should_store_event(payload: dict) -> bool:
                 continue
             if line.lstrip().startswith("`") and line.lstrip().endswith("`"):
                 continue
-            if "`bot, build`" in line:
+            if any(
+                s in line
+                for s in (
+                    "`bot, build`",
+                    "<code>bot, build</code>",
+                    "`bot, retry`",
+                    "<code>bot, retry</code>",
+                )
+            ):
                 continue
             comment_lines.append(line)
         filtered_comment = "\n".join(comment_lines)
