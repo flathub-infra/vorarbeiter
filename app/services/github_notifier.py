@@ -9,6 +9,7 @@ from app.utils.github import (
     create_github_issue,
     create_pr_comment,
     update_commit_status,
+    get_linter_warning_messages,
 )
 
 logger = structlog.get_logger(__name__)
@@ -168,6 +169,19 @@ class GitHubNotifier:
                 "</details>"
             )
 
+            run_id = None
+            if log_url:
+                try:
+                    run_id = int(log_url.rstrip("/").split("/")[-1])
+                except (ValueError, TypeError, IndexError):
+                    logger.warning(
+                        "Failed to extract run_id from log_url", log_url=log_url
+                    )
+
+            linter_warnings: list[str] = []
+            if run_id is not None:
+                linter_warnings = await get_linter_warning_messages(run_id)
+
             if status == "committed":
                 if pipeline.build_id and self.flat_manager:
                     download_url = self.flat_manager.get_flatpakref_url(
@@ -176,6 +190,9 @@ class GitHubNotifier:
                     comment = f"✅ [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```"
                 else:
                     comment = f"✅ [Test build succeeded]({log_url})."
+                if linter_warnings:
+                    warnings_text = "\n".join(f"- {w.strip()}" for w in linter_warnings)
+                    comment += f"\n\n⚠️  Linter warnings:\n{warnings_text}"
             elif status == "failure":
                 comment = f"❌ [Test build]({log_url}) failed.\n\n{footnote}"
             elif status == "cancelled":
