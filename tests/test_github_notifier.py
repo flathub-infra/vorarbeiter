@@ -264,7 +264,18 @@ async def test_notify_pr_build_complete_committed_with_download(
         "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref"
     )
 
-    with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
+    fake_linter_warnings = [
+        "A fake warning found in linter repo check",
+        "A fake warning found in linter manifest check",
+    ]
+
+    with (
+        patch(
+            "app.services.github_notifier.get_linter_warning_messages",
+            return_value=fake_linter_warnings,
+        ),
+        patch("app.services.github_notifier.create_pr_comment") as mock_comment,
+    ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
 
         expected_comment = (
@@ -272,6 +283,9 @@ async def test_notify_pr_build_complete_committed_with_download(
             "To test this build, install it from the testing repository:\n\n"
             "```\nflatpak install --user "
             "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref\n```"
+            "\n\n⚠️  Linter warnings:\n"
+            "- A fake warning found in linter repo check\n"
+            "- A fake warning found in linter manifest check"
         )
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App", pr_number=42, comment=expected_comment

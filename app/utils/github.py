@@ -3,6 +3,8 @@ import structlog
 
 import httpx
 
+from typing import Any, Callable
+
 from app.config import settings
 from gql import gql, Client
 from gql.transport.requests import RequestsHTTPTransport
@@ -23,6 +25,7 @@ GQL_EXCEPTIONS = (
     TransportClosed,
     TransportAlreadyConnected,
 )
+
 
 logger = structlog.get_logger(__name__)
 
@@ -569,6 +572,7 @@ async def get_check_run_annotations(
     owner: str,
     repo: str,
     run_id: int,
+    job_filter: Callable[[dict], bool] | None = None,
 ) -> list[dict] | None:
     """Get annotations from all check-runs for a workflow run.
 
@@ -594,6 +598,9 @@ async def get_check_run_annotations(
             jobs = response.json().get("jobs", [])
 
             for job in jobs:
+                if job_filter and not job_filter(job):
+                    continue
+
                 if check_run_url := job.get("check_run_url"):
                     try:
                         annotations_response = await client.get(
@@ -655,3 +662,25 @@ async def get_check_run_annotations(
             error=str(e),
         )
     return None
+
+
+async def get_linter_warning_messages(
+    run_id: int, owner: str = "flathub-infra", repo: str = "vorarbeiter"
+) -> list[str]:
+    def job_filter(job: dict[str, Any]) -> bool:
+        return job.get("name", "").startswith("build-")
+
+    messages: list[str] = []
+
+    annotations = await get_check_run_annotations(
+        owner, repo, run_id, job_filter=job_filter
+    )
+    if annotations is None:
+        return messages
+
+    messages = [
+        a.get("message", "")
+        for a in annotations
+        if a.get("message") and "warning found in linter" in a.get("message", "")
+    ]
+    return list(set(messages))
