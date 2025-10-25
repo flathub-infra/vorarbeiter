@@ -156,6 +156,10 @@ async def test_check_jobs_endpoint_all_failed(client, db_session_maker, auth_hea
         mock_fm_instance = AsyncMock()
         mock_fm_class.return_value = mock_fm_instance
 
+        mock_fm_instance.get_build_info = AsyncMock(
+            return_value={"build": {"commit_job_id": 12345}}
+        )
+
         mock_fm_instance.get_job = AsyncMock(return_value={"status": 3})
 
         response = client.post(
