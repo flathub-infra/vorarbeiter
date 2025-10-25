@@ -458,6 +458,7 @@ jobs:
           LARGE_APPS=(
             "com.adamcake.bolt"
             "org.chromium.chromium"
+            "io.github.ungoogled_software.ungoogled_chromium"
           )
 
           for id in "${LARGE_APPS[@]}"; do
