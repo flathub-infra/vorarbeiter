@@ -166,7 +166,7 @@ class GitHubNotifier:
             footnote = (
                 "<details><summary>Help</summary>\n\n"
                 "- <code>bot, build</code> - Restart the test build\n"
-                "- <code>bot, contact admins</code> - Contact Flathub admins"
+                "- <code>bot, ping admins</code> - Contact Flathub admins"
                 "</details>"
             )
 
