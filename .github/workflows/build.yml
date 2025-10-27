@@ -611,19 +611,24 @@ jobs:
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
 
-          echo "needs results:"
           echo "${{ toJson(needs) }}"
 
-          # Should be the last job before this "callback" job
-          if [[ "${{ contains(needs.build.result, 'success') }}" == "true" ]]; then
-            status="success"
-          elif [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+          results='${{ toJson(needs.*.result) }}'
+
+          echo "Needs result: $results"
+
+          if echo "$results" | grep -q '"failure"'; then
             status="failure"
-          else
+          elif echo "$results" | grep -q '"cancelled"'; then
             status="cancelled"
+          # Should be the last job before this "callback" job
+          elif [[ "${{ needs.build.result }}" == "success" ]]; then
+            status="success"
+          else
+            status="failure"
           fi
 
-          curl -X POST \
+          curl -s -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "{\"status\": \"${status}\"}" \
