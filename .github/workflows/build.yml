@@ -628,6 +628,8 @@ jobs:
             status="failure"
           fi
 
+          echo "Reporting status: $status"
+
           curl -s -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
