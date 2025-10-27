@@ -284,7 +284,8 @@ async def test_notify_pr_build_complete_committed_with_download(
             "To test this build, install it from the testing repository:\n\n"
             "```\nflatpak install --user "
             "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref\n```"
-            "\n\n⚠️  Linter warnings:\n"
+            "\n\n⚠️  Linter warnings:\n\n"
+            "_Warnings can be promoted to errors in the future. Please try to resolve them._\n\n"
             "- A fake warning found in linter repo check\n"
             "- A fake warning found in linter manifest check"
         )

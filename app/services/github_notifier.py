@@ -193,7 +193,11 @@ class GitHubNotifier:
                     comment = f"✅ [Test build succeeded]({log_url})."
                 if linter_warnings:
                     warnings_text = "\n".join(f"- {w.strip()}" for w in linter_warnings)
-                    comment += f"\n\n⚠️  Linter warnings:\n{warnings_text}"
+                    comment += (
+                        "\n\n⚠️  Linter warnings:\n\n"
+                        "_Warnings can be promoted to errors in the future. Please try to resolve them._\n\n"
+                        f"{warnings_text}"
+                    )
             elif status == "failure":
                 comment = f"❌ [Test build]({log_url}) failed.\n\n{footnote}"
             elif status == "cancelled":
