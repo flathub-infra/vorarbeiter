@@ -129,7 +129,7 @@ SAMPLE_ADMIN_PING_COMMENT_PAYLOAD = {
     "repository": {"full_name": "test-owner/test-repo"},
     "sender": {"login": "test-actor"},
     "action": "created",
-    "comment": {"body": "bot, contact admins"},
+    "comment": {"body": "bot, ping admins"},
 }
 
 
@@ -752,7 +752,7 @@ async def test_create_pipeline_admin_ping():
         },
     }
     comment_payload["comment"] = {
-        "body": "bot, contact admins",
+        "body": "bot, ping admins",
         "id": 54321,
         "user": {"login": "test-user"},
         "html_url": "https://github.com/test-owner/test-repo/pull/99#comment-54321",

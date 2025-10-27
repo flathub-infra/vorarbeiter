@@ -251,7 +251,7 @@ async def test_notify_pr_build_complete_failure(github_notifier, mock_pipeline):
                 "❌ [Test build](https://example.com/logs/123) failed.\n\n"
                 "<details><summary>Help</summary>\n\n"
                 "- <code>bot, build</code> - Restart the test build\n"
-                "- <code>bot, contact admins</code> - Contact Flathub admins"
+                "- <code>bot, ping admins</code> - Contact Flathub admins"
                 "</details>"
             ),
         )
@@ -307,7 +307,7 @@ async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline
                 "❌ [Test build](https://example.com/logs/123) was cancelled.\n\n"
                 "<details><summary>Help</summary>\n\n"
                 "- <code>bot, build</code> - Restart the test build\n"
-                "- <code>bot, contact admins</code> - Contact Flathub admins"
+                "- <code>bot, ping admins</code> - Contact Flathub admins"
                 "</details>"
             ),
         )
