@@ -185,12 +185,25 @@ class GitHubActionsService:
             logger.warning("Failed to fetch job annotations for cancellation detection")
             return False
 
-        for annotation in annotations:
-            if annotation.get("message") == "The operation was canceled.":
-                logger.info(
-                    "Run detected as cancelled by GitHub via job annotation",
-                    run_id=run_id_int,
+        cancelled = any(
+            a.get("message") == "The operation was canceled." for a in annotations
+        )
+        has_exit_or_user_cancel = any(
+            a.get("message", "").startswith(
+                (
+                    "Process completed with exit code",
+                    "The run was canceled by",
+                    "Canceling since a higher priority waiting request for",
                 )
-                return True
+            )
+            for a in annotations
+        )
+
+        if cancelled and not has_exit_or_user_cancel:
+            logger.info(
+                "Run detected as cancelled by GitHub via job annotation",
+                run_id=run_id_int,
+            )
+            return True
 
         return False
