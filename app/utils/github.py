@@ -686,7 +686,7 @@ async def get_linter_warning_messages(
     run_id: int, owner: str = "flathub-infra", repo: str = "vorarbeiter"
 ) -> list[str]:
     def job_filter(job: dict[str, Any]) -> bool:
-        return job.get("name", "").startswith("build-")
+        return job.get("name", "").startswith(("validate-manifest", "build-"))
 
     messages: list[str] = []
 
