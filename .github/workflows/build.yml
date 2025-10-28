@@ -485,28 +485,8 @@ jobs:
         if: ${{ github.event.inputs.app_id != 'flathub' }}
         run: |
           app_id_lc=${APP_ID,,}
-          IMAGE="ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest"
-
-          CREATED_AT=$(oras manifest fetch "$IMAGE" 2>/dev/null | jq -r '.annotations.created_at // empty' || echo "")
-
-          SHOULD_FETCH=false
-          if [[ -n $CREATED_AT ]]; then
-            CREATED_TIMESTAMP=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo 0)
-            CURRENT_TIMESTAMP=$(date +%s)
-            (( AGE_DAYS = (CURRENT_TIMESTAMP - CREATED_TIMESTAMP) / 86400 ))
-
-            if (( AGE_DAYS < 15 )); then
-              SHOULD_FETCH=true
-              echo "CACHE_CREATED_AT=$CREATED_AT" >> $GITHUB_ENV
-            fi
-          fi
-
-          echo "CACHE_FETCHED=$SHOULD_FETCH" >> $GITHUB_ENV
-
-          if [[ $SHOULD_FETCH == true ]]; then
-            cd "${GITHUB_WORKSPACE}/work"
-            oras pull "$IMAGE" || exit 0
-          fi
+          cd "${GITHUB_WORKSPACE}/work"
+          oras pull ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest || exit 0
 
       - name: Enable unprivileged user namespaces
         run: |
@@ -612,16 +592,7 @@ jobs:
 
           app_id_lc=${APP_ID,,}
           oras login ghcr.io --password "${{ secrets.GITHUB_TOKEN }}" -u "${{ github.actor }}" || exit 0
-
-          IMAGE="ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest"
-
-          if [[ $CACHE_FETCHED == true && -n $CACHE_CREATED_AT ]]; then
-            CREATED_AT=$CACHE_CREATED_AT
-          else
-            CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          fi
-
-          oras push --annotation "created_at=$CREATED_AT" "$IMAGE" .flatpak-builder || exit 0
+          oras push ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest .flatpak-builder || exit 0
 
       - name: Get free space
         if: always()
