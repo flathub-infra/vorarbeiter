@@ -62,7 +62,7 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d '{"log_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
-            "${{ inputs.callback_url }}"
+            "${{ inputs.callback_url }}/log_url"
 
   validate-manifest:
     runs-on: ubuntu-latest
@@ -178,7 +178,7 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "{\"app_id\": \"$(cat $APP_ID_FILE)\"}" \
-            "${{ inputs.callback_url }}"
+            "${{ inputs.callback_url }}/metadata"
 
       - name: Validate manifest
         run: |
@@ -210,7 +210,7 @@ jobs:
               [[ -n "$END_OF_LIFE" ]] && JSON_DATA=$(jq -n --arg eol "$END_OF_LIFE" '{"end_of_life": $eol}')
               [[ -n "$END_OF_LIFE_REBASE" ]] && JSON_DATA=$(echo "$JSON_DATA" | jq --arg eolr "$END_OF_LIFE_REBASE" '. + {"end_of_life_rebase": $eolr}')
 
-              curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $CALLBACK_TOKEN" -d "$JSON_DATA" "${{ inputs.callback_url }}"
+              curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $CALLBACK_TOKEN" -d "$JSON_DATA" "${{ inputs.callback_url }}/metadata"
             fi
           fi
 
@@ -634,4 +634,4 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "{\"status\": \"${status}\"}" \
-            "${{ inputs.callback_url }}"
+            "${{ inputs.callback_url }}/status"
