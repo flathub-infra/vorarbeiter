@@ -1,7 +1,7 @@
 import secrets
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import httpx
 import structlog
@@ -55,6 +55,65 @@ class BuildPipeline:
         self.flat_manager = FlatManagerClient(
             url=settings.flat_manager_url, token=settings.flat_manager_token
         )
+
+    @staticmethod
+    async def fetch_and_store_job_id(
+        pipeline: Pipeline,
+        flat_manager: FlatManagerClient,
+        job_type: Literal["commit", "publish"],
+        github_notifier: GitHubNotifier | None = None,
+        db=None,
+    ) -> bool:
+        """
+        Fetch and store a job ID from flat-manager build info.
+
+        Args:
+            pipeline: Pipeline to update
+            flat_manager: FlatManagerClient instance
+            job_type: Type of job ("commit" or "publish")
+            github_notifier: Optional GitHubNotifier for status updates
+            db: Optional AsyncSession for immediate commit
+
+        Returns:
+            True if job ID was stored, False otherwise
+        """
+        if not pipeline.build_id:
+            return False
+
+        job_id_field = f"{job_type}_job_id"
+        status_message = (
+            "Committing build..." if job_type == "commit" else "Publishing build..."
+        )
+
+        try:
+            build_info = await flat_manager.get_build_info(pipeline.build_id)
+            build_data = build_info.get("build", {})
+            job_id = build_data.get(job_id_field)
+
+            if job_id and not getattr(pipeline, job_id_field):
+                setattr(pipeline, job_id_field, job_id)
+                logger.info(
+                    f"Stored {job_type} job ID",
+                    **{job_id_field: job_id, "pipeline_id": str(pipeline.id)},
+                )
+
+                if db:
+                    await db.commit()
+
+                if github_notifier and pipeline.flat_manager_repo in ["stable", "beta"]:
+                    await github_notifier.notify_flat_manager_job_status(
+                        pipeline, job_type, job_id, "pending", status_message
+                    )
+
+                return True
+        except Exception as e:
+            logger.warning(
+                f"Failed to fetch {job_type} job ID",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
+
+        return False
 
     async def create_pipeline(
         self,
@@ -389,36 +448,9 @@ class BuildPipeline:
                             pipeline_id=str(pipeline_id),
                         )
 
-                        try:
-                            build_info = await flat_manager.get_build_info(
-                                pipeline.build_id
-                            )
-                            build_data = build_info.get("build", {})
-                            commit_job_id = build_data.get("commit_job_id")
-                            if commit_job_id and not pipeline.commit_job_id:
-                                pipeline.commit_job_id = commit_job_id
-                                await db.commit()
-                                logger.info(
-                                    "Stored commit job ID",
-                                    commit_job_id=commit_job_id,
-                                    pipeline_id=str(pipeline_id),
-                                )
-                                if pipeline.flat_manager_repo in ["stable", "beta"]:
-                                    await (
-                                        github_notifier.notify_flat_manager_job_status(
-                                            pipeline,
-                                            "commit",
-                                            commit_job_id,
-                                            "pending",
-                                            "Committing build...",
-                                        )
-                                    )
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to fetch commit job ID after commit",
-                                pipeline_id=str(pipeline_id),
-                                error=str(e),
-                            )
+                        await BuildPipeline.fetch_and_store_job_id(
+                            pipeline, flat_manager, "commit", github_notifier, db
+                        )
                     except httpx.HTTPStatusError as e:
                         logger.error(
                             "Failed to commit build",
