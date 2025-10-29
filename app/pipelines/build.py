@@ -6,7 +6,6 @@ from typing import Any, Literal, Optional
 import httpx
 import structlog
 from pydantic import BaseModel
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
 from app.database import get_db
@@ -153,9 +152,7 @@ class BuildPipeline:
             else:
                 build_type = "medium"
 
-            pipeline.params["build_type"] = build_type
-            if hasattr(pipeline, "_sa_instance_state"):
-                flag_modified(pipeline, "params")
+            pipeline.params = {**pipeline.params, "build_type": build_type}
 
             ref = pipeline.params.get("ref")
             match ref:
@@ -307,10 +304,9 @@ class BuildPipeline:
 
             try:
                 run_id = parsed_data.log_url.rstrip("/").split("/")[-1]
-                if pipeline.provider_data is None:
-                    pipeline.provider_data = {}
-                pipeline.provider_data["run_id"] = run_id
-                flag_modified(pipeline, "provider_data")
+                provider_data = dict(pipeline.provider_data or {})
+                provider_data["run_id"] = run_id
+                pipeline.provider_data = provider_data
             except (IndexError, AttributeError):
                 logger.warning(
                     "Failed to extract run_id from log_url",
@@ -517,8 +513,10 @@ class BuildPipeline:
                 reprocheck_result["message"] = parsed_data.message
 
             if reprocheck_result:
-                pipeline.params["reprocheck_result"] = reprocheck_result
-                flag_modified(pipeline, "params")
+                pipeline.params = {
+                    **pipeline.params,
+                    "reprocheck_result": reprocheck_result,
+                }
 
             updates: dict[str, Any] = {}
 
@@ -552,7 +550,6 @@ class BuildPipeline:
                     original_pipeline = await db.get(Pipeline, build_pipeline_id)
                     if original_pipeline and not original_pipeline.repro_pipeline_id:
                         original_pipeline.repro_pipeline_id = pipeline.id
-                        flag_modified(original_pipeline, "repro_pipeline_id")
                         await db.commit()
                         logger.info(
                             "Updated original pipeline with reprocheck pipeline ID",
