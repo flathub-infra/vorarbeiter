@@ -104,7 +104,9 @@ async def test_build_pipeline_skips_notification_for_test_builds():
                 mock_notifier = AsyncMock()
                 mock_notifier_class.return_value = mock_notifier
 
-                await build_pipeline.handle_callback(pipeline_id, {"status": "success"})
+                await build_pipeline.handle_status_callback(
+                    pipeline_id, {"status": "success"}
+                )
 
                 # Should not be called for test builds
                 mock_notifier.notify_flat_manager_job_status.assert_not_called()

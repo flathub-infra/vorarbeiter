@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.pipelines.build import BuildPipeline, CallbackData
+from app.pipelines.build import BuildPipeline
 from app.services import GitHubActionsService
 from tests.conftest import create_mock_get_db
 
@@ -204,16 +204,14 @@ async def test_start_pipeline_branch_mapping(
 
 
 @pytest.mark.asyncio
-async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline):
+async def test_handle_status_callback_success(build_pipeline, mock_db, sample_pipeline):
     mock_db.get.return_value = sample_pipeline
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    callback_data = CallbackData(status="success")
-
     with patch("app.pipelines.build.get_db", mock_get_db):
-        pipeline, updates = await build_pipeline.handle_callback(
-            sample_pipeline.id, callback_data
+        pipeline, updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "success"}
         )
 
     assert pipeline.status == PipelineStatus.SUCCEEDED
@@ -221,20 +219,18 @@ async def test_handle_callback_success(build_pipeline, mock_db, sample_pipeline)
 
 
 @pytest.mark.asyncio
-async def test_handle_callback_failure(build_pipeline, mock_db, sample_pipeline):
+async def test_handle_status_callback_failure(build_pipeline, mock_db, sample_pipeline):
     mock_db.get.return_value = sample_pipeline
 
     mock_get_db = create_mock_get_db(mock_db)
-
-    callback_data = CallbackData(status="failure")
 
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
         ) as mock_check_cancelled:
             mock_check_cancelled.return_value = False
-            pipeline, updates = await build_pipeline.handle_callback(
-                sample_pipeline.id, callback_data
+            pipeline, updates = await build_pipeline.handle_status_callback(
+                sample_pipeline.id, {"status": "failure"}
             )
 
     assert pipeline.status == PipelineStatus.FAILED
@@ -242,7 +238,7 @@ async def test_handle_callback_failure(build_pipeline, mock_db, sample_pipeline)
 
 
 @pytest.mark.asyncio
-async def test_handle_callback_failure_reclassified_as_cancelled(
+async def test_handle_status_callback_failure_reclassified_as_cancelled(
     build_pipeline, mock_db, sample_pipeline
 ):
     """Test that a 'failure' callback gets reclassified as 'cancelled' when spot instance termination is detected."""
@@ -250,15 +246,13 @@ async def test_handle_callback_failure_reclassified_as_cancelled(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    callback_data = CallbackData(status="failure")
-
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
         ) as mock_check_cancelled:
             mock_check_cancelled.return_value = True  # Simulate cancellation detected
-            pipeline, updates = await build_pipeline.handle_callback(
-                sample_pipeline.id, callback_data
+            pipeline, updates = await build_pipeline.handle_status_callback(
+                sample_pipeline.id, {"status": "failure"}
             )
 
     assert pipeline.status == PipelineStatus.CANCELLED
@@ -267,7 +261,7 @@ async def test_handle_callback_failure_reclassified_as_cancelled(
 
 
 @pytest.mark.asyncio
-async def test_handle_callback_failure_cancellation_check_error(
+async def test_handle_status_callback_failure_cancellation_check_error(
     build_pipeline, mock_db, sample_pipeline
 ):
     """Test that if cancellation check fails, the build is still marked as failed."""
@@ -275,15 +269,13 @@ async def test_handle_callback_failure_cancellation_check_error(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    callback_data = CallbackData(status="failure")
-
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
         ) as mock_check_cancelled:
             mock_check_cancelled.side_effect = Exception("API error")
-            pipeline, updates = await build_pipeline.handle_callback(
-                sample_pipeline.id, callback_data
+            pipeline, updates = await build_pipeline.handle_status_callback(
+                sample_pipeline.id, {"status": "failure"}
             )
 
     assert pipeline.status == PipelineStatus.FAILED
@@ -444,209 +436,6 @@ def test_get_pipeline_not_found(mock_get_db):
     assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
 
 
-def test_pipeline_callback_status_endpoint(mock_get_db, sample_pipeline):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {"status": "success", "result": {"output": "Build successful"}}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 200
-    assert response.json()["pipeline_id"] == str(pipeline_id)
-    assert response.json()["pipeline_status"] == "success"
-
-
-def test_pipeline_callback_log_url_endpoint(mock_get_db, sample_pipeline):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {"log_url": "https://example.com/logs/12345"}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 200
-    assert response.json()["pipeline_id"] == str(pipeline_id)
-    assert response.json()["log_url"] == "https://example.com/logs/12345"
-    assert sample_pipeline.log_url == "https://example.com/logs/12345"
-
-
-def test_pipeline_callback_invalid_data(mock_get_db, sample_pipeline):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {"some_key": "some_value"}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 400
-    assert (
-        "Request must contain either 'status', 'log_url', 'app_id', 'is_extra_data', 'end_of_life', or 'end_of_life_rebase' field"
-        in response.json()["detail"]
-    )
-
-
-def test_pipeline_callback_invalid_status(mock_get_db, sample_pipeline):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {"status": "invalid_status"}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        try:
-            test_client.post(
-                f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-            )
-            assert False
-        except Exception:
-            pass
-
-
-def test_pipeline_callback_not_found(mock_get_db):
-    test_client = TestClient(app)
-
-    pipeline_id = uuid.uuid4()
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = None
-
-        data = {"status": "success", "result": {"output": "Build successful"}}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 404
-    assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
-
-
-def test_pipeline_callback_invalid_token(mock_get_db, sample_pipeline):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {"status": "success", "result": {"output": "Build successful"}}
-        headers = {"Authorization": "Bearer wrong_token"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 401
-    assert "Invalid callback token" in response.json()["detail"]
-
-
-def test_pipeline_callback_status_immutable(mock_get_db, sample_pipeline):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    sample_pipeline.status = PipelineStatus.SUCCEEDED
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {"status": "success", "result": {"output": "Build successful"}}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 409
-    assert "Pipeline status already finalized" in response.json()["detail"]
-
-
-def test_pipeline_callback_log_url_immutable(mock_get_db, sample_pipeline):
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    sample_pipeline.log_url = "https://example.com/logs/existing"
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {"log_url": "https://example.com/logs/new"}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 409
-    assert "Log URL already set" in response.json()["detail"]
-
-
 def test_redirect_to_log_url(mock_get_db, sample_pipeline):
     test_client = TestClient(app)
 
@@ -700,292 +489,6 @@ def test_redirect_to_log_url_not_found(mock_get_db):
 
     assert response.status_code == 404
     assert f"Pipeline {pipeline_id} not found" in response.json()["detail"]
-
-
-def test_pipeline_callback_end_of_life_only(mock_get_db, sample_pipeline):
-    """Test setting only the end_of_life field via callback."""
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {"end_of_life": "This app is deprecated"}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert response.json()["pipeline_id"] == str(pipeline_id)
-    assert response.json()["end_of_life"] == "This app is deprecated"
-    assert sample_pipeline.end_of_life == "This app is deprecated"
-    assert sample_pipeline.end_of_life_rebase is None
-    # Ensure status was not changed
-    assert sample_pipeline.status == PipelineStatus.PENDING
-
-
-def test_pipeline_callback_end_of_life_rebase_only(mock_get_db, sample_pipeline):
-    """Test setting only the end_of_life_rebase field via callback."""
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {"end_of_life_rebase": "org.flathub.NewApp"}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert response.json()["pipeline_id"] == str(pipeline_id)
-    assert response.json()["end_of_life_rebase"] == "org.flathub.NewApp"
-    assert sample_pipeline.end_of_life_rebase == "org.flathub.NewApp"
-    assert sample_pipeline.end_of_life is None
-    # Ensure status was not changed
-    assert sample_pipeline.status == PipelineStatus.PENDING
-
-
-def test_pipeline_callback_both_end_of_life_fields(mock_get_db, sample_pipeline):
-    """Test setting both end_of_life fields via callback."""
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = sample_pipeline
-
-        data = {
-            "end_of_life": "This app is deprecated",
-            "end_of_life_rebase": "org.flathub.NewApp",
-        }
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert response.json()["pipeline_id"] == str(pipeline_id)
-    assert response.json()["end_of_life"] == "This app is deprecated"
-    assert response.json()["end_of_life_rebase"] == "org.flathub.NewApp"
-    assert sample_pipeline.end_of_life == "This app is deprecated"
-    assert sample_pipeline.end_of_life_rebase == "org.flathub.NewApp"
-    # Ensure status was not changed
-    assert sample_pipeline.status == PipelineStatus.PENDING
-
-
-def test_pipeline_callback_end_of_life_with_status(mock_get_db, sample_pipeline):
-    """Test setting end_of_life fields along with status update."""
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-    # Start with a running pipeline
-    sample_pipeline.status = PipelineStatus.RUNNING
-    sample_pipeline.build_id = 123
-    sample_pipeline.params = {"sha": "abc123", "repo": "flathub/test-app"}
-
-    mock_flat_manager = MagicMock()
-    mock_flat_manager.commit = AsyncMock()
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-        patch("app.pipelines.build.FlatManagerClient") as mock_fm_class,
-        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier_class,
-    ):
-        mock_fm_class.return_value = mock_flat_manager
-        mock_get_db.get.return_value = sample_pipeline
-        mock_github_notifier = MagicMock()
-        mock_github_notifier.handle_build_completion = AsyncMock()
-        mock_github_notifier_class.return_value = mock_github_notifier
-
-        data = {
-            "status": "success",
-            "end_of_life": "This app is deprecated",
-            "end_of_life_rebase": "org.flathub.NewApp",
-        }
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert response.json()["pipeline_id"] == str(pipeline_id)
-    assert response.json()["pipeline_status"] == "success"
-    # The end_of_life fields are now returned in the response for status updates
-    assert response.json()["end_of_life"] == "This app is deprecated"
-    assert response.json()["end_of_life_rebase"] == "org.flathub.NewApp"
-
-    # But they should be set on the pipeline object
-    assert sample_pipeline.end_of_life == "This app is deprecated"
-    assert sample_pipeline.end_of_life_rebase == "org.flathub.NewApp"
-    assert sample_pipeline.status == PipelineStatus.SUCCEEDED
-    assert sample_pipeline.finished_at is not None
-
-    # Verify that flat_manager.commit was called with the end_of_life parameters
-    mock_flat_manager.commit.assert_called_once_with(
-        123,
-        end_of_life="This app is deprecated",
-        end_of_life_rebase="org.flathub.NewApp",
-    )
-
-
-def test_pipeline_callback_status_update_preserves_existing_end_of_life(
-    mock_get_db, sample_pipeline
-):
-    """Test that status update preserves existing end_of_life fields."""
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-    # Start with a running pipeline that already has end_of_life fields set
-    sample_pipeline.status = PipelineStatus.RUNNING
-    sample_pipeline.build_id = 456
-    sample_pipeline.end_of_life = "Already deprecated"
-    sample_pipeline.end_of_life_rebase = "org.flathub.ExistingApp"
-    sample_pipeline.params = {"sha": "def456", "repo": "flathub/test-app"}
-
-    mock_flat_manager = MagicMock()
-    mock_flat_manager.commit = AsyncMock()
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-        patch("app.pipelines.build.FlatManagerClient") as mock_fm_class,
-        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier_class,
-    ):
-        mock_fm_class.return_value = mock_flat_manager
-        mock_get_db.get.return_value = sample_pipeline
-        mock_github_notifier = MagicMock()
-        mock_github_notifier.handle_build_completion = AsyncMock()
-        mock_github_notifier_class.return_value = mock_github_notifier
-
-        # Only send status update, no end_of_life fields
-        data = {"status": "success"}
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert response.json()["pipeline_id"] == str(pipeline_id)
-    assert response.json()["pipeline_status"] == "success"
-
-    # Ensure existing end_of_life fields are preserved
-    assert sample_pipeline.end_of_life == "Already deprecated"
-    assert sample_pipeline.end_of_life_rebase == "org.flathub.ExistingApp"
-    assert sample_pipeline.status == PipelineStatus.SUCCEEDED
-
-    # Verify that flat_manager.commit was called with the existing end_of_life parameters
-    mock_flat_manager.commit.assert_called_once_with(
-        456,
-        end_of_life="Already deprecated",
-        end_of_life_rebase="org.flathub.ExistingApp",
-    )
-
-
-def test_pipeline_callback_early_exit_bug_regression(mock_get_db, sample_pipeline):
-    """
-    Regression test for the early exit bug where setting end_of_life fields
-    would cause the callback to return early without processing the status update.
-    This ensures the bug fix is working correctly.
-    """
-    test_client = TestClient(app)
-
-    pipeline_id = sample_pipeline.id
-    # Start with a running pipeline
-    sample_pipeline.status = PipelineStatus.RUNNING
-    sample_pipeline.build_id = 789
-    sample_pipeline.params = {"sha": "xyz789", "repo": "flathub/test-app"}
-
-    mock_flat_manager = MagicMock()
-    mock_flat_manager.commit = AsyncMock()
-
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-        patch("app.pipelines.build.FlatManagerClient") as mock_fm_class,
-        patch("app.pipelines.build.GitHubNotifier") as mock_github_notifier_class,
-    ):
-        mock_fm_class.return_value = mock_flat_manager
-        mock_get_db.get.return_value = sample_pipeline
-        mock_github_notifier = MagicMock()
-        mock_github_notifier.handle_build_completion = AsyncMock()
-        mock_github_notifier_class.return_value = mock_github_notifier
-
-        # Send both status AND end_of_life fields - this used to cause early exit
-        data = {
-            "status": "success",
-            "end_of_life": "App renamed to: org.luanti.luanti. Read: https://blog.luanti.org/2024/10/13/Introducing-Our-New-Name/",
-            "end_of_life_rebase": "org.luanti.luanti",
-        }
-        headers = {"Authorization": "Bearer test_token_12345"}
-
-        response = test_client.post(
-            f"/api/pipelines/{pipeline_id}/callback", json=data, headers=headers
-        )
-
-    # The response should indicate successful status update
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert response.json()["pipeline_id"] == str(pipeline_id)
-    assert response.json()["pipeline_status"] == "success"
-
-    # CRITICAL: Verify that the pipeline status was actually updated
-    # This is what was broken before - the status remained "running"
-    assert sample_pipeline.status == PipelineStatus.SUCCEEDED
-    assert sample_pipeline.finished_at is not None
-
-    # Verify end_of_life fields were also set
-    assert (
-        sample_pipeline.end_of_life
-        == "App renamed to: org.luanti.luanti. Read: https://blog.luanti.org/2024/10/13/Introducing-Our-New-Name/"
-    )
-    assert sample_pipeline.end_of_life_rebase == "org.luanti.luanti"
-
-    # Verify that flat_manager.commit was called with all parameters
-    mock_flat_manager.commit.assert_called_once_with(
-        789,
-        end_of_life="App renamed to: org.luanti.luanti. Read: https://blog.luanti.org/2024/10/13/Introducing-Our-New-Name/",
-        end_of_life_rebase="org.luanti.luanti",
-    )
-
-    # Verify that GitHub notifier was called
-    mock_github_notifier.handle_build_completion.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1145,7 +648,7 @@ async def test_start_pipeline_build_type_precedence():
 
 
 @pytest.mark.asyncio
-async def test_handle_callback_auto_retry_stable_cancelled(
+async def test_handle_status_callback_auto_retry_stable_cancelled(
     build_pipeline, mock_db, sample_pipeline
 ):
     """Test that a cancelled stable build is automatically retried once."""
@@ -1156,8 +659,6 @@ async def test_handle_callback_auto_retry_stable_cancelled(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    callback_data = CallbackData(status="failure")
-
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
@@ -1182,8 +683,8 @@ async def test_handle_callback_auto_retry_stable_cancelled(
                     mock_create.return_value = retry_pipeline
                     mock_start.return_value = retry_pipeline
 
-                    pipeline, updates = await build_pipeline.handle_callback(
-                        sample_pipeline.id, callback_data
+                    pipeline, updates = await build_pipeline.handle_status_callback(
+                        sample_pipeline.id, {"status": "failure"}
                     )
 
     assert pipeline.status == PipelineStatus.CANCELLED
@@ -1194,7 +695,7 @@ async def test_handle_callback_auto_retry_stable_cancelled(
 
 
 @pytest.mark.asyncio
-async def test_handle_callback_auto_retry_beta_cancelled(
+async def test_handle_status_callback_auto_retry_beta_cancelled(
     build_pipeline, mock_db, sample_pipeline
 ):
     """Test that a cancelled beta build is automatically retried once."""
@@ -1204,8 +705,6 @@ async def test_handle_callback_auto_retry_beta_cancelled(
     mock_db.flush = AsyncMock()
 
     mock_get_db = create_mock_get_db(mock_db)
-
-    callback_data = CallbackData(status="failure")
 
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch(
@@ -1231,8 +730,8 @@ async def test_handle_callback_auto_retry_beta_cancelled(
                     mock_create.return_value = retry_pipeline
                     mock_start.return_value = retry_pipeline
 
-                    pipeline, updates = await build_pipeline.handle_callback(
-                        sample_pipeline.id, callback_data
+                    pipeline, updates = await build_pipeline.handle_status_callback(
+                        sample_pipeline.id, {"status": "failure"}
                     )
 
     assert pipeline.status == PipelineStatus.CANCELLED
@@ -1241,7 +740,7 @@ async def test_handle_callback_auto_retry_beta_cancelled(
 
 
 @pytest.mark.asyncio
-async def test_handle_callback_no_auto_retry_test_cancelled(
+async def test_handle_status_callback_no_auto_retry_test_cancelled(
     build_pipeline, mock_db, sample_pipeline
 ):
     """Test that test builds are NOT automatically retried when cancelled."""
@@ -1252,8 +751,6 @@ async def test_handle_callback_no_auto_retry_test_cancelled(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    callback_data = CallbackData(status="failure")
-
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
@@ -1262,8 +759,8 @@ async def test_handle_callback_no_auto_retry_test_cancelled(
             with patch.object(
                 build_pipeline, "create_pipeline", new_callable=AsyncMock
             ) as mock_create:
-                pipeline, updates = await build_pipeline.handle_callback(
-                    sample_pipeline.id, callback_data
+                pipeline, updates = await build_pipeline.handle_status_callback(
+                    sample_pipeline.id, {"status": "failure"}
                 )
 
     assert pipeline.status == PipelineStatus.CANCELLED
@@ -1271,7 +768,7 @@ async def test_handle_callback_no_auto_retry_test_cancelled(
 
 
 @pytest.mark.asyncio
-async def test_handle_callback_no_auto_retry_already_retried(
+async def test_handle_status_callback_no_auto_retry_already_retried(
     build_pipeline, mock_db, sample_pipeline
 ):
     """Test that already-retried builds are NOT retried again."""
@@ -1282,8 +779,6 @@ async def test_handle_callback_no_auto_retry_already_retried(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    callback_data = CallbackData(status="failure")
-
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
@@ -1292,8 +787,8 @@ async def test_handle_callback_no_auto_retry_already_retried(
             with patch.object(
                 build_pipeline, "create_pipeline", new_callable=AsyncMock
             ) as mock_create:
-                pipeline, updates = await build_pipeline.handle_callback(
-                    sample_pipeline.id, callback_data
+                pipeline, updates = await build_pipeline.handle_status_callback(
+                    sample_pipeline.id, {"status": "failure"}
                 )
 
     assert pipeline.status == PipelineStatus.CANCELLED
