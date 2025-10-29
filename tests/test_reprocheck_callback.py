@@ -192,3 +192,69 @@ async def test_reprocheck_callback_handles_missing_original_pipeline(
             if "Updated original pipeline with reprocheck pipeline ID" in str(call)
         ]
         assert len(info_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_reprocheck_callback_stores_full_json_output(
+    build_pipeline, reprocheck_pipeline, mock_db
+):
+    """Test that reprocheck callback stores full JSON output in pipeline.params."""
+    mock_db.get.return_value = reprocheck_pipeline
+    mock_db.commit = AsyncMock()
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        mock_get_db.return_value.__aenter__.return_value = mock_db
+
+        callback_data = {
+            "status": "success",
+            "build_pipeline_id": str(uuid.uuid4()),
+            "status_code": "42",
+            "timestamp": "2025-01-15T10:30:45.123456+00:00",
+            "result_url": "https://github.com/flathub-infra/vorarbeiter/actions/runs/12345",
+            "message": "Unreproducible",
+        }
+
+        await build_pipeline.handle_reprocheck_callback(
+            reprocheck_pipeline.id,
+            callback_data,
+        )
+
+        assert "reprocheck_result" in reprocheck_pipeline.params
+        result = reprocheck_pipeline.params["reprocheck_result"]
+        assert result["status_code"] == "42"
+        assert result["timestamp"] == "2025-01-15T10:30:45.123456+00:00"
+        assert (
+            result["result_url"]
+            == "https://github.com/flathub-infra/vorarbeiter/actions/runs/12345"
+        )
+        assert result["message"] == "Unreproducible"
+
+
+@pytest.mark.asyncio
+async def test_reprocheck_callback_handles_partial_json_output(
+    build_pipeline, reprocheck_pipeline, mock_db
+):
+    """Test that reprocheck callback handles partial JSON output gracefully."""
+    mock_db.get.return_value = reprocheck_pipeline
+    mock_db.commit = AsyncMock()
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        mock_get_db.return_value.__aenter__.return_value = mock_db
+
+        callback_data = {
+            "status": "success",
+            "build_pipeline_id": str(uuid.uuid4()),
+            "status_code": "0",
+        }
+
+        await build_pipeline.handle_reprocheck_callback(
+            reprocheck_pipeline.id,
+            callback_data,
+        )
+
+        assert "reprocheck_result" in reprocheck_pipeline.params
+        result = reprocheck_pipeline.params["reprocheck_result"]
+        assert result["status_code"] == "0"
+        assert "timestamp" not in result
+        assert "result_url" not in result
+        assert "message" not in result

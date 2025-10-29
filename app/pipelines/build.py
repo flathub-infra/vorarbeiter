@@ -27,6 +27,10 @@ class CallbackData(BaseModel):
     end_of_life: Optional[str] = None
     end_of_life_rebase: Optional[str] = None
     build_pipeline_id: Optional[str] = None
+    status_code: Optional[str] = None
+    timestamp: Optional[str] = None
+    result_url: Optional[str] = None
+    message: Optional[str] = None
 
 
 app_build_types = {
@@ -469,6 +473,20 @@ class BuildPipeline:
             status_value = parsed_data.status.lower()
             if status_value not in ["success", "failure", "cancelled"]:
                 raise ValueError("status must be 'success', 'failure', or 'cancelled'")
+
+            reprocheck_result = {}
+            if parsed_data.status_code is not None:
+                reprocheck_result["status_code"] = parsed_data.status_code
+            if parsed_data.timestamp is not None:
+                reprocheck_result["timestamp"] = parsed_data.timestamp
+            if parsed_data.result_url is not None:
+                reprocheck_result["result_url"] = parsed_data.result_url
+            if parsed_data.message is not None:
+                reprocheck_result["message"] = parsed_data.message
+
+            if reprocheck_result:
+                pipeline.params["reprocheck_result"] = reprocheck_result
+                flag_modified(pipeline, "params")
 
             updates: dict[str, Any] = {}
 

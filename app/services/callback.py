@@ -64,4 +64,8 @@ class ReprocheckCallbackValidator:
         return CallbackData(
             status=data.get("status"),
             build_pipeline_id=data.get("build_pipeline_id"),
+            status_code=data.get("status_code"),
+            timestamp=data.get("timestamp"),
+            result_url=data.get("result_url"),
+            message=data.get("message"),
         )
