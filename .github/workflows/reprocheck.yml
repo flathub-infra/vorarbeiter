@@ -34,7 +34,7 @@ on:
 
 jobs:
   reprocheck:
-    runs-on: ${{ github.run_id }}-${{ github.run_attempt }}/runner=medium-amd64/tag=arch-amd64/retry=false/spot=false
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/runner=medium-amd64/tag=arch-amd64/retry=false/spot=false
     timeout-minutes: 240
     steps:
       - name: Disable AppArmor
@@ -96,3 +96,64 @@ jobs:
         with:
           name: reprocheck-json-${{ github.sha }}-${{ github.run_id }}-${{ github.job }}-${{ github.run_attempt }}
           path: /tmp/reprocheck-result.json
+
+  callback:
+    runs-on: ubuntu-latest
+    needs: [reprocheck]
+    if: ${{ always() }}
+    steps:
+      - name: Download reprocheck JSON output
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: reprocheck-json-${{ github.sha }}-${{ github.run_id }}-reprocheck-${{ github.run_attempt }}
+          path: ./
+
+      - name: Report job status
+        run: |
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
+
+          if [[ "${{ needs.reprocheck.result }}" == "success" ]]; then
+            status="success"
+          elif [[ "${{ needs.reprocheck.result }}" == "cancelled" ]]; then
+            status="cancelled"
+          else
+            status="failure"
+          fi
+
+          artifact_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          if [ -f reprocheck-result.json ]; then
+            reprocheck_data=$(cat reprocheck-result.json)
+            status_code=$(echo "$reprocheck_data" | jq -r '.status_code // "1"')
+            timestamp=$(echo "$reprocheck_data" | jq -r '.timestamp // ""')
+            message=$(echo "$reprocheck_data" | jq -r '.message // "Reprocheck completed"')
+          else
+            status_code="1"
+            timestamp="$(date -u +"%Y-%m-%dT%H:%M:%S.%6N%:z")"
+            message="Reprocheck output not available"
+          fi
+
+          payload=$(jq -n \
+            --arg status "$status" \
+            --arg build_pipeline_id "${{ inputs.build_pipeline_id }}" \
+            --arg status_code "$status_code" \
+            --arg timestamp "$timestamp" \
+            --arg appid "${{ inputs.app_id }}" \
+            --arg result_url "$artifact_url" \
+            --arg message "$message" \
+            '{
+              status: $status,
+              build_pipeline_id: $build_pipeline_id,
+              status_code: $status_code,
+              timestamp: $timestamp,
+              appid: $appid,
+              result_url: $result_url,
+              message: $message
+            }')
+
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
+            -d "$payload" \
+            "${{ inputs.callback_url }}/reprocheck"
