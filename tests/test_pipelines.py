@@ -1298,3 +1298,345 @@ async def test_handle_callback_no_auto_retry_already_retried(
 
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_not_called()
+
+
+def test_pipeline_metadata_callback_app_id(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.app_id = "flathub"
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"app_id": "org.real.AppId"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/metadata",
+            json=data,
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response.json()["app_id"] == "org.real.AppId"
+    assert sample_pipeline.app_id == "org.real.AppId"
+
+
+def test_pipeline_metadata_callback_end_of_life(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {
+            "end_of_life": "This app is deprecated",
+            "end_of_life_rebase": "org.flathub.NewApp",
+        }
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/metadata",
+            json=data,
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["end_of_life"] == "This app is deprecated"
+    assert response.json()["end_of_life_rebase"] == "org.flathub.NewApp"
+    assert sample_pipeline.end_of_life == "This app is deprecated"
+    assert sample_pipeline.end_of_life_rebase == "org.flathub.NewApp"
+
+
+def test_pipeline_metadata_callback_invalid_token(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"app_id": "org.real.AppId"}
+        headers = {"Authorization": "Bearer wrong_token"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/metadata",
+            json=data,
+            headers=headers,
+        )
+
+    assert response.status_code == 401
+    assert "Invalid callback token" in response.json()["detail"]
+
+
+def test_pipeline_log_url_callback_success(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+        patch("app.pipelines.build.GitHubNotifier") as mock_notifier_class,
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+        mock_notifier = MagicMock()
+        mock_notifier.handle_build_started = AsyncMock()
+        mock_notifier_class.return_value = mock_notifier
+
+        data = {"log_url": "https://github.com/flathub-infra/builds/runs/12345"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/log_url", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert (
+        response.json()["log_url"]
+        == "https://github.com/flathub-infra/builds/runs/12345"
+    )
+    assert (
+        sample_pipeline.log_url == "https://github.com/flathub-infra/builds/runs/12345"
+    )
+    mock_notifier.handle_build_started.assert_called_once()
+
+
+def test_pipeline_log_url_callback_already_set(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.log_url = "https://github.com/existing/run/999"
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"log_url": "https://github.com/flathub-infra/builds/runs/12345"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/log_url", json=data, headers=headers
+        )
+
+    assert response.status_code == 409
+    assert "Log URL already set" in response.json()["detail"]
+
+
+def test_pipeline_log_url_callback_missing_log_url(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data: dict[str, str] = {}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/log_url", json=data, headers=headers
+        )
+
+    assert response.status_code == 400
+    assert "log_url is required" in response.json()["detail"]
+
+
+def test_pipeline_status_callback_success(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.status = PipelineStatus.RUNNING
+    sample_pipeline.build_id = 123
+    sample_pipeline.params = {"sha": "abc123", "repo": "flathub/test-app"}
+
+    mock_flat_manager = MagicMock()
+    mock_flat_manager.commit = AsyncMock()
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+        patch("app.pipelines.build.FlatManagerClient") as mock_fm_class,
+        patch("app.pipelines.build.GitHubNotifier") as mock_notifier_class,
+    ):
+        mock_fm_class.return_value = mock_flat_manager
+        mock_get_db.get.return_value = sample_pipeline
+        mock_notifier = MagicMock()
+        mock_notifier.handle_build_completion = AsyncMock()
+        mock_notifier_class.return_value = mock_notifier
+
+        data = {"status": "success"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/status", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert response.json()["pipeline_status"] == "success"
+    assert sample_pipeline.status == PipelineStatus.SUCCEEDED
+    assert sample_pipeline.finished_at is not None
+
+
+def test_pipeline_status_callback_already_finalized(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.status = PipelineStatus.SUCCEEDED
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"status": "success"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/status", json=data, headers=headers
+        )
+
+    assert response.status_code == 409
+    assert "Pipeline status already finalized" in response.json()["detail"]
+
+
+def test_pipeline_status_callback_missing_status(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data: dict[str, str] = {}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/status", json=data, headers=headers
+        )
+
+    assert response.status_code == 400
+    assert "status is required" in response.json()["detail"]
+
+
+def test_pipeline_reprocheck_callback_success(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    reprocheck_pipeline_id = uuid.uuid4()
+    original_pipeline_id = uuid.uuid4()
+
+    reprocheck_pipeline = Pipeline(
+        id=reprocheck_pipeline_id,
+        app_id="org.test.App",
+        status=PipelineStatus.RUNNING,
+        params={"workflow_id": "reprocheck.yml"},
+        callback_token="reprocheck_token",
+        created_at=datetime.now(),
+        triggered_by=PipelineTrigger.MANUAL,
+        provider_data={},
+    )
+
+    original_pipeline = Pipeline(
+        id=original_pipeline_id,
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        params={},
+        callback_token="original_token",
+        created_at=datetime.now(),
+        triggered_by=PipelineTrigger.MANUAL,
+        provider_data={},
+    )
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    # verify_callback_token gets reprocheck_pipeline, handle_reprocheck_callback gets it again, then gets original_pipeline
+    mock_db.get.side_effect = [
+        reprocheck_pipeline,
+        reprocheck_pipeline,
+        original_pipeline,
+    ]
+    mock_db.commit = AsyncMock()
+
+    mock_get_db_session = create_mock_get_db(mock_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        data = {"status": "success", "build_pipeline_id": str(original_pipeline_id)}
+        headers = {"Authorization": "Bearer reprocheck_token"}
+
+        response = test_client.post(
+            f"/api/pipelines/{reprocheck_pipeline_id}/callback/reprocheck",
+            json=data,
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["pipeline_status"] == "success"
+    assert reprocheck_pipeline.status == PipelineStatus.SUCCEEDED
+    assert original_pipeline.repro_pipeline_id == reprocheck_pipeline_id
+
+
+def test_pipeline_reprocheck_callback_missing_status(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"build_pipeline_id": str(uuid.uuid4())}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/reprocheck",
+            json=data,
+            headers=headers,
+        )
+
+    assert response.status_code == 400
+    assert "status is required" in response.json()["detail"]

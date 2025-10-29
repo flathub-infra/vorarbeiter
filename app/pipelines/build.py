@@ -452,6 +452,348 @@ class BuildPipeline:
             await db.commit()
             return pipeline, updates
 
+    async def handle_metadata_callback(
+        self,
+        pipeline_id: uuid.UUID,
+        callback_data: dict[str, Any],
+    ) -> tuple[Pipeline, dict[str, Any]]:
+        from app.services.callback import MetadataCallbackValidator
+
+        validator = MetadataCallbackValidator()
+        parsed_data = validator.validate_and_parse(callback_data)
+
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+
+            updates: dict[str, Any] = {}
+
+            if pipeline.app_id == "flathub" and parsed_data.app_id:
+                pipeline.app_id = parsed_data.app_id
+                updates["app_id"] = pipeline.app_id
+
+            if parsed_data.is_extra_data is not None:
+                pipeline.is_extra_data = parsed_data.is_extra_data
+                updates["is_extra_data"] = pipeline.is_extra_data
+
+            if parsed_data.end_of_life:
+                pipeline.end_of_life = parsed_data.end_of_life
+                updates["end_of_life"] = pipeline.end_of_life
+
+            if parsed_data.end_of_life_rebase:
+                pipeline.end_of_life_rebase = parsed_data.end_of_life_rebase
+                updates["end_of_life_rebase"] = pipeline.end_of_life_rebase
+
+            await db.commit()
+            return pipeline, updates
+
+    async def handle_log_url_callback(
+        self,
+        pipeline_id: uuid.UUID,
+        callback_data: dict[str, Any],
+    ) -> tuple[Pipeline, dict[str, Any]]:
+        from app.services.callback import LogUrlCallbackValidator
+
+        validator = LogUrlCallbackValidator()
+        parsed_data = validator.validate_and_parse(callback_data)
+        assert parsed_data.log_url is not None
+
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+
+            if pipeline.log_url:
+                raise ValueError("Log URL already set")
+
+            updates: dict[str, Any] = {}
+            pipeline.log_url = parsed_data.log_url
+            updates["log_url"] = pipeline.log_url
+
+            try:
+                run_id = parsed_data.log_url.rstrip("/").split("/")[-1]
+                if pipeline.provider_data is None:
+                    pipeline.provider_data = {}
+                pipeline.provider_data["run_id"] = run_id
+                flag_modified(pipeline, "provider_data")
+            except (IndexError, AttributeError):
+                logger.warning(
+                    "Failed to extract run_id from log_url",
+                    log_url=parsed_data.log_url,
+                    pipeline_id=str(pipeline_id),
+                )
+
+            await db.commit()
+            github_notifier = GitHubNotifier()
+            await github_notifier.handle_build_started(pipeline, parsed_data.log_url)
+
+            return pipeline, updates
+
+    async def handle_status_callback(
+        self,
+        pipeline_id: uuid.UUID,
+        callback_data: dict[str, Any],
+    ) -> tuple[Pipeline, dict[str, Any]]:
+        from app.services.callback import StatusCallbackValidator
+
+        validator = StatusCallbackValidator()
+        parsed_data = validator.validate_and_parse(callback_data)
+        assert parsed_data.status is not None
+
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+
+            if pipeline.status in [
+                PipelineStatus.SUCCEEDED,
+                PipelineStatus.PUBLISHED,
+            ]:
+                raise ValueError("Pipeline status already finalized")
+
+            status_value = parsed_data.status.lower()
+            if status_value not in ["success", "failure", "cancelled"]:
+                raise ValueError("status must be 'success', 'failure', or 'cancelled'")
+
+            updates: dict[str, Any] = {}
+
+            match status_value:
+                case "success":
+                    pipeline.status = PipelineStatus.SUCCEEDED
+                    pipeline.finished_at = datetime.now()
+                case "failure":
+                    github_actions = GitHubActionsService()
+                    try:
+                        was_cancelled = await github_actions.check_run_was_cancelled(
+                            pipeline.provider_data
+                        )
+                        if was_cancelled:
+                            logger.info(
+                                "Build reclassified from failed to cancelled",
+                                pipeline_id=str(pipeline_id),
+                            )
+                            pipeline.status = PipelineStatus.CANCELLED
+                            status_value = "cancelled"
+                        else:
+                            pipeline.status = PipelineStatus.FAILED
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to check if build was cancelled, treating as failed",
+                            pipeline_id=str(pipeline_id),
+                            error=str(e),
+                        )
+                        pipeline.status = PipelineStatus.FAILED
+                    pipeline.finished_at = datetime.now()
+                case "cancelled":
+                    pipeline.status = PipelineStatus.CANCELLED
+                    pipeline.finished_at = datetime.now()
+
+            await db.commit()
+
+            if (
+                status_value == "cancelled"
+                and pipeline.flat_manager_repo in ["stable", "beta"]
+                and not pipeline.params.get("auto_retried")
+            ):
+                retry_params = pipeline.params.copy()
+                retry_params["auto_retried"] = True
+                retry_params["use_spot"] = False
+
+                try:
+                    retry_pipeline = await self.create_pipeline(
+                        app_id=pipeline.app_id,
+                        params=retry_params,
+                        webhook_event_id=pipeline.webhook_event_id,
+                    )
+                    retry_pipeline = await self.start_pipeline(
+                        pipeline_id=retry_pipeline.id
+                    )
+                    logger.info(
+                        "Auto-retrying cancelled build",
+                        original_pipeline_id=str(pipeline_id),
+                        retry_pipeline_id=str(retry_pipeline.id),
+                        flat_manager_repo=pipeline.flat_manager_repo,
+                    )
+                    return pipeline, updates
+                except Exception as e:
+                    logger.error(
+                        "Failed to auto-retry cancelled build",
+                        pipeline_id=str(pipeline_id),
+                        error=str(e),
+                    )
+            if (
+                status_value == "success"
+                and pipeline.params.get("workflow_id", "build.yml") == "build.yml"
+            ):
+                flat_manager = None
+                if pipeline.params.get("pr_number"):
+                    flat_manager = FlatManagerClient(
+                        url=settings.flat_manager_url,
+                        token=settings.flat_manager_token,
+                    )
+                github_notifier = GitHubNotifier(flat_manager_client=flat_manager)
+                await github_notifier.handle_build_completion(
+                    pipeline, status_value, flat_manager_client=flat_manager
+                )
+                if pipeline.build_id:
+                    try:
+                        if not flat_manager:
+                            flat_manager = FlatManagerClient(
+                                url=settings.flat_manager_url,
+                                token=settings.flat_manager_token,
+                            )
+                        await flat_manager.commit(
+                            pipeline.build_id,
+                            end_of_life=pipeline.end_of_life,
+                            end_of_life_rebase=pipeline.end_of_life_rebase,
+                        )
+                        logger.info(
+                            "Committed build",
+                            build_id=pipeline.build_id,
+                            pipeline_id=str(pipeline_id),
+                        )
+
+                        try:
+                            build_info = await flat_manager.get_build_info(
+                                pipeline.build_id
+                            )
+                            build_data = build_info.get("build", {})
+                            commit_job_id = build_data.get("commit_job_id")
+                            if commit_job_id and not pipeline.commit_job_id:
+                                pipeline.commit_job_id = commit_job_id
+                                await db.commit()
+                                logger.info(
+                                    "Stored commit job ID",
+                                    commit_job_id=commit_job_id,
+                                    pipeline_id=str(pipeline_id),
+                                )
+                                if pipeline.flat_manager_repo in ["stable", "beta"]:
+                                    await (
+                                        github_notifier.notify_flat_manager_job_status(
+                                            pipeline,
+                                            "commit",
+                                            commit_job_id,
+                                            "pending",
+                                            "Committing build...",
+                                        )
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to fetch commit job ID after commit",
+                                pipeline_id=str(pipeline_id),
+                                error=str(e),
+                            )
+                    except httpx.HTTPStatusError as e:
+                        logger.error(
+                            "Failed to commit build",
+                            build_id=pipeline.build_id,
+                            pipeline_id=str(pipeline_id),
+                            status_code=e.response.status_code,
+                            response_text=e.response.text,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Unexpected error while committing build",
+                            build_id=pipeline.build_id,
+                            pipeline_id=str(pipeline_id),
+                            error=str(e),
+                        )
+                else:
+                    logger.warning(
+                        "Pipeline succeeded but has no build_id, skipping commit",
+                        pipeline_id=str(pipeline_id),
+                    )
+            elif pipeline.params.get("workflow_id", "build.yml") == "build.yml":
+                github_notifier = GitHubNotifier()
+                await github_notifier.handle_build_completion(
+                    pipeline, status_value, flat_manager_client=None
+                )
+
+            updates["pipeline_status"] = status_value
+            return pipeline, updates
+
+    async def handle_reprocheck_callback(
+        self,
+        pipeline_id: uuid.UUID,
+        callback_data: dict[str, Any],
+    ) -> tuple[Pipeline, dict[str, Any]]:
+        from app.services.callback import ReprochecKCallbackValidator
+
+        validator = ReprochecKCallbackValidator()
+        parsed_data = validator.validate_and_parse(callback_data)
+        assert parsed_data.status is not None
+
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+
+            if pipeline.status in [
+                PipelineStatus.SUCCEEDED,
+                PipelineStatus.PUBLISHED,
+            ]:
+                raise ValueError("Pipeline status already finalized")
+
+            status_value = parsed_data.status.lower()
+            if status_value not in ["success", "failure", "cancelled"]:
+                raise ValueError("status must be 'success', 'failure', or 'cancelled'")
+
+            updates: dict[str, Any] = {}
+
+            match status_value:
+                case "success":
+                    pipeline.status = PipelineStatus.SUCCEEDED
+                    pipeline.finished_at = datetime.now()
+                case "failure":
+                    pipeline.status = PipelineStatus.FAILED
+                    pipeline.finished_at = datetime.now()
+                case "cancelled":
+                    pipeline.status = PipelineStatus.CANCELLED
+                    pipeline.finished_at = datetime.now()
+
+            await db.commit()
+
+            logger.info(
+                "Processing reprocheck callback",
+                pipeline_id=str(pipeline_id),
+                has_build_pipeline_id=hasattr(parsed_data, "build_pipeline_id"),
+                build_pipeline_id=getattr(parsed_data, "build_pipeline_id", None),
+            )
+
+            if (
+                hasattr(parsed_data, "build_pipeline_id")
+                and parsed_data.build_pipeline_id
+            ):
+                try:
+                    build_pipeline_id = uuid.UUID(parsed_data.build_pipeline_id)
+                    original_pipeline = await db.get(Pipeline, build_pipeline_id)
+                    if original_pipeline and not original_pipeline.repro_pipeline_id:
+                        original_pipeline.repro_pipeline_id = pipeline.id
+                        flag_modified(original_pipeline, "repro_pipeline_id")
+                        await db.commit()
+                        logger.info(
+                            "Updated original pipeline with reprocheck pipeline ID",
+                            original_pipeline_id=str(build_pipeline_id),
+                            reprocheck_pipeline_id=str(pipeline.id),
+                        )
+                except (ValueError, TypeError) as e:
+                    logger.error(
+                        "Invalid build_pipeline_id in reprocheck callback",
+                        build_pipeline_id=parsed_data.build_pipeline_id,
+                        error=str(e),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to update original pipeline with reprocheck ID",
+                        build_pipeline_id=parsed_data.build_pipeline_id,
+                        reprocheck_pipeline_id=str(pipeline.id),
+                        error=str(e),
+                    )
+
+            updates["pipeline_status"] = status_value
+            return pipeline, updates
+
     async def get_pipeline(self, pipeline_id: uuid.UUID) -> Pipeline | None:
         async with get_db() as db:
             return await db.get(Pipeline, pipeline_id)
