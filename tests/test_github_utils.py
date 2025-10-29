@@ -8,7 +8,6 @@ from app.utils.github import (
     close_github_issue,
     create_github_issue,
     create_pr_comment,
-    get_issue_details,
     update_commit_status,
 )
 
@@ -566,72 +565,3 @@ async def test_add_issue_comment_missing_issue_number(mock_settings):
 
         assert result is False
         MockClient.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_get_issue_details_success(mock_settings):
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "number": 123,
-            "title": "Build failed",
-            "body": "The stable build pipeline for `test-app` failed.\n\nCommit SHA: abc123",
-            "state": "open",
-        }
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.get = AsyncMock(return_value=mock_response)
-        MockClient.return_value.__aenter__.return_value = mock_client_instance
-
-        result = await get_issue_details(git_repo="flathub/test-app", issue_number=123)
-
-        assert result is not None
-        assert result["number"] == 123
-        assert result["title"] == "Build failed"
-        mock_client_instance.get.assert_called_once()
-        call_args = mock_client_instance.get.call_args
-
-        assert (
-            call_args[0][0]
-            == "https://api.github.com/repos/flathub/test-app/issues/123"
-        )
-        assert call_args[1]["headers"]["Authorization"] == "token test-token"
-
-
-@pytest.mark.asyncio
-async def test_get_issue_details_missing_repo(mock_settings):
-    with patch("httpx.AsyncClient") as MockClient:
-        result = await get_issue_details(git_repo="", issue_number=123)
-
-        assert result is None
-        MockClient.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_get_issue_details_missing_issue_number(mock_settings):
-    with patch("httpx.AsyncClient") as MockClient:
-        result = await get_issue_details(git_repo="flathub/test-app", issue_number=0)
-
-        assert result is None
-        MockClient.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_get_issue_details_http_error(mock_settings):
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.text = "Not found"
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.get = AsyncMock(
-            side_effect=httpx.HTTPStatusError(
-                "HTTP error", request=MagicMock(), response=mock_response
-            )
-        )
-        MockClient.return_value.__aenter__.return_value = mock_client_instance
-
-        result = await get_issue_details(git_repo="flathub/test-app", issue_number=123)
-
-        assert result is None
