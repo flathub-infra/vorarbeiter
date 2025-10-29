@@ -24,50 +24,6 @@ class PipelineService:
         )
         self.job_monitor = JobMonitor()
 
-    async def update_pipeline_job_ids(self, pipeline: Pipeline) -> bool:
-        """
-        Update pipeline job IDs from flat-manager if they're missing.
-
-        Args:
-            pipeline: The pipeline to update
-
-        Returns:
-            True if any updates were made, False otherwise
-        """
-        if pipeline.commit_job_id is not None and pipeline.publish_job_id is not None:
-            return False
-
-        if not pipeline.build_id:
-            return False
-
-        try:
-            build_info = await self.flat_manager_client.get_build_info(
-                pipeline.build_id
-            )
-            build_data = build_info.get("build", {})
-
-            commit_job_id = build_data.get("commit_job_id")
-            publish_job_id = build_data.get("publish_job_id")
-
-            updated = False
-            if commit_job_id is not None and pipeline.commit_job_id is None:
-                pipeline.commit_job_id = commit_job_id
-                updated = True
-
-            if publish_job_id is not None and pipeline.publish_job_id is None:
-                pipeline.publish_job_id = publish_job_id
-                updated = True
-
-            return updated
-        except Exception as e:
-            logger.error(
-                "Failed to fetch job IDs from flat-manager",
-                pipeline_id=str(pipeline.id),
-                build_id=pipeline.build_id,
-                error=str(e),
-            )
-            return False
-
     async def get_pipeline_with_job_updates(
         self, db: AsyncSession, pipeline_id: uuid.UUID
     ) -> Pipeline | None:
