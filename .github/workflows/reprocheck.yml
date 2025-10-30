@@ -97,41 +97,36 @@ jobs:
           name: reprocheck-json-${{ github.sha }}-${{ github.run_id }}-${{ github.job }}-${{ github.run_attempt }}
           path: /tmp/reprocheck-result.json
 
-  callback:
-    runs-on: ubuntu-latest
-    needs: [reprocheck]
-    if: ${{ always() }}
-    steps:
-      - name: Download reprocheck JSON output
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
-        with:
-          name: reprocheck-json-${{ github.sha }}-${{ github.run_id }}-reprocheck-${{ github.run_attempt }}
-          path: ./
-
       - name: Report job status
+        if: always()
         run: |
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
 
-          if [[ "${{ needs.reprocheck.result }}" == "success" ]]; then
-            status="success"
-          elif [[ "${{ needs.reprocheck.result }}" == "cancelled" ]]; then
+          if [[ "${{ job.status }}" == "cancelled" ]]; then
             status="cancelled"
-          else
-            status="failure"
-          fi
-
-          artifact_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          if [ -f reprocheck-result.json ]; then
-            reprocheck_data=$(cat reprocheck-result.json)
+            status_code="1"
+            timestamp="$(date -u +\"%Y-%m-%dT%H:%M:%S.%6N%:z\")"
+            message="Job cancelled"
+            result_url=""
+          elif [ -f /tmp/reprocheck-result.json ]; then
+            reprocheck_data=$(cat /tmp/reprocheck-result.json)
             status_code=$(echo "$reprocheck_data" | jq -r '.status_code // "1"')
             timestamp=$(echo "$reprocheck_data" | jq -r '.timestamp // ""')
-            message=$(echo "$reprocheck_data" | jq -r '.message // "Reprocheck completed"')
+            message=$(echo "$reprocheck_data" | jq -r '.message // ""')
+            result_url=$(echo "$reprocheck_data" | jq -r '.result_url // ""')
+
+            if [[ "$status_code" == "0" ]]; then
+              status="success"
+            else
+              status="failure"
+            fi
           else
+            status="failure"
             status_code="1"
-            timestamp="$(date -u +"%Y-%m-%dT%H:%M:%S.%6N%:z")"
+            timestamp="$(date -u +\"%Y-%m-%dT%H:%M:%S.%6N%:z\")"
             message="Reprocheck output not available"
+            result_url=""
           fi
 
           payload=$(jq -n \
@@ -140,7 +135,7 @@ jobs:
             --arg status_code "$status_code" \
             --arg timestamp "$timestamp" \
             --arg appid "${{ inputs.app_id }}" \
-            --arg result_url "$artifact_url" \
+            --arg result_url "$result_url" \
             --arg message "$message" \
             '{
               status: $status,
