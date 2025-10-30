@@ -32,12 +32,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 origins = [
-    "http://localhost:3000",
     "https://flathub.org",
 ]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex="http://localhost(:.*)?",
     allow_credentials=True,
     allow_headers=["*"],
 )
