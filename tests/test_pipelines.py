@@ -375,6 +375,7 @@ def test_list_pipelines_endpoint(mock_get_db):
             started_at=datetime.now(),
             finished_at=None,
             published_at=None,
+            repro_pipeline_id=None,
         ),
         MagicMock(
             id=uuid.uuid4(),
@@ -387,6 +388,7 @@ def test_list_pipelines_endpoint(mock_get_db):
             started_at=datetime.now(),
             finished_at=datetime.now(),
             published_at=None,
+            repro_pipeline_id=uuid.uuid4(),
         ),
     ]
 
@@ -1070,7 +1072,7 @@ def test_pipeline_reprocheck_callback_success(mock_get_db, sample_pipeline):
         provider_data={},
     )
 
-    original_pipeline = Pipeline(
+    Pipeline(
         id=original_pipeline_id,
         app_id="org.test.App",
         status=PipelineStatus.PUBLISHED,
@@ -1082,19 +1084,39 @@ def test_pipeline_reprocheck_callback_success(mock_get_db, sample_pipeline):
     )
 
     mock_db = AsyncMock(spec=AsyncSession)
-    # verify_callback_token gets reprocheck_pipeline, handle_reprocheck_callback gets it again, then gets original_pipeline
     mock_db.get.side_effect = [
         reprocheck_pipeline,
         reprocheck_pipeline,
-        original_pipeline,
     ]
     mock_db.commit = AsyncMock()
+    mock_db.flush = AsyncMock()
+
+    mock_check_result = AsyncMock()
+    mock_check_result.first = lambda: (
+        str(original_pipeline_id),
+        None,
+    )  # id, repro_pipeline_id (None means not set)
+    mock_db.execute.return_value = mock_check_result
+
+    mock_update_db = AsyncMock(spec=AsyncSession)
+    mock_update_db.execute = AsyncMock()
+    mock_update_db.commit = AsyncMock()
 
     mock_get_db_session = create_mock_get_db(mock_db)
 
+    call_count = 0
+
+    def get_db_side_effect():
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:  # First two calls for routes
+            return mock_get_db_session()
+        else:  # Third call is for the UPDATE transaction in build.py
+            return AsyncMock(__aenter__=AsyncMock(return_value=mock_update_db))
+
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", side_effect=get_db_side_effect),
     ):
         data = {"status": "success", "build_pipeline_id": str(original_pipeline_id)}
         headers = {"Authorization": "Bearer reprocheck_token"}
@@ -1108,7 +1130,13 @@ def test_pipeline_reprocheck_callback_success(mock_get_db, sample_pipeline):
     assert response.status_code == 200
     assert response.json()["pipeline_status"] == "success"
     assert reprocheck_pipeline.status == PipelineStatus.SUCCEEDED
-    assert original_pipeline.repro_pipeline_id == reprocheck_pipeline_id
+    assert mock_db.execute.call_count == 1
+    check_call = mock_db.execute.call_args_list[0]
+    assert "SELECT id, repro_pipeline_id FROM pipeline" in str(check_call[0][0])
+    assert mock_update_db.execute.call_count == 1  # UPDATE
+    update_call = mock_update_db.execute.call_args_list[0]
+    assert "UPDATE pipeline SET repro_pipeline_id" in str(update_call[0][0])
+    mock_update_db.commit.assert_called_once()
 
 
 def test_pipeline_reprocheck_callback_missing_status(mock_get_db, sample_pipeline):

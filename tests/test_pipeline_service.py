@@ -25,6 +25,7 @@ def mock_pipeline():
         build_id=123,
         flat_manager_repo="stable",
         created_at=datetime.now(),
+        repro_pipeline_id=uuid.uuid4(),
     )
 
 
@@ -118,6 +119,7 @@ def test_pipeline_to_summary(pipeline_service, mock_pipeline):
     assert summary.repo == mock_pipeline.flat_manager_repo
     assert summary.triggered_by == mock_pipeline.triggered_by
     assert summary.build_id == mock_pipeline.build_id
+    assert summary.repro_pipeline_id == mock_pipeline.repro_pipeline_id
 
 
 def test_pipeline_to_summary_no_repo(pipeline_service, mock_pipeline):
@@ -139,6 +141,7 @@ def test_pipeline_to_response(pipeline_service, mock_pipeline):
     assert response.repo == mock_pipeline.flat_manager_repo
     assert response.params == mock_pipeline.params
     assert response.log_url == mock_pipeline.log_url
+    assert response.repro_pipeline_id == mock_pipeline.repro_pipeline_id
 
 
 def test_validate_status_filter_valid(pipeline_service):

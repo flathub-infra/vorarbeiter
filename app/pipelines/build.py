@@ -4,8 +4,10 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 
 import httpx
+import sentry_sdk
 import structlog
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from app.config import settings
 from app.database import get_db
@@ -531,44 +533,114 @@ class BuildPipeline:
                     pipeline.status = PipelineStatus.CANCELLED
                     pipeline.finished_at = datetime.now()
 
-            await db.commit()
+            await db.flush()
+
+            build_pipeline_id_value = getattr(parsed_data, "build_pipeline_id", None)
+            workflow_id = (pipeline.params or {}).get("workflow_id")
+            has_build_id = bool(build_pipeline_id_value)
 
             logger.info(
                 "Processing reprocheck callback",
                 pipeline_id=str(pipeline_id),
-                has_build_pipeline_id=hasattr(parsed_data, "build_pipeline_id"),
-                build_pipeline_id=getattr(parsed_data, "build_pipeline_id", None),
+                workflow_id=workflow_id,
+                build_pipeline_id=build_pipeline_id_value,
             )
 
-            if (
-                pipeline.params.get("workflow_id") == "reprocheck.yml"
-                and hasattr(parsed_data, "build_pipeline_id")
-                and parsed_data.build_pipeline_id
-            ):
+            if workflow_id != "reprocheck.yml":
+                logger.info(
+                    "Skipping reprocheck callback for non-repro pipeline",
+                    pipeline_id=str(pipeline_id),
+                    workflow_id=workflow_id,
+                )
+            elif not has_build_id:
+                logger.warning(
+                    "Reprocheck callback missing build_pipeline_id",
+                    pipeline_id=str(pipeline_id),
+                )
+            else:
                 try:
-                    build_pipeline_id = uuid.UUID(parsed_data.build_pipeline_id)
-                    original_pipeline = await db.get(Pipeline, build_pipeline_id)
-                    if original_pipeline and not original_pipeline.repro_pipeline_id:
-                        original_pipeline.repro_pipeline_id = pipeline.id
-                        await db.commit()
-                        logger.info(
-                            "Updated original pipeline with reprocheck pipeline ID",
-                            original_pipeline_id=str(build_pipeline_id),
+                    build_pipeline_id = uuid.UUID(build_pipeline_id_value)
+                    # Don't load the object into this session to avoid stale overwrites
+                    check_stmt = text(
+                        "SELECT id, repro_pipeline_id FROM pipeline WHERE id = :build_id"
+                    )
+                    result = await db.execute(
+                        check_stmt,
+                        {"build_id": str(build_pipeline_id)},
+                    )
+                    row = result.first()
+
+                    if row:
+                        original_repro_id = row[1]
+                        if original_repro_id:
+                            logger.info(
+                                "Skipping repro_pipeline_id update - already set",
+                                build_pipeline_id=str(build_pipeline_id),
+                                existing_repro_pipeline_id=str(original_repro_id),
+                            )
+                        else:
+                            # Separate session to avoid main transaction overwriting the update
+                            async with get_db() as update_db:
+                                stmt = text(
+                                    "UPDATE pipeline SET repro_pipeline_id = :repro_id WHERE id = :build_id"
+                                )
+                                await update_db.execute(
+                                    stmt,
+                                    {
+                                        "repro_id": str(pipeline.id),
+                                        "build_id": str(build_pipeline_id),
+                                    },
+                                )
+                                await update_db.commit()
+
+                            logger.info(
+                                "Updated original pipeline with reprocheck pipeline ID",
+                                original_pipeline_id=str(build_pipeline_id),
+                                reprocheck_pipeline_id=str(pipeline.id),
+                            )
+                    else:
+                        logger.warning(
+                            "Original pipeline not found",
+                            build_pipeline_id=str(build_pipeline_id),
                             reprocheck_pipeline_id=str(pipeline.id),
                         )
                 except (ValueError, TypeError) as e:
                     logger.error(
                         "Invalid build_pipeline_id in reprocheck callback",
-                        build_pipeline_id=parsed_data.build_pipeline_id,
+                        build_pipeline_id=build_pipeline_id_value,
                         error=str(e),
                     )
+                    try:
+                        sentry_sdk.capture_exception(
+                            e,
+                            contexts={
+                                "reprocheck": {
+                                    "build_pipeline_id": build_pipeline_id_value,
+                                    "reprocheck_pipeline_id": str(pipeline.id),
+                                }
+                            },
+                        )
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.error(
                         "Failed to update original pipeline with reprocheck ID",
-                        build_pipeline_id=parsed_data.build_pipeline_id,
+                        build_pipeline_id=build_pipeline_id_value,
                         reprocheck_pipeline_id=str(pipeline.id),
                         error=str(e),
                     )
+                    try:
+                        sentry_sdk.capture_exception(
+                            e,
+                            contexts={
+                                "reprocheck": {
+                                    "build_pipeline_id": build_pipeline_id_value,
+                                    "reprocheck_pipeline_id": str(pipeline.id),
+                                }
+                            },
+                        )
+                    except Exception:
+                        pass
             updates["pipeline_status"] = status_value
             return pipeline, updates
 
