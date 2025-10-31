@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.main import app
 from app.models import Pipeline, PipelineStatus
-from app.routes.webhooks import is_submodule_only_pr
+from app.routes.webhooks import is_submodule_only_pr, is_submodule_dependabot_monthly
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from tests.conftest import create_mock_get_db
 
@@ -444,12 +444,130 @@ def test_receive_github_webhook_ignore_event(client: TestClient, mock_db_session
 
 
 @pytest.mark.asyncio
+async def test_is_submodule_dependabot_monthly_true(monkeypatch):
+    yaml_content = """
+    version: 2
+    updates:
+      - package-ecosystem: "npm"
+        directory: "/"
+        schedule:
+          interval: "weekly"
+      - package-ecosystem: "gitsubmodule"
+        directory: "/"
+        schedule:
+          interval: "monthly"
+    """
+
+    mock_response = AsyncMock()
+    mock_response.text = yaml_content
+    mock_response.raise_for_status = Mock()
+    monkeypatch.setattr(
+        "app.routes.webhooks.httpx.AsyncClient.get",
+        AsyncMock(return_value=mock_response),
+    )
+
+    result = await is_submodule_dependabot_monthly("user/repo", "main")
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_is_submodule_dependabot_monthly_false(monkeypatch):
+    yaml_content = """
+    version: 2
+    updates:
+      - package-ecosystem: "gitsubmodule"
+        directory: "/"
+        schedule:
+          interval: "weekly"
+    """
+
+    mock_response = AsyncMock()
+    mock_response.text = yaml_content
+    mock_response.raise_for_status = Mock()
+    monkeypatch.setattr(
+        "app.routes.webhooks.httpx.AsyncClient.get",
+        AsyncMock(return_value=mock_response),
+    )
+
+    result = await is_submodule_dependabot_monthly("user/repo", "main")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_dependabot_monthly_submodule_pr_creates_pipeline():
+    event_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+
+    pr_payload = {
+        "action": "opened",
+        "repository": {"full_name": "test-owner/test-repo"},
+        "pull_request": {
+            "base": {"ref": "main"},
+            "head": {"ref": "dependabot/submodules-update"},
+        },
+        "sender": {"login": "dependabot[bot]"},
+    }
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=pr_payload,
+        repository="test-owner/test-repo",
+        actor="dependabot[bot]",
+    )
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="org.flathub.test-repo",
+        params={},
+        webhook_event_id=event_id,
+        status=PipelineStatus.PENDING,
+    )
+
+    mock_pipeline_service = AsyncMock()
+    mock_pipeline_service.create_pipeline.return_value = mock_pipeline
+    mock_pipeline_service.start_pipeline.return_value = mock_pipeline
+
+    mock_db_session = AsyncMock()
+    mock_db_session.get.return_value = mock_pipeline
+
+    mock_get_db = AsyncMock(return_value=mock_db_session)
+
+    with (
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch("app.routes.webhooks.is_submodule_only_pr", AsyncMock(return_value=True)),
+        patch(
+            "app.routes.webhooks.is_submodule_dependabot_monthly",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        from app.routes.webhooks import create_pipeline
+
+        result = await create_pipeline(webhook_event)
+
+        assert isinstance(result, uuid.UUID)
+        assert result == pipeline_id
+
+        mock_pipeline_service.create_pipeline.assert_called_once()
+        mock_pipeline_service.start_pipeline.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_receive_github_webhook_ignores_bot_pr(client, mock_db_session):
     headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
 
     with (
         patch("app.routes.webhooks.settings.github_webhook_secret", ""),
         patch("app.routes.webhooks.get_db", return_value=AsyncMock()),
+        patch(
+            "app.routes.webhooks.is_submodule_only_pr", AsyncMock(return_value=False)
+        ),
+        patch(
+            "app.routes.webhooks.is_submodule_dependabot_monthly",
+            AsyncMock(return_value=False),
+        ),
     ):
         response = client.post(
             "/api/webhooks/github",

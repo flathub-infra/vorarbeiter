@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import re
 import uuid
+import yaml
 
 import httpx
 import structlog
@@ -366,6 +367,63 @@ async def is_submodule_only_pr(
     )
 
 
+async def is_submodule_dependabot_monthly(repo_name: str, branch: str) -> bool:
+    url = f"https://raw.githubusercontent.com/{repo_name}/refs/heads/{branch}/.github/dependabot.yml"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            response.raise_for_status()
+    except httpx.RequestError as e:
+        logger.error(
+            "HTTP request error fetching dependabot.yml", url=url, error=str(e)
+        )
+        return True
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "HTTP status error fetching dependabot.yml",
+            url=url,
+            status_code=e.response.status_code,
+            error=str(e),
+        )
+        return True
+
+    try:
+        data = yaml.safe_load(response.text)
+    except yaml.YAMLError as e:
+        logger.error("YAML parse error reading dependabot.yml", error=str(e))
+        return True
+
+    updates = data.get("updates", [])
+    if not isinstance(updates, list):
+        logger.warning("Unexpected format for 'updates' section in dependabot.yml")
+        return True
+
+    gitsubmodule = next(
+        (u for u in updates if u.get("package-ecosystem") == "gitsubmodule"),
+        None,
+    )
+
+    if not gitsubmodule:
+        logger.warning("No 'gitsubmodule' update entry found in dependabot.yml")
+        return True
+
+    interval = gitsubmodule.get("schedule", {}).get("interval")
+    if not interval:
+        logger.warning(
+            "No schedule interval found for 'gitsubmodule' in dependabot.yml"
+        )
+        return True
+
+    is_monthly = interval.lower() == "monthly"
+    logger.info(
+        "Dependabot interval check",
+        interval=interval,
+        is_monthly=is_monthly,
+    )
+    return is_monthly
+
+
 @webhooks_router.post(
     "/github",
     status_code=status.HTTP_202_ACCEPTED,
@@ -441,13 +499,23 @@ async def receive_github_webhook(
         return {"message": "Webhook received but ignored due to repository filter."}
 
     if is_pr_event:
+        pr_target_ref = payload.get("pull_request", {}).get("base", {}).get("ref")
         if repo_name.split("/")[1] in app_build_types:
             return {
                 "message": "Pull request webhook received but ignored due to large app."
             }
 
         if actor_login in ("dependabot[bot]", "renovate[bot]"):
-            return {"message": "Webhook received but ignored due to actor filter."}
+            is_submodule = await is_submodule_only_pr(payload)
+            is_monthly = await is_submodule_dependabot_monthly(repo_name, pr_target_ref)
+
+            if is_submodule:
+                if not is_monthly:
+                    return {
+                        "message": "Webhook received but ignored as dependabot submodule updates are not monthly."
+                    }
+            else:
+                return {"message": "Webhook received but ignored due to actor filter."}
 
         if actor_login in ("github-actions[bot]",) and await is_submodule_only_pr(
             payload
