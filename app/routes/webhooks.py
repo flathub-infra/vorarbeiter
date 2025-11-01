@@ -542,7 +542,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         pr_url = issue.get("pull_request", {}).get("url", "")
         repo = event.repository
 
-        if "bot, ping admins" in comment_body:
+        if "bot, ping admins" in comment_body and repo not in ("flathub/flathub",):
             if issue_number is None:
                 logger.error("Missing issue number for admin ping")
             else:
