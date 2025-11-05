@@ -47,6 +47,7 @@ app_build_types = {
     "com.pot_app.pot": "large",
     "org.mamedev.MAME": "large",
     "org.catacombing.kumo": "large",
+    "io.qt.qtwebengine.BaseApp": "large",
 }
 
 
