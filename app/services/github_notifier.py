@@ -166,9 +166,12 @@ class GitHubNotifier:
             footnote = (
                 "<details><summary>Help</summary>\n\n"
                 "- <code>bot, build</code> - Restart the test build\n"
-                "- <code>bot, ping admins</code> - Contact Flathub admins"
-                "</details>"
             )
+
+            if git_repo != "flathub/flathub":
+                footnote += "- <code>bot, ping admins</code> - Contact Flathub admins\n"
+
+            footnote += "</details>"
 
             run_id = None
             if log_url:
