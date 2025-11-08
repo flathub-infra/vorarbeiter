@@ -147,6 +147,11 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      - name: Check version and status
+        run: |
+          timeout 5 docker --version || true
+          timeout 10 sudo aa-status || true
+
       - name: Checkout repository
         run: |
           docker run --rm \
@@ -420,6 +425,11 @@ jobs:
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Check version and status
+        run: |
+          timeout 5 docker --version || true
+          timeout 10 sudo aa-status || true
 
       - name: Checkout repository
         run: |
