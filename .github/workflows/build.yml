@@ -137,6 +137,16 @@ jobs:
 
           print("All files downloaded successfully")
 
+      - name: Disable Apparmor
+        run: |
+          sudo aa-teardown >/dev/null 2>&1 || true
+          sudo systemctl disable --now apparmor.service >/dev/null 2>&1
+
+      - name: Enable unprivileged user namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Checkout repository
         run: |
           docker run --rm \
@@ -398,6 +408,16 @@ jobs:
 
           print("All files downloaded successfully")
 
+      - name: Disable Apparmor
+        run: |
+          sudo aa-teardown >/dev/null 2>&1 || true
+          sudo systemctl disable --now apparmor.service >/dev/null 2>&1
+
+      - name: Enable unprivileged user namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Checkout repository
         run: |
           docker run --rm \
@@ -487,13 +507,6 @@ jobs:
           app_id_lc=${APP_ID,,}
           cd "${GITHUB_WORKSPACE}/work"
           oras pull ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest || exit 0
-
-      - name: Enable unprivileged user namespaces
-        run: |
-          sudo aa-teardown >/dev/null 2>&1 || true
-          sudo systemctl disable --now apparmor.service >/dev/null 2>&1
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Download sources
         run: |
