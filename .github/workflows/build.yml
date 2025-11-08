@@ -151,6 +151,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint="" \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
@@ -168,6 +169,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint="" \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
@@ -194,6 +196,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint="" \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
@@ -422,6 +425,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint="" \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             -e TMPDIR=/work/tmp \
             -v "${GITHUB_WORKSPACE}/work:/work" \
@@ -438,6 +442,7 @@ jobs:
         if: ${{ github.event.inputs.app_id == 'flathub' }}
         run: |
           docker run --rm \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -e TMPDIR=/work/tmp \
@@ -551,6 +556,7 @@ jobs:
       - name: Validate build
         run: |
           docker run --rm \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -e TMPDIR=/work/tmp \
@@ -564,6 +570,7 @@ jobs:
       - name: Generate deltas
         run: |
           docker run --rm \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -e TMPDIR=/work/tmp \
@@ -575,6 +582,7 @@ jobs:
       - name: Upload build
         run: |
           docker run --rm \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -e TMPDIR=/work/tmp \
