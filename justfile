@@ -192,7 +192,23 @@ build app_id git_ref build_arch:
 validate-build:
     #!/usr/bin/env bash
     set -euxo pipefail
-    flatpak-builder-lint --gha-format --exceptions repo repo
+
+    case "${REF}" in
+        "refs/heads/master" | "refs/heads/beta" | refs/heads/branch/*)
+            build_type="official"
+            ;;
+        *)
+            build_type="test"
+            ;;
+    esac
+
+    lint_args=(--gha-format --exceptions)
+
+    if [ "$build_type" != "test" ]; then
+        lint_args+=(--janitor-exceptions)
+    fi
+
+    flatpak-builder-lint "${lint_args[@]}" repo repo
 
 generate-deltas:
     #!/usr/bin/env bash

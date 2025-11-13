@@ -564,6 +564,8 @@ jobs:
             '
 
       - name: Validate build
+        env:
+          GITHUB_TOKEN: ${{ secrets.LINTER_TOKEN }}
         run: |
           docker run --rm \
             --security-opt apparmor=unconfined \
@@ -574,6 +576,8 @@ jobs:
             -w /work \
             -e REPO \
             -e GITHUB_ACTIONS \
+            -e GITHUB_TOKEN \
+            -e REF \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-build
 
