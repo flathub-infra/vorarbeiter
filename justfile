@@ -115,7 +115,7 @@ validate-manifest app_id:
     set -euxo pipefail
     git config --global --add safe.directory "*"
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
-    flatpak-builder-lint --gha-format --exceptions manifest "$manifest"
+    flatpak-builder-lint --gha-format --exceptions --debug manifest "$manifest"
 
 download-sources app_id:
     #!/usr/bin/env bash
@@ -202,7 +202,7 @@ validate-build:
             ;;
     esac
 
-    lint_args=(--gha-format --exceptions)
+    lint_args=(--gha-format --exceptions --debug)
 
     if [ "$build_type" != "test" ]; then
         lint_args+=(--janitor-exceptions)
