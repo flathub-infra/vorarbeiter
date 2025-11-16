@@ -45,9 +45,8 @@ def setup_logging() -> None:
     root_logger.addHandler(handler)
 
     for logger_name in [
-        "uvicorn",
-        "uvicorn.access",
-        "uvicorn.error",
+        "_granian",
+        "granian.access",
         "fastapi",
         "httpx",
         "gql",

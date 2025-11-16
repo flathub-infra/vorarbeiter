@@ -15,7 +15,7 @@ dependencies = [
     "sentry-sdk>=2.25.1",
     "sqlalchemy>=2.0.40",
     "structlog>=24.1.0",
-    "uvicorn>=0.34.0",
+    "granian>=1.0.0",
     "gql[requests]>=4.0.0,<5",
 ]
 
