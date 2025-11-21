@@ -185,9 +185,16 @@ class GitHubActionsService:
             logger.warning("Failed to fetch job annotations for cancellation detection")
             return False
 
-        cancelled = any(
-            a.get("message") == "The operation was canceled." for a in annotations
+        cancel_annotation_strs = (
+            "The operation was canceled.",
+            "The job was not acquired by Runner of",
         )
+
+        cancelled = any(
+            any((a.get("message", "")).startswith(s) for s in cancel_annotation_strs)
+            for a in annotations
+        )
+
         has_exit_or_user_cancel = any(
             a.get("message", "").startswith(
                 (
