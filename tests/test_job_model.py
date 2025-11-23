@@ -175,6 +175,7 @@ def test_job_failed_status():
     )
 
     assert job.status == JobStatus.FAILED
+    assert job.result is not None
     assert job.result["error"] == "Build failed"
     assert job.result["exit_code"] == 1
 
@@ -190,6 +191,7 @@ def test_job_cancelled_status():
     )
 
     assert job.status == JobStatus.CANCELLED
+    assert job.result is not None
     assert job.result["reason"] == "User cancelled"
 
 
