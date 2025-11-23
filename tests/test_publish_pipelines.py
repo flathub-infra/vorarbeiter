@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 from contextlib import asynccontextmanager
 
 import pytest
-from httpx import HTTPStatusError, Response
+from httpx import HTTPStatusError, Request, Response
 from sqlalchemy.future import select
 
 from app.main import app
@@ -157,13 +157,16 @@ async def test_publish_pipelines_error_handling(db_session_maker, client):
         )
         mock_client.purge = AsyncMock()
 
+        mock_request = Request("POST", "https://example.com")
         mock_response = Response(
             status_code=400,
             content=b'{"error-type": "some-error", "message": "Publish failed"}',
         )
 
         mock_client.publish = AsyncMock(
-            side_effect=HTTPStatusError("Error", request=None, response=mock_response)
+            side_effect=HTTPStatusError(
+                "Error", request=mock_request, response=mock_response
+            )
         )
 
         @asynccontextmanager
