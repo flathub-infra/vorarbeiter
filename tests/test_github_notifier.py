@@ -275,6 +275,10 @@ async def test_notify_pr_build_complete_committed_with_download(
             "app.services.github_notifier.get_linter_warning_messages",
             return_value=fake_linter_warnings,
         ),
+        patch(
+            "app.services.github_notifier.get_build_job_arches",
+            return_value=["x86_64", "aarch64"],
+        ),
         patch("app.services.github_notifier.create_pr_comment") as mock_comment,
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
@@ -284,6 +288,7 @@ async def test_notify_pr_build_complete_committed_with_download(
             "To test this build, install it from the testing repository:\n\n"
             "```\nflatpak install --user "
             "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref\n```"
+            "\n\n*Built for aarch64 and x86_64 architectures.*"
             "\n\n⚠️  Linter warnings:\n\n"
             "_Warnings can be promoted to errors in the future. Please try to resolve them._\n\n"
             "- A fake warning found in linter repo check\n"
@@ -300,13 +305,19 @@ async def test_notify_pr_build_complete_committed_no_build_id(
 ):
     mock_pipeline.build_id = None
 
-    with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
+    with (
+        patch(
+            "app.services.github_notifier.get_build_job_arches",
+            return_value=["x86_64"],
+        ),
+        patch("app.services.github_notifier.create_pr_comment") as mock_comment,
+    ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
 
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App",
             pr_number=42,
-            comment="✅ [Test build succeeded](https://example.com/logs/123).",
+            comment="✅ [Test build succeeded](https://example.com/logs/123).\n\n*Built for x86_64 architecture.*",
         )
 
 

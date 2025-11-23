@@ -10,6 +10,7 @@ from app.utils.github import (
     create_pr_comment,
     update_commit_status,
     get_linter_warning_messages,
+    get_build_job_arches,
 )
 
 logger = structlog.get_logger(__name__)
@@ -183,17 +184,37 @@ class GitHubNotifier:
                     )
 
             linter_warnings: list[str] = []
+            build_job_arches: list[str] = []
+
             if run_id is not None:
                 linter_warnings = await get_linter_warning_messages(run_id)
+                build_job_arches = await get_build_job_arches(run_id)
+
+            arch_info_comment = ""
+            if build_job_arches:
+                sorted_arches = sorted(build_job_arches)
+                plural = "s" if len(build_job_arches) > 1 else ""
+                arch_text = ""
+                if len(build_job_arches) == 1:
+                    arch_text = sorted_arches[0]
+                elif len(build_job_arches) == 2:
+                    arch_text = " and ".join(sorted_arches)
+                elif len(build_job_arches) > 2:
+                    arch_text = (
+                        ", ".join(sorted_arches[:-1]) + ", and " + sorted_arches[-1]
+                    )
+                arch_info_comment = f"\n\n*Built for {arch_text} architecture{plural}.*"
 
             if status == "committed":
                 if pipeline.build_id and self.flat_manager:
                     download_url = self.flat_manager.get_flatpakref_url(
                         pipeline.build_id, pipeline.app_id
                     )
-                    comment = f"✅ [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```"
+                    comment = f"✅ [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```{arch_info_comment}"
                 else:
-                    comment = f"✅ [Test build succeeded]({log_url})."
+                    comment = (
+                        f"✅ [Test build succeeded]({log_url}).{arch_info_comment}"
+                    )
                 if linter_warnings:
                     warnings_text = "\n".join(f"- {w.strip()}" for w in linter_warnings)
                     comment += (

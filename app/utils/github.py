@@ -531,6 +531,57 @@ async def get_workflow_run_title(run_id: int) -> str | None:
     return None
 
 
+async def get_build_job_arches(
+    run_id: int, owner: str = "flathub-infra", repo: str = "vorarbeiter"
+) -> list[str]:
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {settings.github_status_token}",
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            jobs_url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+            response = await client.get(
+                jobs_url,
+                headers=headers,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            jobs = response.json().get("jobs", [])
+            return [
+                job["name"].removeprefix("build-").strip()
+                for job in jobs
+                if job.get("name", "").startswith("build-")
+            ]
+    except httpx.RequestError as e:
+        logger.error(
+            "Request error fetching jobs",
+            owner=owner,
+            repo=repo,
+            run_id=run_id,
+            error=str(e),
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "HTTP error fetching jobs",
+            owner=owner,
+            repo=repo,
+            run_id=run_id,
+            status_code=e.response.status_code,
+            response_text=e.response.text,
+        )
+    except Exception as e:
+        logger.error(
+            "Unexpected error fetching build architectures",
+            owner=owner,
+            repo=repo,
+            run_id=run_id,
+            error=str(e),
+        )
+    return []
+
+
 async def get_check_run_annotations(
     owner: str,
     repo: str,
