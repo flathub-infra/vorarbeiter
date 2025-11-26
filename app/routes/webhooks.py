@@ -421,7 +421,7 @@ async def receive_github_webhook(
         actor_login = payload["sender"]["login"]
     except KeyError as e:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Missing expected key in GitHub payload: {e}",
         )
 

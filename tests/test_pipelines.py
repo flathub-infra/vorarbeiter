@@ -351,7 +351,7 @@ def test_trigger_pipeline_unauthorized(mock_pipeline_service):
 
     # Test with no token
     response = test_client.post("/api/pipelines", json=request_data)
-    assert response.status_code == 403  # Missing Authorization header
+    assert response.status_code == 401  # Missing Authorization header
 
     # Test with invalid token
     headers = {"Authorization": "Bearer invalid-token"}
