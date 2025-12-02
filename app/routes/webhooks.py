@@ -30,7 +30,7 @@ STABLE_BUILD_FAILURE_PATTERN = re.compile(
     r"Build log: (https://github\.com/flathub-infra/vorarbeiter/actions/runs/\d+)"
 )
 JOB_FAILURE_PATTERN = re.compile(
-    r"The (\w+) job for `.+?` failed in the (\w+) repository\.\n\n.*?Commit SHA: ([0-9a-fA-F]+)",
+    r"The (\w+) job for `.+?` failed in the (\w+) repository\.\n\n.*?-? ?Commit SHA: ([0-9a-fA-F]+)",
     re.DOTALL,
 )
 
