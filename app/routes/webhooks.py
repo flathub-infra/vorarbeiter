@@ -475,7 +475,7 @@ async def receive_github_webhook(
             logger.error(
                 "Database error",
                 error=str(e),
-                event={"event_id": str(event.id) if event else None},
+                event_id=str(event.id) if event else None,
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
