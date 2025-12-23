@@ -166,6 +166,27 @@ class FlatManagerClient:
             )
             response.raise_for_status()
 
+    async def republish(
+        self,
+        repo: str,
+        app_id: str,
+        end_of_life: str | None = None,
+        end_of_life_rebase: str | None = None,
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.url}/api/v1/repo/{repo}/republish",
+                headers=self.headers,
+                json={
+                    "app": app_id,
+                    "endoflife": end_of_life,
+                    "endoflife_rebase": end_of_life_rebase,
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def get_build_info(self, build_id: int) -> dict[str, Any]:
         build_url = self.get_build_url(build_id)
         async with httpx.AsyncClient() as client:

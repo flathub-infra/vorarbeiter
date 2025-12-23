@@ -179,7 +179,7 @@ class TestCommit:
 
             await flat_manager_client.commit(
                 "12345",
-                end_of_life="This app is deprecated",
+                end_of_life="This application has been replaced by org.new.app.",
                 end_of_life_rebase="org.new.app",
             )
 
@@ -187,7 +187,7 @@ class TestCommit:
                 "https://test.flathub.org/api/v1/build/12345/commit",
                 headers={"Authorization": "Bearer test_token"},
                 json={
-                    "endoflife": "This app is deprecated",
+                    "endoflife": "This application has been replaced by org.new.app.",
                     "endoflife_rebase": "org.new.app",
                 },
                 timeout=30.0,
@@ -270,6 +270,37 @@ class TestPurge:
 
             with pytest.raises(HTTPStatusError):
                 await flat_manager_client.purge("12345")
+
+
+class TestRepublish:
+    @pytest.mark.asyncio
+    async def test_republish_success(self, flat_manager_client, mock_response):
+        mock_response.json.return_value = {"status": "ok"}
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client.post.return_value = mock_response
+
+            result = await flat_manager_client.republish(
+                "stable",
+                "org.test.App",
+                end_of_life="This application has been replaced by org.test.NewApp.",
+                end_of_life_rebase="org.test.NewApp",
+            )
+
+            assert result == {"status": "ok"}
+
+            mock_client.post.assert_called_once_with(
+                "https://test.flathub.org/api/v1/repo/stable/republish",
+                headers={"Authorization": "Bearer test_token"},
+                json={
+                    "app": "org.test.App",
+                    "endoflife": "This application has been replaced by org.test.NewApp.",
+                    "endoflife_rebase": "org.test.NewApp",
+                },
+                timeout=30.0,
+            )
 
 
 class TestGetJob:

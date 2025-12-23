@@ -840,7 +840,7 @@ def test_pipeline_metadata_callback_end_of_life(mock_get_db, sample_pipeline):
         mock_get_db.get.return_value = sample_pipeline
 
         data = {
-            "end_of_life": "This app is deprecated",
+            "end_of_life": "This application has been replaced by org.flathub.NewApp.",
             "end_of_life_rebase": "org.flathub.NewApp",
         }
         headers = {"Authorization": "Bearer test_token_12345"}
@@ -852,9 +852,15 @@ def test_pipeline_metadata_callback_end_of_life(mock_get_db, sample_pipeline):
         )
 
     assert response.status_code == 200
-    assert response.json()["end_of_life"] == "This app is deprecated"
+    assert (
+        response.json()["end_of_life"]
+        == "This application has been replaced by org.flathub.NewApp."
+    )
     assert response.json()["end_of_life_rebase"] == "org.flathub.NewApp"
-    assert sample_pipeline.end_of_life == "This app is deprecated"
+    assert (
+        sample_pipeline.end_of_life
+        == "This application has been replaced by org.flathub.NewApp."
+    )
     assert sample_pipeline.end_of_life_rebase == "org.flathub.NewApp"
 
 
