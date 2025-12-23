@@ -170,18 +170,24 @@ def test_receive_github_webhook_success(client: TestClient, mock_db_session):
 
     with patch("app.routes.webhooks.get_db", mock_get_db):
         with patch("app.routes.webhooks.settings.github_webhook_secret", ""):
-            with patch("app.routes.webhooks.create_pipeline", return_value=None):
-                response = client.post(
-                    "/api/webhooks/github", json=SAMPLE_GITHUB_PAYLOAD, headers=headers
-                )
+            with patch(
+                "app.routes.webhooks.is_eol_only_pr",
+                AsyncMock(return_value=(False, None)),
+            ):
+                with patch("app.routes.webhooks.create_pipeline", return_value=None):
+                    response = client.post(
+                        "/api/webhooks/github",
+                        json=SAMPLE_GITHUB_PAYLOAD,
+                        headers=headers,
+                    )
 
-                assert response.status_code == 202
-                response_data = response.json()
-                assert response_data["message"] == "Webhook received"
-                assert response_data["event_id"] == delivery_id
+                    assert response.status_code == 202
+                    response_data = response.json()
+                    assert response_data["message"] == "Webhook received"
+                    assert response_data["event_id"] == delivery_id
 
-                assert mock_db_session.add.called
-                assert mock_db_session.commit.called
+                    assert mock_db_session.add.called
+                    assert mock_db_session.commit.called
 
 
 def test_receive_github_webhook_missing_header(client: TestClient):
@@ -279,6 +285,10 @@ def test_webhook_with_signature_verification_success(
         with (
             patch("app.routes.webhooks.get_db", return_value=mock_db_context),
             patch("app.routes.webhooks.create_pipeline", return_value=None),
+            patch(
+                "app.routes.webhooks.is_eol_only_pr",
+                AsyncMock(return_value=(False, None)),
+            ),
         ):
             response = client.post(
                 "/api/webhooks/github", content=payload, headers=headers
@@ -546,6 +556,380 @@ async def test_receive_github_webhook_ignores_submodule_only_pr(
 
 
 @pytest.mark.asyncio
+async def test_fetch_flathub_json_success():
+    from app.routes.webhooks import fetch_flathub_json
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = Mock(
+        return_value={"end-of-life": "This application is no longer maintained."}
+    )
+    mock_response.raise_for_status = Mock()
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.get = AsyncMock(return_value=mock_response)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        result = await fetch_flathub_json(
+            "test-owner/test-repo", "abc123", "test-token"
+        )
+
+    assert result == {"end-of-life": "This application is no longer maintained."}
+    mock_client_instance.get.assert_awaited_once_with(
+        "https://api.github.com/repos/test-owner/test-repo/contents/flathub.json?ref=abc123",
+        headers={
+            "Accept": "application/vnd.github.raw+json",
+            "Authorization": "Bearer test-token",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_flathub_json_missing_file():
+    from app.routes.webhooks import fetch_flathub_json
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 404
+    mock_response.raise_for_status = Mock()
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.get = AsyncMock(return_value=mock_response)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        result = await fetch_flathub_json("test-owner/test-repo", "abc123")
+
+    assert result == {}
+    mock_response.raise_for_status.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "base_json,head_json,expected_data",
+    [
+        (
+            {
+                "end-of-life": "This application has been replaced by org.old.App.",
+                "end-of-life-rebase": "org.old.App",
+            },
+            {
+                "end-of-life": "This application has been replaced by org.new.App.",
+                "end-of-life-rebase": "org.new.App",
+            },
+            {
+                "end_of_life": "This application has been replaced by org.new.App.",
+                "end_of_life_rebase": "org.new.App",
+            },
+        ),
+        (
+            {"end-of-life": "This application is no longer maintained."},
+            {"end-of-life": ""},
+            {"end_of_life": ""},
+        ),
+        (
+            {"name": "Old", "end-of-life": "This application is no longer maintained."},
+            {"name": "New", "end-of-life": "This application is no longer maintained."},
+            None,
+        ),
+        (
+            {"end-of-life-rebase": "org.old.App"},
+            {},
+            {"end_of_life_rebase": ""},
+        ),
+        (
+            {
+                "name": "Same",
+                "end-of-life": "This application is no longer maintained.",
+            },
+            {
+                "name": "Same",
+                "end-of-life": "This application is no longer maintained.",
+            },
+            None,
+        ),
+    ],
+)
+def test_get_eol_only_changes(base_json, head_json, expected_data):
+    from app.routes.webhooks import get_eol_only_changes
+
+    result = get_eol_only_changes(base_json, head_json)
+
+    assert result == expected_data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_files_response,base_json,head_json,expected_result,expected_data",
+    [
+        (
+            [
+                {
+                    "filename": "flathub.json",
+                }
+            ],
+            {
+                "end-of-life": "This application has been replaced by org.old.App.",
+                "end-of-life-rebase": "org.old.App",
+            },
+            {
+                "end-of-life": "This application has been replaced by org.new.App.",
+                "end-of-life-rebase": "org.new.App",
+            },
+            True,
+            {
+                "end_of_life": "This application has been replaced by org.new.App.",
+                "end_of_life_rebase": "org.new.App",
+            },
+        ),
+        (
+            [
+                {
+                    "filename": "flathub.json",
+                }
+            ],
+            {"name": "Old", "end-of-life": "This application is no longer maintained."},
+            {"name": "New", "end-of-life": "This application is no longer maintained."},
+            False,
+            None,
+        ),
+        (
+            [
+                {"filename": "flathub.json", "patch": "foo"},
+                {"filename": "other.json", "patch": "bar"},
+            ],
+            {},
+            {},
+            False,
+            None,
+        ),
+    ],
+)
+async def test_is_eol_only_pr(
+    mock_files_response, base_json, head_json, expected_result, expected_data
+):
+    from app.routes.webhooks import is_eol_only_pr
+
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "pull_request": {
+            "number": 123,
+            "base": {"sha": "base-sha"},
+            "head": {"sha": "head-sha"},
+        },
+    }
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = Mock(return_value=mock_files_response)
+    mock_response.raise_for_status = Mock()
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.get = AsyncMock(return_value=mock_response)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        with patch(
+            "app.routes.webhooks.fetch_flathub_json",
+            AsyncMock(side_effect=[base_json, head_json]),
+        ) as mock_fetch:
+            result, data = await is_eol_only_pr(payload)
+            assert result is expected_result
+            assert data == expected_data
+            if (
+                mock_files_response
+                and len(mock_files_response) == 1
+                and mock_files_response[0].get("filename") == "flathub.json"
+            ):
+                assert mock_fetch.await_count == 2
+            else:
+                assert mock_fetch.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_files_response,base_json,head_json,expected_result,expected_data",
+    [
+        (
+            [
+                {
+                    "filename": "flathub.json",
+                }
+            ],
+            {
+                "end-of-life": "This application has been replaced by org.old.App.",
+                "end-of-life-rebase": "org.old.App",
+            },
+            {
+                "end-of-life": "This application has been replaced by org.new.App.",
+                "end-of-life-rebase": "org.new.App",
+            },
+            True,
+            {
+                "end_of_life": "This application has been replaced by org.new.App.",
+                "end_of_life_rebase": "org.new.App",
+            },
+        ),
+        (
+            [
+                {
+                    "filename": "flathub.json",
+                }
+            ],
+            {"name": "Old", "end-of-life": "This application is no longer maintained."},
+            {"name": "New", "end-of-life": "This application is no longer maintained."},
+            False,
+            None,
+        ),
+        (
+            [
+                {"filename": "flathub.json", "patch": "foo"},
+                {"filename": "other.json", "patch": "bar"},
+            ],
+            {},
+            {},
+            False,
+            None,
+        ),
+    ],
+)
+async def test_is_eol_only_push(
+    mock_files_response, base_json, head_json, expected_result, expected_data
+):
+    from app.routes.webhooks import is_eol_only_push
+
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "before": "abc123",
+        "after": "def456",
+    }
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = Mock(return_value={"files": mock_files_response})
+    mock_response.raise_for_status = Mock()
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.get = AsyncMock(return_value=mock_response)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        with patch(
+            "app.routes.webhooks.fetch_flathub_json",
+            AsyncMock(side_effect=[base_json, head_json]),
+        ) as mock_fetch:
+            result, data = await is_eol_only_push(payload)
+            assert result is expected_result
+            assert data == expected_data
+            if (
+                mock_files_response
+                and len(mock_files_response) == 1
+                and mock_files_response[0].get("filename") == "flathub.json"
+            ):
+                assert mock_fetch.await_count == 2
+            else:
+                assert mock_fetch.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_is_eol_only_push_skips_zero_sha():
+    from app.routes.webhooks import is_eol_only_push
+
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "before": "0" * 40,
+        "after": "def456",
+    }
+
+    with patch("httpx.AsyncClient") as mock_client_class:
+        result, data = await is_eol_only_push(payload)
+
+    assert result is False
+    assert data is None
+    assert not mock_client_class.called
+
+
+@pytest.mark.asyncio
+async def test_handle_eol_only_pr_posts_status_and_comment():
+    from app.routes.webhooks import handle_eol_only_pr
+
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "pull_request": {
+            "number": 123,
+            "head": {"sha": "abcdef123456"},
+        },
+    }
+    eol_data = {
+        "end_of_life": "This application has been replaced by org.new.App.",
+        "end_of_life_rebase": "org.new.App",
+    }
+
+    with patch("app.routes.webhooks.update_commit_status", AsyncMock()) as mock_status:
+        with patch(
+            "app.routes.webhooks.create_pr_comment", AsyncMock()
+        ) as mock_comment:
+            await handle_eol_only_pr(payload, eol_data)
+
+            assert mock_status.await_args is not None
+            assert mock_status.await_args.kwargs["state"] == "success"
+            assert (
+                mock_status.await_args.kwargs["description"]
+                == "EOL-only change - build skipped"
+            )
+
+            assert mock_comment.await_args is not None
+            comment = mock_comment.await_args.kwargs["comment"]
+            assert "EOL-only change" in comment
+            assert "This application has been replaced by org.new.App." in comment
+            assert "org.new.App" in comment
+
+
+@pytest.mark.asyncio
+async def test_handle_eol_only_push_republish():
+    from app.routes.webhooks import handle_eol_only_push
+
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        payload={},
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+    eol_data = {"end_of_life": "This application is no longer maintained."}
+
+    mock_client = AsyncMock()
+    mock_client.republish = AsyncMock(return_value={"status": "ok"})
+
+    with patch(
+        "app.routes.webhooks.FlatManagerClient", return_value=mock_client
+    ) as mock_client_class:
+        with patch(
+            "app.routes.webhooks.update_commit_status", AsyncMock()
+        ) as mock_status:
+            await handle_eol_only_push(
+                event, "refs/heads/master", "abcdef123456", eol_data
+            )
+
+            mock_client_class.assert_called_once_with(
+                url=settings.flat_manager_url,
+                token=settings.flat_manager_token,
+            )
+            mock_client.republish.assert_awaited_once_with(
+                repo="stable",
+                app_id="test-repo",
+                end_of_life="This application is no longer maintained.",
+                end_of_life_rebase=None,
+            )
+
+            assert mock_status.await_args_list[0].kwargs["state"] == "pending"
+            assert mock_status.await_args_list[1].kwargs["state"] == "success"
+
+
+@pytest.mark.asyncio
 async def test_create_pipeline_pr():
     """Test creating a pipeline from a PR webhook event."""
     event_id = uuid.uuid4()
@@ -628,21 +1012,25 @@ async def test_create_pipeline_push():
     with patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service):
         with patch("app.routes.webhooks.get_db", mock_get_db):
             with patch("app.pipelines.build.get_db", mock_get_db):
-                from app.routes.webhooks import create_pipeline
+                with patch(
+                    "app.routes.webhooks.is_eol_only_push",
+                    AsyncMock(return_value=(False, None)),
+                ):
+                    from app.routes.webhooks import create_pipeline
 
-                result = await create_pipeline(webhook_event)
+                    result = await create_pipeline(webhook_event)
 
-                assert result == pipeline_id
+                    assert result == pipeline_id
 
-                # Verify the parameters passed to create_pipeline
-                args, kwargs = mock_pipeline_service.create_pipeline.call_args
-                assert "params" in kwargs
-                assert kwargs["params"].get("ref") == "refs/heads/master"
-                assert kwargs["params"].get("push") == "true"
+                    # Verify the parameters passed to create_pipeline
+                    args, kwargs = mock_pipeline_service.create_pipeline.call_args
+                    assert "params" in kwargs
+                    assert kwargs["params"].get("ref") == "refs/heads/master"
+                    assert kwargs["params"].get("push") == "true"
 
-                assert mock_pipeline_service.create_pipeline.called
-                assert mock_pipeline_service.start_pipeline.called
-                assert isinstance(result, uuid.UUID)
+                    assert mock_pipeline_service.create_pipeline.called
+                    assert mock_pipeline_service.start_pipeline.called
+                    assert isinstance(result, uuid.UUID)
 
 
 @pytest.mark.asyncio
@@ -726,19 +1114,25 @@ async def test_receive_webhook_creates_pipeline(client, mock_db_session):
             "app.routes.webhooks.create_pipeline",
             AsyncMock(return_value=pipeline_id),
         ):
-            with patch("app.routes.webhooks.settings.github_webhook_secret", ""):
-                response = client.post(
-                    "/api/webhooks/github", json=SAMPLE_GITHUB_PAYLOAD, headers=headers
-                )
+            with patch(
+                "app.routes.webhooks.is_eol_only_pr",
+                AsyncMock(return_value=(False, None)),
+            ):
+                with patch("app.routes.webhooks.settings.github_webhook_secret", ""):
+                    response = client.post(
+                        "/api/webhooks/github",
+                        json=SAMPLE_GITHUB_PAYLOAD,
+                        headers=headers,
+                    )
 
-                assert response.status_code == 202
-                response_data = response.json()
-                assert response_data["message"] == "Webhook received"
-                assert response_data["event_id"] == delivery_id
-                assert response_data["pipeline_id"] == str(pipeline_id)
+                    assert response.status_code == 202
+                    response_data = response.json()
+                    assert response_data["message"] == "Webhook received"
+                    assert response_data["event_id"] == delivery_id
+                    assert response_data["pipeline_id"] == str(pipeline_id)
 
-                assert mock_db_session.add.called
-                assert mock_db_session.commit.called
+                    assert mock_db_session.add.called
+                    assert mock_db_session.commit.called
 
 
 @pytest.mark.asyncio

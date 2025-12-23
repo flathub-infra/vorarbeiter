@@ -11,6 +11,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types
+from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
     add_issue_comment,
     close_github_issue,
@@ -331,6 +332,249 @@ def should_store_event(payload: dict) -> bool:
     return False
 
 
+async def fetch_flathub_json(
+    repo: str,
+    ref: str,
+    github_token: str | None = None,
+) -> dict[str, Any] | None:
+    url = f"https://api.github.com/repos/{repo}/contents/flathub.json?ref={ref}"
+    headers = {"Accept": "application/vnd.github.raw+json"}
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code == 404:
+                return {}
+            r.raise_for_status()
+            return r.json()
+    except (httpx.HTTPError, ValueError) as err:
+        logger.error("Error fetching flathub.json from GitHub", error=str(err))
+        return None
+
+
+def get_eol_only_changes(
+    base_json: dict[str, Any],
+    head_json: dict[str, Any],
+) -> dict[str, str] | None:
+    eol_keys = {"end-of-life", "end-of-life-rebase"}
+
+    def coerce(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        return str(value)
+
+    all_keys = set(base_json.keys()) | set(head_json.keys())
+    changed_keys = {k for k in all_keys if base_json.get(k) != head_json.get(k)}
+
+    if not changed_keys or not changed_keys.issubset(eol_keys):
+        return None
+
+    eol_data: dict[str, str] = {}
+    if "end-of-life" in changed_keys:
+        eol_data["end_of_life"] = coerce(head_json.get("end-of-life", ""))
+    if "end-of-life-rebase" in changed_keys:
+        eol_data["end_of_life_rebase"] = coerce(head_json.get("end-of-life-rebase", ""))
+
+    return eol_data
+
+
+async def is_eol_only_pr(
+    payload: dict[str, Any], github_token: str | None = None
+) -> tuple[bool, dict[str, str] | None]:
+    repo = payload.get("repository", {}).get("full_name")
+    pr = payload.get("pull_request", {})
+    number = pr.get("number")
+    base_ref = pr.get("base", {}).get("sha")
+    head_ref = pr.get("head", {}).get("sha")
+
+    if not (repo and number and base_ref and head_ref):
+        return False, None
+
+    url = f"https://api.github.com/repos/{repo}/pulls/{number}/files"
+    headers = {}
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, headers=headers)
+            r.raise_for_status()
+            files = r.json()
+    except (httpx.HTTPError, ValueError) as err:
+        logger.error("Error fetching PR file details from GitHub", error=str(err))
+        return False, None
+
+    if not files or len(files) != 1:
+        return False, None
+
+    file_info = files[0]
+    if file_info.get("filename") != "flathub.json":
+        return False, None
+
+    base_json = await fetch_flathub_json(repo, base_ref, github_token)
+    head_json = await fetch_flathub_json(repo, head_ref, github_token)
+    if base_json is None or head_json is None:
+        return False, None
+
+    eol_data = get_eol_only_changes(base_json, head_json)
+    return (eol_data is not None, eol_data)
+
+
+async def is_eol_only_push(
+    payload: dict[str, Any], github_token: str | None = None
+) -> tuple[bool, dict[str, str] | None]:
+    repo = payload.get("repository", {}).get("full_name")
+    before = payload.get("before")
+    after = payload.get("after")
+
+    if not (repo and before and after):
+        return False, None
+
+    zero_sha = "0" * 40
+    if before == zero_sha or after == zero_sha:
+        return False, None
+
+    url = f"https://api.github.com/repos/{repo}/compare/{before}...{after}"
+    headers = {}
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, headers=headers)
+            r.raise_for_status()
+            comparison = r.json()
+    except (httpx.HTTPError, ValueError) as err:
+        logger.error("Error fetching compare details from GitHub", error=str(err))
+        return False, None
+
+    files = comparison.get("files", [])
+    if not files or len(files) != 1:
+        return False, None
+
+    file_info = files[0]
+    if file_info.get("filename") != "flathub.json":
+        return False, None
+
+    base_json = await fetch_flathub_json(repo, before, github_token)
+    head_json = await fetch_flathub_json(repo, after, github_token)
+    if base_json is None or head_json is None:
+        return False, None
+
+    eol_data = get_eol_only_changes(base_json, head_json)
+    return (eol_data is not None, eol_data)
+
+
+async def handle_eol_only_pr(
+    payload: dict[str, Any], eol_data: dict[str, str] | None
+) -> None:
+    repo = payload.get("repository", {}).get("full_name")
+    pr = payload.get("pull_request", {})
+    pr_number = pr.get("number")
+    sha = pr.get("head", {}).get("sha")
+
+    await update_commit_status(
+        sha=sha,
+        state="success",
+        git_repo=repo,
+        description="EOL-only change - build skipped",
+    )
+
+    if not (repo and pr_number):
+        return
+
+    def format_value(value: str | None) -> str:
+        if value is None:
+            return "not set"
+        if value == "":
+            return "<empty>"
+        return value
+
+    end_of_life = eol_data.get("end_of_life") if eol_data else None
+    end_of_life_rebase = eol_data.get("end_of_life_rebase") if eol_data else None
+
+    comment = (
+        "EOL-only change detected in `flathub.json`; build skipped.\n\n"
+        "Detected values:\n"
+        f"- end-of-life: `{format_value(end_of_life)}`\n"
+        f"- end-of-life-rebase: `{format_value(end_of_life_rebase)}`\n\n"
+        "Flat-manager will republish after this PR is merged."
+    )
+    await create_pr_comment(git_repo=repo, pr_number=pr_number, comment=comment)
+
+
+async def handle_eol_only_push(
+    event: WebhookEvent,
+    ref: str | None,
+    sha: str | None,
+    eol_data: dict[str, str] | None,
+) -> None:
+    if not ref or not sha:
+        return
+
+    if ref == "refs/heads/master":
+        flat_manager_repo = "stable"
+    elif ref == "refs/heads/beta":
+        flat_manager_repo = "beta"
+    elif ref.startswith("refs/heads/branch/"):
+        flat_manager_repo = "stable"
+    else:
+        logger.info(
+            "Skipping EOL-only republish for non-production ref",
+            repo=event.repository,
+            ref=ref,
+        )
+        return
+
+    await update_commit_status(
+        sha=sha,
+        state="pending",
+        git_repo=event.repository,
+        description="EOL-only change - republish queued",
+    )
+
+    app_id = event.repository.split("/", 1)[1]
+    end_of_life = eol_data.get("end_of_life") if eol_data else None
+    end_of_life_rebase = eol_data.get("end_of_life_rebase") if eol_data else None
+
+    flat_manager = FlatManagerClient(
+        url=settings.flat_manager_url, token=settings.flat_manager_token
+    )
+    try:
+        await flat_manager.republish(
+            repo=flat_manager_repo,
+            app_id=app_id,
+            end_of_life=end_of_life,
+            end_of_life_rebase=end_of_life_rebase,
+        )
+    except Exception as err:
+        logger.error(
+            "Failed to republish EOL-only change",
+            repo=event.repository,
+            ref=ref,
+            sha=sha,
+            error=str(err),
+        )
+        await update_commit_status(
+            sha=sha,
+            state="failure",
+            git_repo=event.repository,
+            description="EOL-only republish failed",
+        )
+        return
+
+    await update_commit_status(
+        sha=sha,
+        state="success",
+        git_repo=event.repository,
+        description="EOL-only republish complete",
+    )
+
+
 async def is_submodule_only_pr(
     payload: dict[str, Any], github_token: str | None = None
 ) -> bool:
@@ -454,6 +698,13 @@ async def receive_github_webhook(
         ):
             return {"message": "Webhook received but ignored due to PR changes filter."}
 
+        is_eol_only, eol_data = await is_eol_only_pr(
+            payload, settings.github_status_token
+        )
+        if is_eol_only:
+            await handle_eol_only_pr(payload, eol_data)
+            return {"message": "EOL-only PR - build skipped"}
+
     event = WebhookEvent(
         id=delivery_id,
         source=WebhookSource.GITHUB,
@@ -531,6 +782,13 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 "push": "true",
             }
         )
+
+        is_eol_only, eol_data = await is_eol_only_push(
+            payload, settings.github_status_token
+        )
+        if is_eol_only:
+            await handle_eol_only_push(event, ref, sha, eol_data)
+            return None
 
     elif "comment" in payload:
         comment_body = payload.get("comment", {}).get("body", "").lower()
