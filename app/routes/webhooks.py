@@ -389,6 +389,21 @@ def get_eol_only_changes(
     return eol_data
 
 
+async def check_eol_only_change(
+    repo: str,
+    base_ref: str,
+    head_ref: str,
+    github_token: str | None = None,
+) -> tuple[bool, dict[str, str] | None]:
+    base_json = await fetch_flathub_json(repo, base_ref, github_token)
+    head_json = await fetch_flathub_json(repo, head_ref, github_token)
+    if base_json is None or head_json is None:
+        return False, None
+
+    eol_data = get_eol_only_changes(base_json, head_json)
+    return (eol_data is not None, eol_data)
+
+
 async def is_eol_only_pr(
     payload: dict[str, Any], github_token: str | None = None
 ) -> tuple[bool, dict[str, str] | None]:
@@ -422,13 +437,7 @@ async def is_eol_only_pr(
     if file_info.get("filename") != "flathub.json":
         return False, None
 
-    base_json = await fetch_flathub_json(repo, base_ref, github_token)
-    head_json = await fetch_flathub_json(repo, head_ref, github_token)
-    if base_json is None or head_json is None:
-        return False, None
-
-    eol_data = get_eol_only_changes(base_json, head_json)
-    return (eol_data is not None, eol_data)
+    return await check_eol_only_change(repo, base_ref, head_ref, github_token)
 
 
 async def is_eol_only_push(
@@ -467,13 +476,7 @@ async def is_eol_only_push(
     if file_info.get("filename") != "flathub.json":
         return False, None
 
-    base_json = await fetch_flathub_json(repo, before, github_token)
-    head_json = await fetch_flathub_json(repo, after, github_token)
-    if base_json is None or head_json is None:
-        return False, None
-
-    eol_data = get_eol_only_changes(base_json, head_json)
-    return (eol_data is not None, eol_data)
+    return await check_eol_only_change(repo, before, after, github_token)
 
 
 async def handle_eol_only_pr(
