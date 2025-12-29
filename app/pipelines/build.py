@@ -634,10 +634,6 @@ class BuildPipeline:
             updates["pipeline_status"] = status_value
             return pipeline, updates
 
-    async def get_pipeline(self, pipeline_id: uuid.UUID) -> Pipeline | None:
-        async with get_db() as db:
-            return await db.get(Pipeline, pipeline_id)
-
     async def verify_callback_token(
         self, pipeline_id: uuid.UUID, token: str
     ) -> Pipeline:

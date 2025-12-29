@@ -55,8 +55,6 @@ AsyncReaderSessionLocal = async_sessionmaker(
     autoflush=False,
 )
 
-AsyncSessionLocal = AsyncWriterSessionLocal
-
 
 @asynccontextmanager
 async def get_db(*, use_replica: bool = False) -> AsyncGenerator[AsyncSession]:

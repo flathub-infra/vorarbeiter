@@ -166,7 +166,7 @@ async def pipeline_metadata_callback(
             )
 
     try:
-        updated_pipeline, updates = await build_pipeline.handle_metadata_callback(
+        _, updates = await build_pipeline.handle_metadata_callback(
             pipeline_id=pipeline_id,
             callback_data=data,
         )
@@ -212,7 +212,7 @@ async def pipeline_log_url_callback(
             )
 
     try:
-        updated_pipeline, updates = await build_pipeline.handle_log_url_callback(
+        _, updates = await build_pipeline.handle_log_url_callback(
             pipeline_id=pipeline_id,
             callback_data=data,
         )
@@ -264,7 +264,7 @@ async def pipeline_status_callback(
             )
 
     try:
-        updated_pipeline, updates = await build_pipeline.handle_status_callback(
+        _, updates = await build_pipeline.handle_status_callback(
             pipeline_id=pipeline_id,
             callback_data=data,
         )
@@ -316,7 +316,7 @@ async def pipeline_reprocheck_callback(
             )
 
     try:
-        updated_pipeline, updates = await build_pipeline.handle_reprocheck_callback(
+        _, updates = await build_pipeline.handle_reprocheck_callback(
             pipeline_id=pipeline_id,
             callback_data=data,
         )
