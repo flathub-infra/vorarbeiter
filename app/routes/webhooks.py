@@ -723,12 +723,12 @@ async def receive_github_webhook(
         ):
             return {"message": "Webhook received but ignored due to PR changes filter."}
 
+    is_eol_only = False
+    eol_data = None
+    if is_pr_event:
         is_eol_only, eol_data = await is_eol_only_pr(
             payload, settings.github_status_token
         )
-        if is_eol_only:
-            await handle_eol_only_pr(payload, eol_data)
-            return {"message": "EOL-only PR - build skipped"}
 
     event = WebhookEvent(
         id=delivery_id,
@@ -744,6 +744,13 @@ async def receive_github_webhook(
             async with get_db() as db:
                 db.add(event)
                 await db.commit()
+
+            if is_eol_only:
+                await handle_eol_only_pr(payload, eol_data)
+                return {
+                    "message": "EOL-only PR - build skipped",
+                    "event_id": str(event.id),
+                }
 
             pipeline_id = await create_pipeline(event)
 
