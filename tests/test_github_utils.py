@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+import app.utils.github as github_module
 from app.utils.github import (
     add_issue_comment,
     close_github_issue,
@@ -14,9 +15,11 @@ from app.utils.github import (
 
 @pytest.fixture
 def mock_settings():
+    github_module._github_client = None
     with patch("app.utils.github.settings") as mock:
         mock.github_status_token = "test-token"
         yield mock
+    github_module._github_client = None
 
 
 @pytest.mark.asyncio
