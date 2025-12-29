@@ -6,9 +6,8 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.models import Pipeline, PipelineStatus
-from app.utils.flat_manager import FlatManagerClient
+from app.utils.flat_manager import get_flat_manager_client
 
 logger = structlog.get_logger(__name__)
 
@@ -22,10 +21,7 @@ class PublishResult:
 
 class PublishingService:
     def __init__(self) -> None:
-        self.flat_manager = FlatManagerClient(
-            url=settings.flat_manager_url,
-            token=settings.flat_manager_token,
-        )
+        self.flat_manager = get_flat_manager_client()
 
     async def publish_pipelines(self, db: AsyncSession) -> PublishResult:
         logger.info("Starting pipeline publishing process")

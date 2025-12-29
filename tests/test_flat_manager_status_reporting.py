@@ -163,22 +163,22 @@ async def test_build_pipeline_sets_initial_commit_status():
     mock_pipeline.end_of_life_rebase = None
     mock_pipeline.flat_manager_repo = "stable"
 
-    build_pipeline = BuildPipeline()
+    mock_fm_instance = AsyncMock()
+    mock_fm_instance.commit = AsyncMock(return_value=None)
+    mock_fm_instance.get_build_info = AsyncMock(
+        return_value={"build": {"commit_job_id": 12345}}
+    )
 
-    with patch("app.pipelines.build.get_db") as mock_get_db:
-        mock_db = AsyncMock()
-        mock_db.__aenter__.return_value = mock_db
-        mock_db.get.return_value = mock_pipeline
-        mock_get_db.return_value = mock_db
+    with patch(
+        "app.pipelines.build.get_flat_manager_client", return_value=mock_fm_instance
+    ):
+        build_pipeline = BuildPipeline()
 
-        # Mock FlatManagerClient for commit flow
-        with patch("app.pipelines.build.FlatManagerClient") as mock_fm_class:
-            mock_fm_instance = AsyncMock()
-            mock_fm_instance.commit = AsyncMock(return_value=None)
-            mock_fm_instance.get_build_info = AsyncMock(
-                return_value={"build": {"commit_job_id": 12345}}
-            )
-            mock_fm_class.return_value = mock_fm_instance
+        with patch("app.pipelines.build.get_db") as mock_get_db:
+            mock_db = AsyncMock()
+            mock_db.__aenter__.return_value = mock_db
+            mock_db.get.return_value = mock_pipeline
+            mock_get_db.return_value = mock_db
 
             with patch("app.pipelines.build.GitHubNotifier") as mock_notifier_class:
                 mock_notifier = AsyncMock()

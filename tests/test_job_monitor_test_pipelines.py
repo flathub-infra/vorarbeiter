@@ -40,18 +40,19 @@ async def test_check_jobs_skips_publish_for_test_pipelines(
         session.add_all([test_pipeline, stable_pipeline])
         await session.commit()
 
-    with patch("app.services.job_monitor.FlatManagerClient") as mock_fm_class:
-        mock_fm_instance = AsyncMock()
-        mock_fm_class.return_value = mock_fm_instance
+    mock_fm_instance = AsyncMock()
+    mock_fm_instance.get_job = AsyncMock(
+        return_value={
+            "status": 2,  # ENDED
+            "kind": 1,  # PUBLISH
+            "results": '{"update-repo-job": 99999}',
+        }
+    )
 
-        mock_fm_instance.get_job = AsyncMock(
-            return_value={
-                "status": 2,  # ENDED
-                "kind": 1,  # PUBLISH
-                "results": '{"update-repo-job": 99999}',
-            }
-        )
-
+    with patch(
+        "app.services.job_monitor.get_flat_manager_client",
+        return_value=mock_fm_instance,
+    ):
         response = client.post(
             "/api/pipelines/check-jobs",
             headers=auth_headers,
@@ -99,16 +100,16 @@ async def test_fetch_missing_ids_skips_publish_for_test_pipelines(
         session.add(test_pipeline)
         await session.commit()
 
-    with patch("app.services.job_monitor.FlatManagerClient") as mock_fm_class:
-        mock_fm_instance = AsyncMock()
-        mock_fm_class.return_value = mock_fm_instance
+    mock_fm_instance = AsyncMock()
+    mock_fm_instance.get_build_info.return_value = {
+        "build": {"commit_job_id": 789, "publish_job_id": 101112}
+    }
+    mock_fm_instance.get_job.return_value = {"status": 1}  # STARTED
 
-        mock_fm_instance.get_build_info.return_value = {
-            "build": {"commit_job_id": 789, "publish_job_id": 101112}
-        }
-
-        mock_fm_instance.get_job.return_value = {"status": 1}  # STARTED
-
+    with patch(
+        "app.services.job_monitor.get_flat_manager_client",
+        return_value=mock_fm_instance,
+    ):
         response = client.post(
             "/api/pipelines/check-jobs",
             headers=auth_headers,
@@ -150,12 +151,13 @@ async def test_publishing_status_skipped_for_test_pipelines(
         session.add(test_pipeline)
         await session.commit()
 
-    with patch("app.services.job_monitor.FlatManagerClient") as mock_fm_class:
-        mock_fm_instance = AsyncMock()
-        mock_fm_class.return_value = mock_fm_instance
+    mock_fm_instance = AsyncMock()
+    mock_fm_instance.get_job = AsyncMock()
 
-        mock_fm_instance.get_job = AsyncMock()
-
+    with patch(
+        "app.services.job_monitor.get_flat_manager_client",
+        return_value=mock_fm_instance,
+    ):
         response = client.post(
             "/api/pipelines/check-jobs",
             headers=auth_headers,

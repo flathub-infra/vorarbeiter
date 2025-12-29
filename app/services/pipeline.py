@@ -5,11 +5,10 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.schemas.pipelines import PipelineResponse, PipelineSummary
 from app.services.job_monitor import JobMonitor
-from app.utils.flat_manager import FlatManagerClient
+from app.utils.flat_manager import get_flat_manager_client
 
 logger = structlog.get_logger(__name__)
 
@@ -18,10 +17,7 @@ class PipelineService:
     """Service for managing pipeline operations and business logic."""
 
     def __init__(self):
-        self.flat_manager_client = FlatManagerClient(
-            url=settings.flat_manager_url,
-            token=settings.flat_manager_token,
-        )
+        self.flat_manager_client = get_flat_manager_client()
         self.job_monitor = JobMonitor()
 
     async def get_pipeline_with_job_updates(

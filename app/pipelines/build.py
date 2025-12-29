@@ -16,7 +16,7 @@ from app.models import Pipeline, PipelineStatus
 from app.services import github_actions_service
 from app.services.github_actions import GitHubActionsService
 from app.services.github_notifier import GitHubNotifier
-from app.utils.flat_manager import FlatManagerClient
+from app.utils.flat_manager import FlatManagerClient, get_flat_manager_client
 
 logger = structlog.get_logger(__name__)
 
@@ -79,9 +79,7 @@ async def _validate_and_prepare_callback(
 class BuildPipeline:
     def __init__(self):
         self.provider = github_actions_service
-        self.flat_manager = FlatManagerClient(
-            url=settings.flat_manager_url, token=settings.flat_manager_token
-        )
+        self.flat_manager = get_flat_manager_client()
 
     @staticmethod
     async def fetch_and_store_job_id(
@@ -432,10 +430,7 @@ class BuildPipeline:
             ):
                 flat_manager = None
                 if pipeline.params.get("pr_number"):
-                    flat_manager = FlatManagerClient(
-                        url=settings.flat_manager_url,
-                        token=settings.flat_manager_token,
-                    )
+                    flat_manager = get_flat_manager_client()
                 github_notifier = GitHubNotifier(flat_manager_client=flat_manager)
                 await github_notifier.handle_build_completion(
                     pipeline, status_value, flat_manager_client=flat_manager
@@ -443,10 +438,7 @@ class BuildPipeline:
                 if pipeline.build_id:
                     try:
                         if not flat_manager:
-                            flat_manager = FlatManagerClient(
-                                url=settings.flat_manager_url,
-                                token=settings.flat_manager_token,
-                            )
+                            flat_manager = get_flat_manager_client()
                         await flat_manager.commit(
                             pipeline.build_id,
                             end_of_life=pipeline.end_of_life,
