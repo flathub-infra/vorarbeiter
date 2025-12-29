@@ -30,6 +30,61 @@ GQL_EXCEPTIONS = (
 logger = structlog.get_logger(__name__)
 
 
+class GitHubAPIClient:
+    """Reusable async HTTP client for GitHub REST API."""
+
+    DEFAULT_TIMEOUT = 10.0
+
+    def __init__(self, token: str):
+        self.headers = {
+            "Accept": "application/vnd.github.v3+json",
+            "Authorization": f"token {token}",
+        }
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        context: dict | None = None,
+        **kwargs,
+    ) -> httpx.Response | None:
+        """Execute request with standard error handling."""
+        context = context or {}
+        kwargs.setdefault("timeout", self.DEFAULT_TIMEOUT)
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await getattr(client, method)(
+                    url, headers=self.headers, **kwargs
+                )
+                response.raise_for_status()
+                return response
+        except httpx.RequestError as e:
+            logger.error("Request error", url=url, error=str(e), **context)
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "HTTP error",
+                url=url,
+                status_code=e.response.status_code,
+                response_text=e.response.text,
+                **context,
+            )
+        except Exception as e:
+            logger.error("Unexpected error", url=url, error=str(e), **context)
+        return None
+
+
+_github_client: GitHubAPIClient | None = None
+
+
+def get_github_client() -> GitHubAPIClient:
+    """Get or create the GitHub API client."""
+    global _github_client
+    if _github_client is None:
+        _github_client = GitHubAPIClient(settings.github_status_token)
+    return _github_client
+
+
 async def update_commit_status(
     sha: str,
     state: str,
@@ -168,47 +223,18 @@ async def create_pr_comment(git_repo: str, pr_number: int, comment: str) -> None
         return
 
     url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/comments"
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {settings.github_status_token}",
-    }
-    payload = {"body": comment}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            logger.info(
-                "Successfully created PR comment",
-                git_repo=git_repo,
-                pr_number=pr_number,
-            )
-    except httpx.RequestError as e:
-        logger.error(
-            "Request error creating PR comment",
+    client = get_github_client()
+    response = await client.request(
+        "post",
+        url,
+        json={"body": comment},
+        context={"git_repo": git_repo, "pr_number": pr_number},
+    )
+    if response:
+        logger.info(
+            "Successfully created PR comment",
             git_repo=git_repo,
             pr_number=pr_number,
-            error=str(e),
-        )
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "HTTP error creating PR comment",
-            git_repo=git_repo,
-            pr_number=pr_number,
-            status_code=e.response.status_code,
-            response_text=e.response.text,
-        )
-    except Exception as e:
-        logger.error(
-            "Unexpected error creating PR comment",
-            git_repo=git_repo,
-            pr_number=pr_number,
-            error=str(e),
         )
 
 
@@ -218,48 +244,21 @@ async def create_github_issue(git_repo: str, title: str, body: str) -> str | Non
         return None
 
     url = f"https://api.github.com/repos/{git_repo}/issues"
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {settings.github_status_token}",
-    }
-    payload = {"title": title, "body": body}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            issue_data = response.json()
-            issue_url = issue_data.get("html_url", "unknown URL")
-            logger.info(
-                "Successfully created GitHub issue",
-                git_repo=git_repo,
-                issue_url=issue_url,
-            )
-            return issue_url
-    except httpx.RequestError as e:
-        logger.error(
-            "Request error creating GitHub issue",
+    client = get_github_client()
+    response = await client.request(
+        "post",
+        url,
+        json={"title": title, "body": body},
+        context={"git_repo": git_repo},
+    )
+    if response:
+        issue_url = response.json().get("html_url", "unknown URL")
+        logger.info(
+            "Successfully created GitHub issue",
             git_repo=git_repo,
-            error=str(e),
+            issue_url=issue_url,
         )
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "HTTP error creating GitHub issue",
-            git_repo=git_repo,
-            status_code=e.response.status_code,
-            response_text=e.response.text,
-        )
-    except Exception as e:
-        logger.error(
-            "Unexpected error creating GitHub issue",
-            git_repo=git_repo,
-            error=str(e),
-        )
+        return issue_url
     return None
 
 
@@ -273,49 +272,20 @@ async def close_github_issue(git_repo: str, issue_number: int) -> bool:
         return False
 
     url = f"https://api.github.com/repos/{git_repo}/issues/{issue_number}"
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {settings.github_status_token}",
-    }
-    payload = {"state": "closed"}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            logger.info(
-                "Successfully closed GitHub issue",
-                git_repo=git_repo,
-                issue_number=issue_number,
-            )
-            return True
-    except httpx.RequestError as e:
-        logger.error(
-            "Request error closing GitHub issue",
+    client = get_github_client()
+    response = await client.request(
+        "patch",
+        url,
+        json={"state": "closed"},
+        context={"git_repo": git_repo, "issue_number": issue_number},
+    )
+    if response:
+        logger.info(
+            "Successfully closed GitHub issue",
             git_repo=git_repo,
             issue_number=issue_number,
-            error=str(e),
         )
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "HTTP error closing GitHub issue",
-            git_repo=git_repo,
-            issue_number=issue_number,
-            status_code=e.response.status_code,
-            response_text=e.response.text,
-        )
-    except Exception as e:
-        logger.error(
-            "Unexpected error closing GitHub issue",
-            git_repo=git_repo,
-            issue_number=issue_number,
-            error=str(e),
-        )
+        return True
     return False
 
 
@@ -330,66 +300,31 @@ async def add_issue_comment(
         return False
 
     url = f"https://api.github.com/repos/{git_repo}/issues/{issue_number}/comments"
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {settings.github_status_token}",
-    }
-    payload = {"body": comment}
+    client = get_github_client()
+    context = {"git_repo": git_repo, "issue_number": issue_number}
 
-    try:
-        async with httpx.AsyncClient() as client:
-            if check_duplicates:
-                comments_response = await client.get(
-                    url,
-                    headers=headers,
-                    timeout=10.0,
-                )
-                comments_response.raise_for_status()
-                existing_comments = comments_response.json()
-                for existing_comment in existing_comments:
-                    if comment in existing_comment.get("body", ""):
-                        logger.info(
-                            "Comment with same body already exists on GitHub issue. Skipping.",
-                            git_repo=git_repo,
-                            issue_number=issue_number,
-                        )
-                        return True
+    if check_duplicates:
+        get_response = await client.request("get", url, context=context)
+        if get_response:
+            for existing in get_response.json():
+                if comment in existing.get("body", ""):
+                    logger.info(
+                        "Comment with same body already exists on GitHub issue. Skipping.",
+                        git_repo=git_repo,
+                        issue_number=issue_number,
+                    )
+                    return True
 
-            response = await client.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            logger.info(
-                "Successfully added comment to GitHub issue",
-                git_repo=git_repo,
-                issue_number=issue_number,
-            )
-            return True
-    except httpx.RequestError as e:
-        logger.error(
-            "Request error adding comment to GitHub issue",
+    response = await client.request(
+        "post", url, json={"body": comment}, context=context
+    )
+    if response:
+        logger.info(
+            "Successfully added comment to GitHub issue",
             git_repo=git_repo,
             issue_number=issue_number,
-            error=str(e),
         )
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "HTTP error adding comment to GitHub issue",
-            git_repo=git_repo,
-            issue_number=issue_number,
-            status_code=e.response.status_code,
-            response_text=e.response.text,
-        )
-    except Exception as e:
-        logger.error(
-            "Unexpected error adding comment to GitHub issue",
-            git_repo=git_repo,
-            issue_number=issue_number,
-            error=str(e),
-        )
+        return True
     return False
 
 
@@ -487,98 +422,35 @@ async def is_issue_edited(git_repo: str, issue_number: int) -> bool | None:
 async def get_workflow_run_title(run_id: int) -> str | None:
     repo = "flathub-infra/vorarbeiter"
     url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {settings.github_status_token}",
-    }
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                url,
-                headers=headers,
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            run_data = response.json()
-            title = run_data.get("display_title", "") or run_data.get("name", "")
-
-            logger.info(
-                "Successfully fetched workflow run title",
-                run_id=run_id,
-                title=title,
-            )
-            return title
-    except httpx.RequestError as e:
-        logger.error(
-            "Request error fetching workflow run title",
+    client = get_github_client()
+    response = await client.request("get", url, context={"run_id": run_id})
+    if response:
+        run_data = response.json()
+        title = run_data.get("display_title", "") or run_data.get("name", "")
+        logger.info(
+            "Successfully fetched workflow run title",
             run_id=run_id,
-            error=str(e),
+            title=title,
         )
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "HTTP error fetching workflow run title",
-            run_id=run_id,
-            status_code=e.response.status_code,
-            response_text=e.response.text,
-        )
-    except Exception as e:
-        logger.error(
-            "Unexpected error fetching workflow run title",
-            run_id=run_id,
-            error=str(e),
-        )
+        return title
     return None
 
 
 async def get_build_job_arches(
     run_id: int, owner: str = "flathub-infra", repo: str = "vorarbeiter"
 ) -> list[str]:
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {settings.github_status_token}",
-    }
-
-    try:
-        async with httpx.AsyncClient() as client:
-            jobs_url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
-            response = await client.get(
-                jobs_url,
-                headers=headers,
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            jobs = response.json().get("jobs", [])
-            return [
-                job["name"].removeprefix("build-").strip()
-                for job in jobs
-                if job.get("name", "").startswith("build-")
-            ]
-    except httpx.RequestError as e:
-        logger.error(
-            "Request error fetching jobs",
-            owner=owner,
-            repo=repo,
-            run_id=run_id,
-            error=str(e),
-        )
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "HTTP error fetching jobs",
-            owner=owner,
-            repo=repo,
-            run_id=run_id,
-            status_code=e.response.status_code,
-            response_text=e.response.text,
-        )
-    except Exception as e:
-        logger.error(
-            "Unexpected error fetching build architectures",
-            owner=owner,
-            repo=repo,
-            run_id=run_id,
-            error=str(e),
-        )
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+    client = get_github_client()
+    response = await client.request(
+        "get", url, context={"owner": owner, "repo": repo, "run_id": run_id}
+    )
+    if response:
+        jobs = response.json().get("jobs", [])
+        return [
+            job["name"].removeprefix("build-").strip()
+            for job in jobs
+            if job.get("name", "").startswith("build-")
+        ]
     return []
 
 
