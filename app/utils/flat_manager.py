@@ -234,3 +234,18 @@ class FlatManagerClient:
             )
             response.raise_for_status()
             return response.json()
+
+
+_client: FlatManagerClient | None = None
+
+
+def get_flat_manager_client() -> FlatManagerClient:
+    global _client
+    if _client is None:
+        from app.config import settings
+
+        _client = FlatManagerClient(
+            url=settings.flat_manager_url,
+            token=settings.flat_manager_token,
+        )
+    return _client

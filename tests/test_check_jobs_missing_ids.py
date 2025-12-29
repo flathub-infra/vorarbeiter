@@ -39,18 +39,17 @@ async def test_check_jobs_endpoint_fetches_missing_ids(
         session.add_all([pipeline1, pipeline2])
         await session.commit()
 
-    with patch("app.services.job_monitor.FlatManagerClient") as mock_fm_class:
-        mock_fm_instance = AsyncMock()
-        mock_fm_class.return_value = mock_fm_instance
+    mock_fm_instance = AsyncMock()
+    mock_fm_instance.get_build_info.side_effect = [
+        {"build": {"commit_job_id": 789, "publish_job_id": 101112}},
+        {"build": {"commit_job_id": 456, "publish_job_id": 131415}},
+    ]
+    mock_fm_instance.get_job.return_value = {"status": 1}  # STARTED
 
-        # Mock get_build_info to return job IDs
-        mock_fm_instance.get_build_info.side_effect = [
-            {"build": {"commit_job_id": 789, "publish_job_id": 101112}},
-            {"build": {"commit_job_id": 456, "publish_job_id": 131415}},
-        ]
-
-        mock_fm_instance.get_job.return_value = {"status": 1}  # STARTED
-
+    with patch(
+        "app.services.job_monitor.get_flat_manager_client",
+        return_value=mock_fm_instance,
+    ):
         response = client.post(
             "/api/pipelines/check-jobs",
             headers=auth_headers,
@@ -97,14 +96,15 @@ async def test_check_jobs_endpoint_handles_partial_missing_ids(
         session.add(pipeline)
         await session.commit()
 
-    with patch("app.services.job_monitor.FlatManagerClient") as mock_fm_class:
-        mock_fm_instance = AsyncMock()
-        mock_fm_class.return_value = mock_fm_instance
+    mock_fm_instance = AsyncMock()
+    mock_fm_instance.get_build_info.return_value = {
+        "build": {"commit_job_id": 888, "publish_job_id": 999}
+    }
 
-        mock_fm_instance.get_build_info.return_value = {
-            "build": {"commit_job_id": 888, "publish_job_id": 999}
-        }
-
+    with patch(
+        "app.services.job_monitor.get_flat_manager_client",
+        return_value=mock_fm_instance,
+    ):
         response = client.post(
             "/api/pipelines/check-jobs",
             headers=auth_headers,
@@ -143,12 +143,13 @@ async def test_check_jobs_endpoint_handles_fetch_error(
         session.add(pipeline)
         await session.commit()
 
-    with patch("app.services.job_monitor.FlatManagerClient") as mock_fm_class:
-        mock_fm_instance = AsyncMock()
-        mock_fm_class.return_value = mock_fm_instance
+    mock_fm_instance = AsyncMock()
+    mock_fm_instance.get_build_info.side_effect = Exception("API Error")
 
-        mock_fm_instance.get_build_info.side_effect = Exception("API Error")
-
+    with patch(
+        "app.services.job_monitor.get_flat_manager_client",
+        return_value=mock_fm_instance,
+    ):
         response = client.post(
             "/api/pipelines/check-jobs",
             headers=auth_headers,

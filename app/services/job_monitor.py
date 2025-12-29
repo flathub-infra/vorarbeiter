@@ -3,19 +3,20 @@ from datetime import datetime
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.models import Pipeline, PipelineStatus
-from app.utils.flat_manager import FlatManagerClient, JobKind, JobResponse, JobStatus
+from app.utils.flat_manager import (
+    JobKind,
+    JobResponse,
+    JobStatus,
+    get_flat_manager_client,
+)
 
 logger = structlog.get_logger(__name__)
 
 
 class JobMonitor:
     def __init__(self):
-        self.flat_manager = FlatManagerClient(
-            url=settings.flat_manager_url,
-            token=settings.flat_manager_token,
-        )
+        self.flat_manager = get_flat_manager_client()
 
     async def check_and_update_pipeline_jobs(
         self, db: AsyncSession, pipeline: Pipeline
@@ -353,14 +354,10 @@ class JobMonitor:
     async def _notify_committed(self, pipeline: Pipeline) -> None:
         try:
             from app.services.github_notifier import GitHubNotifier
-            from app.utils.flat_manager import FlatManagerClient
 
             flat_manager = None
             if pipeline.params.get("pr_number"):
-                flat_manager = FlatManagerClient(
-                    url=settings.flat_manager_url,
-                    token=settings.flat_manager_token,
-                )
+                flat_manager = get_flat_manager_client()
 
             github_notifier = GitHubNotifier(flat_manager_client=flat_manager)
             await github_notifier.handle_build_committed(
