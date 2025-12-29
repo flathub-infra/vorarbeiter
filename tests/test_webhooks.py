@@ -4,6 +4,7 @@ import json
 import uuid
 from unittest.mock import Mock, AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1748,3 +1749,179 @@ async def test_create_pipeline_bot_build_open_pr_continues():
                                 assert result == pipeline_id
                                 mock_pipeline_service.create_pipeline.assert_called_once()
                                 mock_pipeline_service.start_pipeline.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_eol_only_push_beta_ref():
+    """Test that beta ref uses 'beta' flat-manager repo."""
+    from app.routes.webhooks import handle_eol_only_push
+
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        payload={},
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+    eol_data = {"end_of_life": "This application is no longer maintained."}
+
+    mock_client = AsyncMock()
+    mock_client.republish = AsyncMock(return_value={"status": "ok"})
+
+    with patch("app.routes.webhooks.FlatManagerClient", return_value=mock_client):
+        with patch("app.routes.webhooks.update_commit_status", AsyncMock()):
+            await handle_eol_only_push(
+                event, "refs/heads/beta", "abcdef123456", eol_data
+            )
+
+            mock_client.republish.assert_awaited_once_with(
+                repo="beta",
+                app_id="test-repo",
+                end_of_life="This application is no longer maintained.",
+                end_of_life_rebase=None,
+            )
+
+
+@pytest.mark.asyncio
+async def test_handle_eol_only_push_branch_ref():
+    """Test that branch/* refs use 'stable' flat-manager repo."""
+    from app.routes.webhooks import handle_eol_only_push
+
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        payload={},
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+    eol_data = {"end_of_life": "This application is no longer maintained."}
+
+    mock_client = AsyncMock()
+    mock_client.republish = AsyncMock(return_value={"status": "ok"})
+
+    with patch("app.routes.webhooks.FlatManagerClient", return_value=mock_client):
+        with patch("app.routes.webhooks.update_commit_status", AsyncMock()):
+            await handle_eol_only_push(
+                event, "refs/heads/branch/foo", "abcdef123456", eol_data
+            )
+
+            mock_client.republish.assert_awaited_once_with(
+                repo="stable",
+                app_id="test-repo",
+                end_of_life="This application is no longer maintained.",
+                end_of_life_rebase=None,
+            )
+
+
+@pytest.mark.asyncio
+async def test_handle_eol_only_push_non_production_ref():
+    """Test that non-production refs are skipped."""
+    from app.routes.webhooks import handle_eol_only_push
+
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        payload={},
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+    eol_data = {"end_of_life": "This application is no longer maintained."}
+
+    mock_client = AsyncMock()
+    mock_client.republish = AsyncMock(return_value={"status": "ok"})
+
+    with patch("app.routes.webhooks.FlatManagerClient", return_value=mock_client):
+        with patch(
+            "app.routes.webhooks.update_commit_status", AsyncMock()
+        ) as mock_status:
+            await handle_eol_only_push(
+                event, "refs/heads/develop", "abcdef123456", eol_data
+            )
+
+            mock_client.republish.assert_not_awaited()
+            mock_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fetch_flathub_json_http_error():
+    """Test that HTTP errors return None."""
+    from app.routes.webhooks import fetch_flathub_json
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.get = AsyncMock(side_effect=httpx.HTTPError("Server error"))
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        result = await fetch_flathub_json("test-owner/test-repo", "abc123")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_republish_http_error():
+    """Test that republish HTTP error sets failure status."""
+    from app.routes.webhooks import handle_eol_only_push
+
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        payload={},
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+    eol_data = {"end_of_life": "This application is no longer maintained."}
+
+    mock_client = AsyncMock()
+    mock_client.republish = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "Internal Server Error",
+            request=MagicMock(),
+            response=MagicMock(status_code=500),
+        )
+    )
+
+    with patch("app.routes.webhooks.FlatManagerClient", return_value=mock_client):
+        with patch(
+            "app.routes.webhooks.update_commit_status", AsyncMock()
+        ) as mock_status:
+            await handle_eol_only_push(
+                event, "refs/heads/master", "abcdef123456", eol_data
+            )
+
+            assert mock_status.await_args_list[0].kwargs["state"] == "pending"
+            assert mock_status.await_args_list[1].kwargs["state"] == "failure"
+            assert "failed" in mock_status.await_args_list[1].kwargs["description"]
+
+
+def test_get_eol_only_changes_boolean_value():
+    """Test that boolean EOL values return None."""
+    from app.routes.webhooks import get_eol_only_changes
+
+    base_json = {"end-of-life": "Old message"}
+    head_json = {"end-of-life": True}
+
+    result = get_eol_only_changes(base_json, head_json)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_flathub_json_non_object():
+    """Test that non-object JSON returns empty dict."""
+    from app.routes.webhooks import fetch_flathub_json
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = Mock(return_value=["array", "instead", "of", "object"])
+    mock_response.raise_for_status = Mock()
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.get = AsyncMock(return_value=mock_response)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        result = await fetch_flathub_json("test-owner/test-repo", "abc123")
+
+    assert result == {}
