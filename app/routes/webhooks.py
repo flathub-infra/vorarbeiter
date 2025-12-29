@@ -477,6 +477,16 @@ async def handle_eol_only_pr(
     pr_number = pr.get("number")
     sha = pr.get("head", {}).get("sha")
 
+    if not (repo and sha):
+        return
+
+    logger.info(
+        "Handling EOL-only PR",
+        repo=repo,
+        pr_number=pr_number,
+        eol_data=eol_data,
+    )
+
     await update_commit_status(
         sha=sha,
         state="success",
@@ -484,7 +494,7 @@ async def handle_eol_only_pr(
         description="EOL-only change - build skipped",
     )
 
-    if not (repo and pr_number):
+    if not pr_number:
         return
 
     def format_value(value: str | None) -> str:
