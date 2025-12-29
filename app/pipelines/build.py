@@ -8,6 +8,7 @@ import sentry_sdk
 import structlog
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
@@ -49,6 +50,30 @@ app_build_types = {
     "org.catacombing.kumo": "large",
     "io.qt.qtwebengine.BaseApp": "large",
 }
+
+
+async def _validate_and_prepare_callback(
+    validator_class: type,
+    callback_data: dict[str, Any],
+    pipeline_id: uuid.UUID,
+    db: AsyncSession,
+) -> tuple[Pipeline, CallbackData, str]:
+    validator = validator_class()
+    parsed_data = validator.validate_and_parse(callback_data)
+    assert parsed_data.status is not None
+
+    pipeline = await db.get(Pipeline, pipeline_id)
+    if not pipeline:
+        raise ValueError(f"Pipeline {pipeline_id} not found")
+
+    if pipeline.status in [PipelineStatus.SUCCEEDED, PipelineStatus.PUBLISHED]:
+        raise ValueError("Pipeline status already finalized")
+
+    status_value = parsed_data.status.lower()
+    if status_value not in ["success", "failure", "cancelled"]:
+        raise ValueError("status must be 'success', 'failure', or 'cancelled'")
+
+    return pipeline, parsed_data, status_value
 
 
 class BuildPipeline:
@@ -330,24 +355,10 @@ class BuildPipeline:
     ) -> tuple[Pipeline, dict[str, Any]]:
         from app.services.callback import StatusCallbackValidator
 
-        validator = StatusCallbackValidator()
-        parsed_data = validator.validate_and_parse(callback_data)
-        assert parsed_data.status is not None
-
         async with get_db() as db:
-            pipeline = await db.get(Pipeline, pipeline_id)
-            if not pipeline:
-                raise ValueError(f"Pipeline {pipeline_id} not found")
-
-            if pipeline.status in [
-                PipelineStatus.SUCCEEDED,
-                PipelineStatus.PUBLISHED,
-            ]:
-                raise ValueError("Pipeline status already finalized")
-
-            status_value = parsed_data.status.lower()
-            if status_value not in ["success", "failure", "cancelled"]:
-                raise ValueError("status must be 'success', 'failure', or 'cancelled'")
+            pipeline, parsed_data, status_value = await _validate_and_prepare_callback(
+                StatusCallbackValidator, callback_data, pipeline_id, db
+            )
 
             updates: dict[str, Any] = {}
 
@@ -486,24 +497,10 @@ class BuildPipeline:
     ) -> tuple[Pipeline, dict[str, Any]]:
         from app.services.callback import ReprocheckCallbackValidator
 
-        validator = ReprocheckCallbackValidator()
-        parsed_data = validator.validate_and_parse(callback_data)
-        assert parsed_data.status is not None
-
         async with get_db() as db:
-            pipeline = await db.get(Pipeline, pipeline_id)
-            if not pipeline:
-                raise ValueError(f"Pipeline {pipeline_id} not found")
-
-            if pipeline.status in [
-                PipelineStatus.SUCCEEDED,
-                PipelineStatus.PUBLISHED,
-            ]:
-                raise ValueError("Pipeline status already finalized")
-
-            status_value = parsed_data.status.lower()
-            if status_value not in ["success", "failure", "cancelled"]:
-                raise ValueError("status must be 'success', 'failure', or 'cancelled'")
+            pipeline, parsed_data, status_value = await _validate_and_prepare_callback(
+                ReprocheckCallbackValidator, callback_data, pipeline_id, db
+            )
 
             reprocheck_result = {}
             if parsed_data.status_code is not None:
