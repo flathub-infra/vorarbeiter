@@ -173,19 +173,44 @@ class FlatManagerClient:
         end_of_life: str | None = None,
         end_of_life_rebase: str | None = None,
     ) -> dict[str, Any]:
+        logger.debug("Republishing app in flat-manager", repo=repo, app_id=app_id)
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.url}/api/v1/repo/{repo}/republish",
-                headers=self.headers,
-                json={
-                    "app": app_id,
-                    "endoflife": end_of_life,
-                    "endoflife_rebase": end_of_life_rebase,
-                },
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            return response.json()
+            try:
+                response = await client.post(
+                    f"{self.url}/api/v1/repo/{repo}/republish",
+                    headers=self.headers,
+                    json={
+                        "app": app_id,
+                        "endoflife": end_of_life,
+                        "endoflife_rebase": end_of_life_rebase,
+                    },
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+                logger.info(
+                    "Successfully republished app in flat-manager",
+                    repo=repo,
+                    app_id=app_id,
+                )
+                return data
+            except httpx.HTTPStatusError as e:
+                logger.error(
+                    "Failed to republish in flat-manager",
+                    repo=repo,
+                    app_id=app_id,
+                    status_code=e.response.status_code,
+                    response_text=e.response.text,
+                )
+                raise
+            except Exception as e:
+                logger.error(
+                    "Unexpected error republishing in flat-manager",
+                    repo=repo,
+                    app_id=app_id,
+                    error=str(e),
+                )
+                raise
 
     async def get_build_info(self, build_id: int) -> dict[str, Any]:
         build_url = self.get_build_url(build_id)
