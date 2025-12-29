@@ -364,12 +364,15 @@ def get_eol_only_changes(
 ) -> dict[str, str] | None:
     eol_keys = {"end-of-life", "end-of-life-rebase"}
 
-    def coerce(value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        return str(value)
+    for key in eol_keys:
+        value = head_json.get(key)
+        if value is not None and not isinstance(value, str):
+            logger.warning(
+                "Invalid EOL value type, expected string",
+                key=key,
+                value_type=type(value).__name__,
+            )
+            return None
 
     all_keys = set(base_json.keys()) | set(head_json.keys())
     changed_keys = {k for k in all_keys if base_json.get(k) != head_json.get(k)}
@@ -379,9 +382,9 @@ def get_eol_only_changes(
 
     eol_data: dict[str, str] = {}
     if "end-of-life" in changed_keys:
-        eol_data["end_of_life"] = coerce(head_json.get("end-of-life", ""))
+        eol_data["end_of_life"] = head_json.get("end-of-life") or ""
     if "end-of-life-rebase" in changed_keys:
-        eol_data["end_of_life_rebase"] = coerce(head_json.get("end-of-life-rebase", ""))
+        eol_data["end_of_life_rebase"] = head_json.get("end-of-life-rebase") or ""
 
     return eol_data
 
