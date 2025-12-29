@@ -547,12 +547,20 @@ async def handle_eol_only_push(
         )
         return
 
-    await update_commit_status(
-        sha=sha,
-        state="pending",
-        git_repo=event.repository,
-        description="EOL-only change - republish queued",
-    )
+    try:
+        await update_commit_status(
+            sha=sha,
+            state="pending",
+            git_repo=event.repository,
+            description="EOL-only change - republish queued",
+        )
+    except Exception as err:
+        logger.warning(
+            "Failed to set pending commit status",
+            repo=event.repository,
+            sha=sha,
+            error=str(err),
+        )
 
     app_id = event.repository.split("/", 1)[1]
     end_of_life = eol_data.get("end_of_life") if eol_data else None
