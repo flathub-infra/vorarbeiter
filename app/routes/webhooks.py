@@ -348,7 +348,11 @@ async def fetch_flathub_json(
             if r.status_code == 404:
                 return {}
             r.raise_for_status()
-            return r.json()
+            data = r.json()
+            if not isinstance(data, dict):
+                logger.warning("flathub.json is not a JSON object", repo=repo, ref=ref)
+                return {}
+            return data
     except (httpx.HTTPError, ValueError) as err:
         logger.error("Error fetching flathub.json from GitHub", error=str(err))
         return None
