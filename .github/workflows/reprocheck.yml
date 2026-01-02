@@ -33,7 +33,22 @@ on:
         default: 'true'
 
 jobs:
+  update-log-url:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report log URL to the backend
+        run: |
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
+
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
+            -d '{"log_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+            "${{ inputs.callback_url }}/log_url"
+
   reprocheck:
+    needs: update-log-url
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/runner=medium-amd64/tag=arch-amd64/retry=false/spot=false
     timeout-minutes: 240
     steps:
