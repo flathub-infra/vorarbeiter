@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.schemas.pipelines import PipelineResponse, PipelineSummary
+from app.schemas.pipelines import (
+    PipelineResponse,
+    PipelineSummary,
+    PipelineType,
+    ReprocheckStatus,
+)
 from app.services.job_monitor import JobMonitor
 from app.utils.flat_manager import FlatManagerClient
 
@@ -47,7 +52,9 @@ class PipelineService:
         self,
         db: AsyncSession,
         app_id: str | None = None,
-        status_filter: PipelineStatus | None = None,
+        pipeline_type: PipelineType = PipelineType.BUILD,
+        status: PipelineStatus | None = None,
+        reprocheck_status: ReprocheckStatus | None = None,
         triggered_by: PipelineTrigger | None = None,
         target_repo: str | None = None,
         limit: int = 10,
@@ -58,7 +65,9 @@ class PipelineService:
         Args:
             db: Database session
             app_id: Filter by app ID prefix
-            status_filter: Filter by pipeline status
+            pipeline_type: Filter by pipeline type (build or reprocheck)
+            status: Filter by pipeline status
+            reprocheck_status: Filter by reprocheck result status
             triggered_by: Filter by trigger type
             target_repo: Filter by target repository
             limit: Maximum number of results (1-100)
@@ -66,6 +75,8 @@ class PipelineService:
         Returns:
             List of pipelines matching the filters
         """
+        from sqlalchemy import String, cast, or_
+
         limit = min(max(1, limit), 100)
 
         stmt = select(Pipeline).order_by(Pipeline.created_at.desc())
@@ -73,8 +84,32 @@ class PipelineService:
         if app_id:
             stmt = stmt.where(Pipeline.app_id.startswith(app_id))
 
-        if status_filter:
-            stmt = stmt.where(Pipeline.status == status_filter)
+        if pipeline_type == PipelineType.BUILD:
+            stmt = stmt.where(
+                or_(
+                    cast(Pipeline.params["workflow_id"], String) != "reprocheck.yml",
+                    Pipeline.params["workflow_id"].is_(None),
+                )
+            )
+        elif pipeline_type == PipelineType.REPROCHECK:
+            stmt = stmt.where(
+                cast(Pipeline.params["workflow_id"], String) == "reprocheck.yml"
+            )
+
+        if status:
+            stmt = stmt.where(Pipeline.status == status)
+
+        if reprocheck_status:
+            status_code_map = {
+                ReprocheckStatus.REPRODUCIBLE: "0",
+                ReprocheckStatus.FAILURE: "1",
+                ReprocheckStatus.UNREPRODUCIBLE: "42",
+            }
+            status_code = status_code_map[reprocheck_status]
+            stmt = stmt.where(
+                cast(Pipeline.params["reprocheck_result"]["status_code"], String)
+                == status_code
+            )
 
         if triggered_by:
             stmt = stmt.where(Pipeline.triggered_by == triggered_by)
@@ -90,9 +125,18 @@ class PipelineService:
 
     def pipeline_to_summary(self, pipeline: Pipeline) -> PipelineSummary:
         """Convert a Pipeline model to PipelineSummary schema."""
+        params = pipeline.params or {}
+        workflow_id = params.get("workflow_id", "build.yml")
+        pipeline_type = (
+            PipelineType.REPROCHECK
+            if workflow_id == "reprocheck.yml"
+            else PipelineType.BUILD
+        )
+
         return PipelineSummary(
             id=str(pipeline.id),
             app_id=pipeline.app_id,
+            type=pipeline_type,
             status=pipeline.status,
             repo=str(pipeline.flat_manager_repo)
             if pipeline.flat_manager_repo is not None
@@ -132,14 +176,14 @@ class PipelineService:
             published_at=pipeline.published_at,
         )
 
-    def validate_status_filter(self, status_filter: Any) -> PipelineStatus:
-        """Validate and convert status filter value."""
+    def validate_status(self, status: Any) -> PipelineStatus:
+        """Validate and convert status value."""
         try:
-            return PipelineStatus(status_filter)
+            return PipelineStatus(status)
         except ValueError:
             valid_values = [s.value for s in PipelineStatus]
             raise ValueError(
-                f"Invalid status value: {status_filter}. Valid values are: {valid_values}"
+                f"Invalid status value: {status}. Valid values are: {valid_values}"
             )
 
     def validate_trigger_filter(self, triggered_by: Any) -> PipelineTrigger:

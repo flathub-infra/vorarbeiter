@@ -2,7 +2,8 @@ import uuid
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import status as http_status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import settings
@@ -13,7 +14,9 @@ from app.schemas.pipelines import (
     PipelineResponse,
     PipelineSummary,
     PipelineTriggerRequest,
+    PipelineType,
     PublishSummary,
+    ReprocheckStatus,
 )
 from app.services import pipeline_service, publishing_service
 from app.services.job_monitor import JobMonitor
@@ -29,7 +32,7 @@ async def verify_token(
 ):
     if credentials.credentials != settings.admin_token:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API token",
         )
     return credentials.credentials
@@ -38,7 +41,7 @@ async def verify_token(
 @pipelines_router.post(
     "/pipelines",
     response_model=dict[str, Any],
-    status_code=status.HTTP_201_CREATED,
+    status_code=http_status.HTTP_201_CREATED,
 )
 async def trigger_pipeline(
     data: PipelineTriggerRequest,
@@ -53,7 +56,7 @@ async def trigger_pipeline(
     except ValueError as e:
         if "not found" in str(e).lower():
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=str(e),
             )
         raise
@@ -62,30 +65,39 @@ async def trigger_pipeline(
 @pipelines_router.get(
     "/pipelines",
     response_model=list[PipelineSummary],
-    status_code=status.HTTP_200_OK,
+    status_code=http_status.HTTP_200_OK,
 )
 async def list_pipelines(
     app_id: str | None = None,
-    status_filter: PipelineStatus | None = None,
+    type: PipelineType = PipelineType.BUILD,
+    status: PipelineStatus | str | None = None,
     triggered_by: PipelineTrigger | None = None,
     target_repo: str | None = None,
     limit: int | None = 10,
 ):
-    if status_filter:
-        try:
-            status_filter = pipeline_service.validate_status_filter(status_filter)
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            )
+    reprocheck_status: ReprocheckStatus | None = None
+    pipeline_status: PipelineStatus | None = None
+
+    if status:
+        if type == PipelineType.REPROCHECK and status in [
+            s.value for s in ReprocheckStatus
+        ]:
+            reprocheck_status = ReprocheckStatus(status)
+        else:
+            try:
+                pipeline_status = pipeline_service.validate_status(status)
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
+                    detail=str(e),
+                )
 
     if triggered_by:
         try:
             triggered_by = pipeline_service.validate_trigger_filter(triggered_by)
         except ValueError as e:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=str(e),
             )
 
@@ -93,7 +105,9 @@ async def list_pipelines(
         pipelines = await pipeline_service.list_pipelines_with_filters(
             db=db,
             app_id=app_id,
-            status_filter=status_filter,
+            pipeline_type=type,
+            status=pipeline_status,
+            reprocheck_status=reprocheck_status,
             triggered_by=triggered_by,
             target_repo=target_repo,
             limit=limit or 10,
@@ -107,7 +121,7 @@ async def list_pipelines(
 @pipelines_router.get(
     "/pipelines/{pipeline_id}",
     response_model=PipelineResponse,
-    status_code=status.HTTP_200_OK,
+    status_code=http_status.HTTP_200_OK,
 )
 async def get_pipeline(
     pipeline_id: uuid.UUID,
@@ -116,7 +130,7 @@ async def get_pipeline(
         pipeline = await pipeline_service.get_pipeline_with_job_updates(db, pipeline_id)
         if not pipeline:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"Pipeline {pipeline_id} not found",
             )
 
@@ -125,7 +139,7 @@ async def get_pipeline(
 
 @pipelines_router.post(
     "/pipelines/{pipeline_id}/callback/metadata",
-    status_code=status.HTTP_200_OK,
+    status_code=http_status.HTTP_200_OK,
 )
 async def pipeline_metadata_callback(
     pipeline_id: uuid.UUID,
@@ -142,12 +156,12 @@ async def pipeline_metadata_callback(
     except ValueError as e:
         if "not found" in str(e):
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=str(e),
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
+                status_code=http_status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid callback token",
             )
 
@@ -158,7 +172,7 @@ async def pipeline_metadata_callback(
         )
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
 
@@ -171,7 +185,7 @@ async def pipeline_metadata_callback(
 
 @pipelines_router.post(
     "/pipelines/{pipeline_id}/callback/log_url",
-    status_code=status.HTTP_200_OK,
+    status_code=http_status.HTTP_200_OK,
 )
 async def pipeline_log_url_callback(
     pipeline_id: uuid.UUID,
@@ -188,12 +202,12 @@ async def pipeline_log_url_callback(
     except ValueError as e:
         if "not found" in str(e):
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=str(e),
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
+                status_code=http_status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid callback token",
             )
 
@@ -205,12 +219,12 @@ async def pipeline_log_url_callback(
     except ValueError as e:
         if "Log URL already set" in str(e):
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
+                status_code=http_status.HTTP_409_CONFLICT,
                 detail="Log URL already set",
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=str(e),
             )
 
@@ -223,7 +237,7 @@ async def pipeline_log_url_callback(
 
 @pipelines_router.post(
     "/pipelines/{pipeline_id}/callback/status",
-    status_code=status.HTTP_200_OK,
+    status_code=http_status.HTTP_200_OK,
 )
 async def pipeline_status_callback(
     pipeline_id: uuid.UUID,
@@ -240,12 +254,12 @@ async def pipeline_status_callback(
     except ValueError as e:
         if "not found" in str(e):
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=str(e),
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
+                status_code=http_status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid callback token",
             )
 
@@ -257,12 +271,12 @@ async def pipeline_status_callback(
     except ValueError as e:
         if "Pipeline status already finalized" in str(e):
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
+                status_code=http_status.HTTP_409_CONFLICT,
                 detail="Pipeline status already finalized",
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=str(e),
             )
 
@@ -275,7 +289,7 @@ async def pipeline_status_callback(
 
 @pipelines_router.post(
     "/pipelines/{pipeline_id}/callback/reprocheck",
-    status_code=status.HTTP_200_OK,
+    status_code=http_status.HTTP_200_OK,
 )
 async def pipeline_reprocheck_callback(
     pipeline_id: uuid.UUID,
@@ -292,12 +306,12 @@ async def pipeline_reprocheck_callback(
     except ValueError as e:
         if "not found" in str(e):
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=str(e),
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
+                status_code=http_status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid callback token",
             )
 
@@ -309,12 +323,12 @@ async def pipeline_reprocheck_callback(
     except ValueError as e:
         if "Pipeline status already finalized" in str(e):
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
+                status_code=http_status.HTTP_409_CONFLICT,
                 detail="Pipeline status already finalized",
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=str(e),
             )
 
@@ -336,16 +350,16 @@ async def redirect_to_log_url(
         pipeline = await db.get(Pipeline, pipeline_id)
         if not pipeline:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"Pipeline {pipeline_id} not found",
             )
 
         if not pipeline.log_url:
-            response.status_code = status.HTTP_202_ACCEPTED
+            response.status_code = http_status.HTTP_202_ACCEPTED
             response.headers["Retry-After"] = "10"
             return {"detail": "Log URL not available yet"}
 
-        response.status_code = status.HTTP_307_TEMPORARY_REDIRECT
+        response.status_code = http_status.HTTP_307_TEMPORARY_REDIRECT
         response.headers["Location"] = pipeline.log_url
         return {}
 
@@ -353,7 +367,7 @@ async def redirect_to_log_url(
 @pipelines_router.post(
     "/pipelines/publish",
     response_model=PublishSummary,
-    status_code=status.HTTP_200_OK,
+    status_code=http_status.HTTP_200_OK,
 )
 async def publish_pipelines(
     token: str = Depends(verify_token),
@@ -369,7 +383,7 @@ async def publish_pipelines(
 
 @pipelines_router.post(
     "/pipelines/check-jobs",
-    status_code=status.HTTP_200_OK,
+    status_code=http_status.HTTP_200_OK,
 )
 async def check_pipeline_jobs(
     token: str = Depends(verify_token),

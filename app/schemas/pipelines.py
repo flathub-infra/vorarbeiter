@@ -1,10 +1,22 @@
 from datetime import datetime
+from enum import Enum
 from typing import Any
 import uuid
 
 from pydantic import BaseModel, field_validator
 
 from app.models import PipelineStatus, PipelineTrigger
+
+
+class PipelineType(str, Enum):
+    BUILD = "build"
+    REPROCHECK = "reprocheck"
+
+
+class ReprocheckStatus(str, Enum):
+    REPRODUCIBLE = "reproducible"
+    FAILURE = "failure"
+    UNREPRODUCIBLE = "unreproducible"
 
 
 class PipelineTriggerRequest(BaseModel):
@@ -15,6 +27,7 @@ class PipelineTriggerRequest(BaseModel):
 class PipelineSummary(BaseModel):
     id: str
     app_id: str
+    type: PipelineType = PipelineType.BUILD
     status: PipelineStatus
     repo: str | None = None
     triggered_by: PipelineTrigger

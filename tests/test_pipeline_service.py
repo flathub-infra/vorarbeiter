@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
+from app.schemas.pipelines import PipelineType
 from app.services.pipeline import PipelineService
 
 
@@ -86,7 +87,7 @@ async def test_list_pipelines_with_filters_all_params(pipeline_service):
     result = await pipeline_service.list_pipelines_with_filters(
         mock_db,
         app_id="org.test",
-        status_filter=PipelineStatus.SUCCEEDED,
+        status=PipelineStatus.SUCCEEDED,
         triggered_by=PipelineTrigger.WEBHOOK,
         target_repo="stable",
         limit=50,
@@ -115,6 +116,7 @@ def test_pipeline_to_summary(pipeline_service, mock_pipeline):
 
     assert summary.id == str(mock_pipeline.id)
     assert summary.app_id == mock_pipeline.app_id
+    assert summary.type == PipelineType.BUILD
     assert summary.status == mock_pipeline.status
     assert summary.repo == mock_pipeline.flat_manager_repo
     assert summary.triggered_by == mock_pipeline.triggered_by
@@ -144,17 +146,17 @@ def test_pipeline_to_response(pipeline_service, mock_pipeline):
     assert response.repro_pipeline_id == mock_pipeline.repro_pipeline_id
 
 
-def test_validate_status_filter_valid(pipeline_service):
-    result = pipeline_service.validate_status_filter("succeeded")
+def test_validate_status_valid(pipeline_service):
+    result = pipeline_service.validate_status("succeeded")
     assert result == PipelineStatus.SUCCEEDED
 
-    result = pipeline_service.validate_status_filter("pending")
+    result = pipeline_service.validate_status("pending")
     assert result == PipelineStatus.PENDING
 
 
-def test_validate_status_filter_invalid(pipeline_service):
+def test_validate_status_invalid(pipeline_service):
     with pytest.raises(ValueError) as exc_info:
-        pipeline_service.validate_status_filter("invalid_status")
+        pipeline_service.validate_status("invalid_status")
 
     assert "Invalid status value" in str(exc_info.value)
     assert "invalid_status" in str(exc_info.value)
@@ -235,3 +237,54 @@ async def test_trigger_manual_pipeline_not_found(pipeline_service):
                 await pipeline_service.trigger_manual_pipeline(app_id, params)
 
             assert f"Pipeline {pipeline_id} not found" in str(exc_info.value)
+
+
+def test_pipeline_to_summary_reprocheck_type(pipeline_service):
+    """Test that reprocheck pipelines get correct type."""
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.SUCCEEDED,
+        params={"workflow_id": "reprocheck.yml"},
+        triggered_by=PipelineTrigger.MANUAL,
+        flat_manager_repo=None,
+        created_at=datetime.now(),
+    )
+
+    summary = pipeline_service.pipeline_to_summary(pipeline)
+
+    assert summary.type == PipelineType.REPROCHECK
+
+
+def test_pipeline_to_summary_build_type_explicit(pipeline_service):
+    """Test that build pipelines with explicit workflow_id get correct type."""
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.SUCCEEDED,
+        params={"workflow_id": "build.yml"},
+        triggered_by=PipelineTrigger.MANUAL,
+        flat_manager_repo="stable",
+        created_at=datetime.now(),
+    )
+
+    summary = pipeline_service.pipeline_to_summary(pipeline)
+
+    assert summary.type == PipelineType.BUILD
+
+
+def test_pipeline_to_summary_build_type_no_workflow_id(pipeline_service):
+    """Test that pipelines without workflow_id default to build type."""
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.SUCCEEDED,
+        params={"branch": "main"},
+        triggered_by=PipelineTrigger.MANUAL,
+        flat_manager_repo="stable",
+        created_at=datetime.now(),
+    )
+
+    summary = pipeline_service.pipeline_to_summary(pipeline)
+
+    assert summary.type == PipelineType.BUILD
