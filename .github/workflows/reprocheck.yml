@@ -105,13 +105,6 @@ jobs:
           path: ./reproworkdir/diffoscope_result-*
           if-no-files-found: ignore
 
-      - name: Upload reprocheck JSON output
-        if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: reprocheck-json-${{ github.sha }}-${{ github.run_id }}-${{ github.job }}-${{ github.run_attempt }}
-          path: /tmp/reprocheck-result.json
-
       - name: Report job status
         if: always()
         run: |
