@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Flathub builds{% endblock %}
+
+{% block head %}
+<style>
+    .badge {
+        display: inline-block;
+        padding: 0.25em 0.5em;
+        font-size: 0.875em;
+        font-weight: 600;
+        border-radius: 0.25rem;
+        text-decoration: none;
+    }
+    .badge-pending, .badge-cancelled, .badge-superseded {
+        background-color: #6c757d;
+        color: white;
+    }
+    .badge-running {
+        background-color: #0d6efd;
+        color: white;
+    }
+    .badge-published, .badge-committed-test {
+        background-color: #198754;
+        color: white;
+    }
+    .badge-committing {
+        background-color: #0891b2;
+        color: white;
+    }
+    .badge-committed-stable, .badge-committed-beta {
+        background-color: #7c3aed;
+        color: white;
+    }
+    .badge-publishing-stable, .badge-publishing-beta, .badge-publishing-test {
+        background-color: #0891b2;
+        color: white;
+    }
+    .badge-failed {
+        background-color: #dc3545;
+        color: white;
+    }
+    .filters {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .filters label {
+        margin-bottom: 0;
+    }
+    table {
+        font-size: 0.9rem;
+    }
+    td, th {
+        white-space: nowrap;
+    }
+    td:nth-child(2) {
+        white-space: normal;
+        word-break: break-all;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Flathub builds</h1>
+
+<form hx-get="/api/htmx/builds"
+      hx-target="#builds-tbody"
+      hx-trigger="change delay:300ms, submit"
+      hx-swap="innerHTML">
+    <div class="filters">
+        <label>
+            Status
+            <select name="status">
+                <option value="">All</option>
+                {% for s in statuses %}
+                <option value="{{ s.value }}">{{ 'committing' if s.value == 'succeeded' else s.value }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            App ID
+            <input type="text" name="app_id" autocomplete="on">
+        </label>
+        <label>
+            Repo
+            <select name="target">
+                <option value="">All</option>
+                <option value="stable">stable</option>
+                <option value="beta">beta</option>
+                <option value="test">test</option>
+            </select>
+        </label>
+        <label>
+            From
+            <input type="text" name="date_from" class="flatpickr-datetime" placeholder="YYYY-MM-DDTHH:MM" autocomplete="off">
+        </label>
+        <label>
+            To
+            <input type="text" name="date_to" class="flatpickr-datetime" placeholder="YYYY-MM-DDTHH:MM" autocomplete="off">
+        </label>
+    </div>
+</form>
+<script>
+flatpickr(".flatpickr-datetime", {
+    enableTime: true,
+    dateFormat: "Y-m-d\\TH:i",
+    time_24hr: true,
+    allowInput: true
+});
+document.querySelector('form').addEventListener('change', function() {
+    document.getElementById('builds-tbody').removeAttribute('hx-trigger');
+});
+</script>
+
+<table>
+    <thead>
+        <tr>
+            <th>Status</th>
+            <th>App ID</th>
+            <th>Repo</th>
+            <th>Source</th>
+            <th>Started</th>
+            <th>Duration</th>
+        </tr>
+    </thead>
+    <tbody id="builds-tbody"
+           hx-get="/api/htmx/builds"
+           hx-trigger="every 30s"
+           hx-swap="innerHTML">
+        {% include "partials/builds.html" %}
+    </tbody>
+</table>
+{% endblock %}

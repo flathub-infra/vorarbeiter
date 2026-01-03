@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.logger import setup_logging
 from app.middleware import LoggingMiddleware
-from app.routes import pipelines_router, webhooks_router
+from app.routes import dashboard_router, pipelines_router, webhooks_router
 
 setup_logging()
 logger = structlog.get_logger(__name__)
@@ -44,11 +44,6 @@ app.add_middleware(
 
 app.add_middleware(LoggingMiddleware)
 
-
-@app.get("/", tags=["health"])
-async def read_root():
-    return {"status": "ok"}
-
-
+app.include_router(dashboard_router)
 app.include_router(webhooks_router)
 app.include_router(pipelines_router)
