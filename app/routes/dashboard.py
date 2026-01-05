@@ -66,6 +66,36 @@ templates.env.globals["format_time"] = format_time
 templates.env.globals["format_duration"] = format_duration
 
 
+def group_pipelines(
+    pipelines: list[Pipeline],
+) -> dict[str, list[Pipeline]]:
+    awaiting_publishing: list[Pipeline] = []
+    in_progress: list[Pipeline] = []
+    completed: list[Pipeline] = []
+
+    in_progress_statuses = {
+        PipelineStatus.PENDING,
+        PipelineStatus.RUNNING,
+        PipelineStatus.SUCCEEDED,
+        PipelineStatus.PUBLISHING,
+    }
+    awaiting_statuses = {PipelineStatus.COMMITTED}
+
+    for p in pipelines:
+        if p.status in awaiting_statuses and p.flat_manager_repo in ("stable", "beta"):
+            awaiting_publishing.append(p)
+        elif p.status in in_progress_statuses:
+            in_progress.append(p)
+        else:
+            completed.append(p)
+
+    return {
+        "awaiting_publishing": awaiting_publishing,
+        "in_progress": in_progress,
+        "completed": completed,
+    }
+
+
 async def get_recent_pipelines(
     status: str | None = None,
     app_id: str | None = None,
@@ -148,11 +178,13 @@ async def dashboard(
         date_to=date_to,
     )
 
+    grouped = group_pipelines(pipelines)
+
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
         context={
-            "pipelines": pipelines,
+            "grouped_pipelines": grouped,
             "statuses": [
                 PipelineStatus.RUNNING,
                 PipelineStatus.SUCCEEDED,
@@ -191,11 +223,13 @@ async def builds_table(
         date_to=date_to,
     )
 
+    grouped = group_pipelines(pipelines)
+
     return templates.TemplateResponse(
         request=request,
         name="partials/builds.html",
         context={
-            "pipelines": pipelines,
+            "grouped_pipelines": grouped,
             "flat_manager_url": settings.flat_manager_url,
         },
     )

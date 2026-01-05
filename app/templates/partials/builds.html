@@ -1,4 +1,4 @@
-{% for pipeline in pipelines %}
+{% macro render_pipeline(pipeline) %}
 <tr>
     <td>
         {% set target = pipeline.flat_manager_repo or 'stable' %}
@@ -42,8 +42,37 @@
     </td>
     <td>{{ format_duration(pipeline.started_at, pipeline.finished_at) }}</td>
 </tr>
-{% else %}
+{% endmacro %}
+
+{% if grouped_pipelines.in_progress %}
+<tr class="section-header">
+    <th colspan="6">In progress</th>
+</tr>
+{% for pipeline in grouped_pipelines.in_progress %}
+{{ render_pipeline(pipeline) }}
+{% endfor %}
+{% endif %}
+
+{% if grouped_pipelines.awaiting_publishing %}
+<tr class="section-header">
+    <th colspan="6">Awaiting publishing</th>
+</tr>
+{% for pipeline in grouped_pipelines.awaiting_publishing %}
+{{ render_pipeline(pipeline) }}
+{% endfor %}
+{% endif %}
+
+{% if grouped_pipelines.completed %}
+<tr class="section-header">
+    <th colspan="6">Completed</th>
+</tr>
+{% for pipeline in grouped_pipelines.completed %}
+{{ render_pipeline(pipeline) }}
+{% endfor %}
+{% endif %}
+
+{% if not grouped_pipelines.awaiting_publishing and not grouped_pipelines.in_progress and not grouped_pipelines.completed %}
 <tr>
     <td colspan="6" style="text-align: center;">No builds found</td>
 </tr>
-{% endfor %}
+{% endif %}
