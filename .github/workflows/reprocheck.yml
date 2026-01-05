@@ -72,6 +72,11 @@ jobs:
       - name: Run reprocheck
         continue-on-error: true
         id: reprocheck
+        env:
+          AWS_DEFAULT_REGION: ${{ secrets.REPRO_AWS_DEFAULT_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.REPRO_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.REPRO_AWS_SECRET_ACCESS_KEY }}
+          AWS_S3_BUCKET_NAME: ${{ secrets.REPRO_AWS_S3_BUCKET_NAME }}
         run: |
           docker run --rm \
             --entrypoint="" \
@@ -84,9 +89,13 @@ jobs:
             -e GITHUB_SERVER_URL \
             -e GITHUB_REPOSITORY \
             -e GITHUB_RUN_ID \
+            -e AWS_DEFAULT_REGION \
+            -e AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY \
+            -e AWS_S3_BUCKET_NAME \
             -w /reproworkdir \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            flathub-repro-checker --json --appid "${{ inputs.app_id }}" | tee reprocheck-output.json
+            flathub-repro-checker --json --upload-result --appid "${{ inputs.app_id }}" | tee reprocheck-output.json
 
       - name: Save reprocheck output
         if: always()
@@ -96,14 +105,6 @@ jobs:
           else
             echo '{"status_code": "1", "message": "Reprocheck failed to run", "appid": "${{ inputs.app_id }}", "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.%6N%:z")'"}' > /tmp/reprocheck-result.json
           fi
-
-      - name: Upload diffoscope results
-        if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: diffoscope-results-${{ github.sha }}-${{ github.run_id }}-${{ github.job }}-${{ github.run_attempt }}
-          path: ./reproworkdir/diffoscope_result-*
-          if-no-files-found: ignore
 
       - name: Report job status
         if: always()
