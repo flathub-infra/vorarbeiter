@@ -246,6 +246,14 @@ class PublishingService:
                 result.published.append(str(pipeline.id))
             return
 
+        if published_state == 1:  # PublishedState::Publishing
+            logger.info(
+                "Pipeline is already being published, skipping",
+                pipeline_id=str(pipeline.id),
+                build_id=pipeline.build_id,
+            )
+            return
+
         if repo_state == 3:  # RepoState::Failed
             logger.warning(
                 "Pipeline failed flat-manager validation (repo_state 3)",
