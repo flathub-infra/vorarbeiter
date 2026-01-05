@@ -96,69 +96,69 @@ jobs:
             -e AWS_S3_BUCKET_NAME \
             -w /reproworkdir \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            flathub-repro-checker --upload-result --appid "${{ inputs.app_id }}"
+            flathub-repro-checker --json --upload-result --appid "${{ inputs.app_id }}" | tee reprocheck-output.json
 
-      # - name: Save reprocheck output
-      #   if: always()
-      #   run: |
-      #     if [ -f reprocheck-output.json ]; then
-      #       cp reprocheck-output.json /tmp/reprocheck-result.json
-      #     else
-      #       echo '{"status_code": "1", "message": "Reprocheck failed to run", "appid": "${{ inputs.app_id }}", "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.%6N%:z")'"}' > /tmp/reprocheck-result.json
-      #     fi
+      - name: Save reprocheck output
+        if: always()
+        run: |
+          if [ -f reprocheck-output.json ]; then
+            cp reprocheck-output.json /tmp/reprocheck-result.json
+          else
+            echo '{"status_code": "1", "message": "Reprocheck failed to run", "appid": "${{ inputs.app_id }}", "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.%6N%:z")'"}' > /tmp/reprocheck-result.json
+          fi
 
-      # - name: Report job status
-      #   if: always()
-      #   run: |
-      #     CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
-      #     echo "::add-mask::$CALLBACK_TOKEN"
+      - name: Report job status
+        if: always()
+        run: |
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
 
-      #     if [[ "${{ job.status }}" == "cancelled" ]]; then
-      #       status="cancelled"
-      #       status_code="1"
-      #       timestamp="$(date -u +\"%Y-%m-%dT%H:%M:%S.%6N%:z\")"
-      #       message="Job cancelled"
-      #       result_url=""
-      #     elif [ -f /tmp/reprocheck-result.json ]; then
-      #       reprocheck_data=$(cat /tmp/reprocheck-result.json)
-      #       status_code=$(echo "$reprocheck_data" | jq -r '.status_code // "1"')
-      #       timestamp=$(echo "$reprocheck_data" | jq -r '.timestamp // ""')
-      #       message=$(echo "$reprocheck_data" | jq -r '.message // ""')
-      #       result_url=$(echo "$reprocheck_data" | jq -r '.result_url // ""')
+          if [[ "${{ job.status }}" == "cancelled" ]]; then
+            status="cancelled"
+            status_code="1"
+            timestamp="$(date -u +\"%Y-%m-%dT%H:%M:%S.%6N%:z\")"
+            message="Job cancelled"
+            result_url=""
+          elif [ -f /tmp/reprocheck-result.json ]; then
+            reprocheck_data=$(cat /tmp/reprocheck-result.json)
+            status_code=$(echo "$reprocheck_data" | jq -r '.status_code // "1"')
+            timestamp=$(echo "$reprocheck_data" | jq -r '.timestamp // ""')
+            message=$(echo "$reprocheck_data" | jq -r '.message // ""')
+            result_url=$(echo "$reprocheck_data" | jq -r '.result_url // ""')
 
-      #       if [[ "$status_code" == "0" ]]; then
-      #         status="success"
-      #       else
-      #         status="failure"
-      #       fi
-      #     else
-      #       status="failure"
-      #       status_code="1"
-      #       timestamp="$(date -u +\"%Y-%m-%dT%H:%M:%S.%6N%:z\")"
-      #       message="Reprocheck output not available"
-      #       result_url=""
-      #     fi
+            if [[ "$status_code" == "0" ]]; then
+              status="success"
+            else
+              status="failure"
+            fi
+          else
+            status="failure"
+            status_code="1"
+            timestamp="$(date -u +\"%Y-%m-%dT%H:%M:%S.%6N%:z\")"
+            message="Reprocheck output not available"
+            result_url=""
+          fi
 
-      #     payload=$(jq -n \
-      #       --arg status "$status" \
-      #       --arg build_pipeline_id "${{ inputs.build_pipeline_id }}" \
-      #       --arg status_code "$status_code" \
-      #       --arg timestamp "$timestamp" \
-      #       --arg appid "${{ inputs.app_id }}" \
-      #       --arg result_url "$result_url" \
-      #       --arg message "$message" \
-      #       '{
-      #         status: $status,
-      #         build_pipeline_id: $build_pipeline_id,
-      #         status_code: $status_code,
-      #         timestamp: $timestamp,
-      #         appid: $appid,
-      #         result_url: $result_url,
-      #         message: $message
-      #       }')
+          payload=$(jq -n \
+            --arg status "$status" \
+            --arg build_pipeline_id "${{ inputs.build_pipeline_id }}" \
+            --arg status_code "$status_code" \
+            --arg timestamp "$timestamp" \
+            --arg appid "${{ inputs.app_id }}" \
+            --arg result_url "$result_url" \
+            --arg message "$message" \
+            '{
+              status: $status,
+              build_pipeline_id: $build_pipeline_id,
+              status_code: $status_code,
+              timestamp: $timestamp,
+              appid: $appid,
+              result_url: $result_url,
+              message: $message
+            }')
 
-      #     curl -X POST \
-      #       -H "Content-Type: application/json" \
-      #       -H "Authorization: Bearer $CALLBACK_TOKEN" \
-      #       -d "$payload" \
-      #       "${{ inputs.callback_url }}/reprocheck"
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
+            -d "$payload" \
+            "${{ inputs.callback_url }}/reprocheck"
