@@ -339,6 +339,52 @@ async def pipeline_reprocheck_callback(
     }
 
 
+@pipelines_router.post(
+    "/pipelines/{pipeline_id}/callback/cost",
+    status_code=http_status.HTTP_200_OK,
+)
+async def pipeline_cost_callback(
+    pipeline_id: uuid.UUID,
+    data: dict[str, Any],
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    build_pipeline = BuildPipeline()
+
+    try:
+        await build_pipeline.verify_callback_token(
+            pipeline_id=pipeline_id,
+            token=credentials.credentials,
+        )
+    except ValueError as e:
+        if "not found" in str(e):
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=str(e),
+            )
+        else:
+            raise HTTPException(
+                status_code=http_status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid callback token",
+            )
+
+    try:
+        _, updates = await build_pipeline.handle_cost_callback(
+            pipeline_id=pipeline_id,
+            callback_data=data,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    return {
+        "status": "ok",
+        "pipeline_id": str(pipeline_id),
+        **updates,
+    }
+
+
 @pipelines_router.get(
     "/pipelines/{pipeline_id}/log_url",
 )

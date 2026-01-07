@@ -69,3 +69,19 @@ class ReprocheckCallbackValidator:
             result_url=data.get("result_url"),
             message=data.get("message"),
         )
+
+
+class CostCallbackValidator:
+    def validate_and_parse(self, data: dict[str, Any]) -> "CallbackData":
+        cost = data.get("cost")
+        if cost is None:
+            raise ValueError("cost is required")
+
+        try:
+            cost_value = float(cost)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Invalid cost value: {e}")
+
+        from app.pipelines import CallbackData
+
+        return CallbackData(cost=cost_value)

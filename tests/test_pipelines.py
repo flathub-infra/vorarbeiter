@@ -1169,3 +1169,102 @@ def test_pipeline_reprocheck_callback_missing_status(mock_get_db, sample_pipelin
 
     assert response.status_code == 400
     assert "status is required" in response.json()["detail"]
+
+
+def test_pipeline_cost_callback_success(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"cost": 0.0234}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/cost", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total_cost"] == 0.0234
+    assert sample_pipeline.total_cost == 0.0234
+
+
+def test_pipeline_cost_callback_invalid_token(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"cost": 0.0234}
+        headers = {"Authorization": "Bearer wrong_token"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/cost", json=data, headers=headers
+        )
+
+    assert response.status_code == 401
+    assert "Invalid callback token" in response.json()["detail"]
+
+
+def test_pipeline_cost_callback_accumulates(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.total_cost = 0.01
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"cost": 0.02}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/cost", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total_cost"] == 0.03
+    assert sample_pipeline.total_cost == 0.03
+
+
+def test_pipeline_cost_callback_missing_cost(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data: dict[str, str] = {}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/cost", json=data, headers=headers
+        )
+
+    assert response.status_code == 400
+    assert "cost is required" in response.json()["detail"]

@@ -78,6 +78,7 @@ class Pipeline(Base):
     )
     end_of_life: Mapped[str | None] = mapped_column(String, nullable=True)
     end_of_life_rebase: Mapped[str | None] = mapped_column(String, nullable=True)
+    total_cost: Mapped[float | None] = mapped_column(nullable=True)
 
     def __repr__(self):
         return f"<Pipeline(id={self.id}, status='{self.status.name}', app_id='{self.app_id}')>"

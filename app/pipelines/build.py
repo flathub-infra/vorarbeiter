@@ -33,6 +33,7 @@ class CallbackData(BaseModel):
     timestamp: Optional[str] = None
     result_url: Optional[str] = None
     message: Optional[str] = None
+    cost: Optional[float] = None
 
 
 app_build_types = {
@@ -632,6 +633,29 @@ class BuildPipeline:
                     except Exception:
                         pass
             updates["pipeline_status"] = status_value
+            return pipeline, updates
+
+    async def handle_cost_callback(
+        self,
+        pipeline_id: uuid.UUID,
+        callback_data: dict[str, Any],
+    ) -> tuple[Pipeline, dict[str, Any]]:
+        from app.services.callback import CostCallbackValidator
+
+        validator = CostCallbackValidator()
+        parsed_data = validator.validate_and_parse(callback_data)
+        assert parsed_data.cost is not None
+
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+
+            pipeline.total_cost = (pipeline.total_cost or 0) + parsed_data.cost
+
+            await db.commit()
+
+            updates: dict[str, Any] = {"total_cost": pipeline.total_cost}
             return pipeline, updates
 
     async def verify_callback_token(
