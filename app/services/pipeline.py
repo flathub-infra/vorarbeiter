@@ -166,6 +166,7 @@ class PipelineService:
             publish_job_id=pipeline.publish_job_id,
             update_repo_job_id=pipeline.update_repo_job_id,
             repro_pipeline_id=pipeline.repro_pipeline_id,
+            total_cost=pipeline.total_cost,
             created_at=pipeline.created_at,
             started_at=pipeline.started_at,
             finished_at=pipeline.finished_at,

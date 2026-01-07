@@ -55,6 +55,7 @@ class PipelineResponse(BaseModel):
     publish_job_id: int | None = None
     update_repo_job_id: int | None = None
     repro_pipeline_id: uuid.UUID | None = None
+    total_cost: float | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
