@@ -1,48 +1,4 @@
-{% macro render_pipeline(pipeline) %}
-<tr>
-    <td>
-        {% set target = pipeline.flat_manager_repo or 'stable' %}
-        {% if pipeline.status.value in ['committed', 'publishing'] %}
-        {% set badge_class = 'badge-' ~ pipeline.status.value ~ '-' ~ target %}
-        {% elif pipeline.status.value == 'succeeded' %}
-        {% set badge_class = 'badge-committing' %}
-        {% else %}
-        {% set badge_class = 'badge-' ~ pipeline.status.value %}
-        {% endif %}
-        {% if pipeline.status.value == 'succeeded' and pipeline.commit_job_id %}
-        <a href="{{ flat_manager_url }}/status/{{ pipeline.commit_job_id }}" target="_blank" class="badge {{ badge_class }}">committing</a>
-        {% elif pipeline.status.value == 'committed' and pipeline.commit_job_id %}
-        <a href="{{ flat_manager_url }}/status/{{ pipeline.commit_job_id }}" target="_blank" class="badge {{ badge_class }}">{{ pipeline.status.value }}</a>
-        {% elif pipeline.status.value == 'publishing' and pipeline.update_repo_job_id %}
-        <a href="{{ flat_manager_url }}/status/{{ pipeline.update_repo_job_id }}" target="_blank" class="badge {{ badge_class }}">{{ pipeline.status.value }}</a>
-        {% else %}
-        <span class="badge {{ badge_class }}">{{ pipeline.status.value }}</span>
-        {% endif %}
-    </td>
-    <td>{{ pipeline.app_id }}</td>
-    <td>{{ pipeline.flat_manager_repo or '-' }}</td>
-    <td>
-        {% set git_repo = pipeline.params.get('repo', '') %}
-        {% set pr_number = pipeline.params.get('pr_number', '') %}
-        {% set sha = pipeline.params.get('sha', '') %}
-        {% if pr_number %}
-        <a href="https://github.com/{{ git_repo }}/pull/{{ pr_number }}" target="_blank">PR #{{ pr_number }}</a>
-        {% elif sha %}
-        <a href="https://github.com/{{ git_repo }}/commit/{{ sha }}" target="_blank">{{ sha[:7] }}</a>
-        {% else %}
-        -
-        {% endif %}
-    </td>
-    <td>
-        {% if pipeline.log_url %}
-        <a href="{{ pipeline.log_url }}" target="_blank">{{ format_time(pipeline.started_at) }}</a>
-        {% else %}
-        {{ format_time(pipeline.started_at) }}
-        {% endif %}
-    </td>
-    <td>{{ format_duration(pipeline.started_at, pipeline.finished_at) }}</td>
-</tr>
-{% endmacro %}
+{% from "partials/pipeline_row.html" import render_pipeline %}
 
 {% if grouped_pipelines.in_progress %}
 <tr class="section-header">

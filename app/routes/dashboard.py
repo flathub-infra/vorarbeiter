@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -161,6 +162,53 @@ async def get_recent_pipelines(
         return list(result.scalars().all())
 
 
+class ReprocheckInfo:
+    __slots__ = ("status_code", "result_url")
+
+    def __init__(self, status_code: str | None, result_url: str | None):
+        self.status_code = status_code
+        self.result_url = result_url
+
+
+async def get_app_builds(
+    app_id: str, target_repo: str, limit: int = 5
+) -> tuple[list[Pipeline], dict[uuid.UUID, ReprocheckInfo]]:
+    async with get_db(use_replica=True) as db:
+        query = (
+            select(Pipeline)
+            .where(Pipeline.app_id == app_id)
+            .where(Pipeline.flat_manager_repo == target_repo)
+            .where(
+                or_(
+                    cast(Pipeline.params["workflow_id"], String) != '"reprocheck.yml"',
+                    Pipeline.params["workflow_id"].is_(None),
+                )
+            )
+            .order_by(Pipeline.created_at.desc())
+            .limit(limit)
+        )
+        result = await db.execute(query)
+        pipelines = list(result.scalars().all())
+
+        repro_ids = [p.repro_pipeline_id for p in pipelines if p.repro_pipeline_id]
+        reprocheck_status: dict[uuid.UUID, ReprocheckInfo] = {}
+
+        if repro_ids:
+            repro_query = select(Pipeline).where(Pipeline.id.in_(repro_ids))
+            repro_result = await db.execute(repro_query)
+            for repro_pipeline in repro_result.scalars().all():
+                result_data = repro_pipeline.params.get("reprocheck_result", {})
+                status_code = result_data.get("status_code")
+                result_url = result_data.get("result_url")
+                for p in pipelines:
+                    if p.repro_pipeline_id == repro_pipeline.id:
+                        reprocheck_status[p.id] = ReprocheckInfo(
+                            status_code, result_url
+                        )
+
+        return pipelines, reprocheck_status
+
+
 @dashboard_router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
@@ -230,6 +278,38 @@ async def builds_table(
         name="partials/builds.html",
         context={
             "grouped_pipelines": grouped,
+            "flat_manager_url": settings.flat_manager_url,
+        },
+    )
+
+
+@dashboard_router.get("/status/{app_id}", response_class=HTMLResponse)
+async def app_status(request: Request, app_id: str):
+    stable_builds_all, stable_reprocheck = await get_app_builds(
+        app_id, "stable", limit=10
+    )
+    beta_builds, _ = await get_app_builds(app_id, "beta", limit=5)
+    test_builds, _ = await get_app_builds(app_id, "test", limit=5)
+
+    chart_data = [
+        {
+            "date": p.started_at.strftime("%Y-%m-%d %H:%M"),
+            "duration": round((p.finished_at - p.started_at).total_seconds() / 60, 1),
+        }
+        for p in reversed(stable_builds_all)
+        if p.started_at and p.finished_at
+    ]
+
+    return templates.TemplateResponse(
+        request=request,
+        name="app_status.html",
+        context={
+            "app_id": app_id,
+            "stable_builds": stable_builds_all[:5],
+            "beta_builds": beta_builds,
+            "test_builds": test_builds,
+            "stable_reprocheck": stable_reprocheck,
+            "chart_data": chart_data,
             "flat_manager_url": settings.flat_manager_url,
         },
     )

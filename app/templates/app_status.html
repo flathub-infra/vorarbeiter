@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% from "partials/pipeline_row.html" import render_pipeline %}
+
+{% block title %}Flathub build status of {{ app_id }}{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .badge {
+        display: inline-block;
+        padding: 0.25em 0.5em;
+        font-size: 0.875em;
+        font-weight: 600;
+        border-radius: 0.25rem;
+        text-decoration: none;
+    }
+    .badge-pending, .badge-cancelled, .badge-superseded {
+        background-color: #6c757d;
+        color: white;
+    }
+    .badge-running {
+        background-color: #0d6efd;
+        color: white;
+    }
+    .badge-published, .badge-committed-test {
+        background-color: #198754;
+        color: white;
+    }
+    .badge-committing {
+        background-color: #0891b2;
+        color: white;
+    }
+    .badge-committed-stable, .badge-committed-beta {
+        background-color: #7c3aed;
+        color: white;
+    }
+    .badge-publishing-stable, .badge-publishing-beta, .badge-publishing-test {
+        background-color: #0891b2;
+        color: white;
+    }
+    .badge-failed {
+        background-color: #dc3545;
+        color: white;
+    }
+    .badge-reproducible {
+        background-color: #198754;
+        color: white;
+    }
+    .badge-unreproducible {
+        background-color: #dc3545;
+        color: white;
+    }
+    .badge-unknown {
+        background-color: #6c757d;
+        color: white;
+    }
+    table {
+        font-size: 0.9rem;
+    }
+    td, th {
+        white-space: nowrap;
+    }
+    td:nth-child(2) {
+        white-space: normal;
+        word-break: break-all;
+    }
+    .section-title {
+        margin-top: 2rem;
+        margin-bottom: 0.5rem;
+    }
+    .section-title:first-of-type {
+        margin-top: 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set show_all_builds_link = true %}
+{% include "partials/nav.html" %}
+<h2>Build status of {{ app_id }}</h2>
+
+{% if chart_data %}
+<div style="height: 200px; margin-top: 1.5rem; margin-bottom: 1rem;">
+    <canvas id="build-time-chart"></canvas>
+</div>
+{% endif %}
+
+<h3 class="section-title">Latest stable builds</h3>
+<table>
+    <thead>
+        <tr>
+            <th>Status</th>
+            <th>App ID</th>
+            <th>Repo</th>
+            <th>Source</th>
+            <th>Started</th>
+            <th>Duration</th>
+            <th>Reproducible?</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% if stable_builds %}
+        {% for pipeline in stable_builds %}
+        <tr>
+            <td>
+                {% set target = pipeline.flat_manager_repo or 'stable' %}
+                {% if pipeline.status.value in ['committed', 'publishing'] %}
+                {% set badge_class = 'badge-' ~ pipeline.status.value ~ '-' ~ target %}
+                {% elif pipeline.status.value == 'succeeded' %}
+                {% set badge_class = 'badge-committing' %}
+                {% else %}
+                {% set badge_class = 'badge-' ~ pipeline.status.value %}
+                {% endif %}
+                {% if pipeline.status.value == 'succeeded' and pipeline.commit_job_id %}
+                <a href="{{ flat_manager_url }}/status/{{ pipeline.commit_job_id }}" target="_blank" class="badge {{ badge_class }}">committing</a>
+                {% elif pipeline.status.value == 'committed' and pipeline.commit_job_id %}
+                <a href="{{ flat_manager_url }}/status/{{ pipeline.commit_job_id }}" target="_blank" class="badge {{ badge_class }}">{{ pipeline.status.value }}</a>
+                {% elif pipeline.status.value == 'publishing' and pipeline.update_repo_job_id %}
+                <a href="{{ flat_manager_url }}/status/{{ pipeline.update_repo_job_id }}" target="_blank" class="badge {{ badge_class }}">{{ pipeline.status.value }}</a>
+                {% else %}
+                <span class="badge {{ badge_class }}">{{ pipeline.status.value }}</span>
+                {% endif %}
+            </td>
+            <td>{{ pipeline.app_id }}</td>
+            <td>{{ pipeline.flat_manager_repo or '-' }}</td>
+            <td>
+                {% set git_repo = pipeline.params.get('repo', '') %}
+                {% set pr_number = pipeline.params.get('pr_number', '') %}
+                {% set sha = pipeline.params.get('sha', '') %}
+                {% if pr_number %}
+                <a href="https://github.com/{{ git_repo }}/pull/{{ pr_number }}" target="_blank">PR #{{ pr_number }}</a>
+                {% elif sha %}
+                <a href="https://github.com/{{ git_repo }}/commit/{{ sha }}" target="_blank">{{ sha[:7] }}</a>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                {% if pipeline.log_url %}
+                <a href="{{ pipeline.log_url }}" target="_blank">{{ format_time(pipeline.started_at) }}</a>
+                {% else %}
+                {{ format_time(pipeline.started_at) }}
+                {% endif %}
+            </td>
+            <td>{{ format_duration(pipeline.started_at, pipeline.finished_at) }}</td>
+            <td>
+                {% set repro_info = stable_reprocheck.get(pipeline.id) %}
+                {% if repro_info and repro_info.status_code == "0" %}
+                <a href="{{ repro_info.result_url }}" target="_blank" class="badge badge-reproducible">reproducible</a>
+                {% elif repro_info and repro_info.status_code == "42" %}
+                <a href="{{ repro_info.result_url }}" target="_blank" class="badge badge-unreproducible">unreproducible</a>
+                {% else %}
+                <span class="badge badge-unknown">unknown</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr>
+            <td colspan="7" style="text-align: center;">No stable builds found</td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+<h3 class="section-title">Latest beta builds</h3>
+<table>
+    <thead>
+        <tr>
+            <th>Status</th>
+            <th>App ID</th>
+            <th>Repo</th>
+            <th>Source</th>
+            <th>Started</th>
+            <th>Duration</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% if beta_builds %}
+        {% for pipeline in beta_builds %}
+        {{ render_pipeline(pipeline) }}
+        {% endfor %}
+        {% else %}
+        <tr>
+            <td colspan="6" style="text-align: center;">No beta builds found</td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+<h3 class="section-title">Latest test builds</h3>
+<table>
+    <thead>
+        <tr>
+            <th>Status</th>
+            <th>App ID</th>
+            <th>Repo</th>
+            <th>Source</th>
+            <th>Started</th>
+            <th>Duration</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% if test_builds %}
+        {% for pipeline in test_builds %}
+        {{ render_pipeline(pipeline) }}
+        {% endfor %}
+        {% else %}
+        <tr>
+            <td colspan="6" style="text-align: center;">No test builds found</td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+{% if chart_data %}
+<script>
+const ctx = document.getElementById('build-time-chart');
+new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: {{ chart_data | map(attribute='date') | list | tojson }},
+        datasets: [{
+            label: 'Build Duration (minutes)',
+            data: {{ chart_data | map(attribute='duration') | list | tojson }},
+            borderColor: '#0d6efd',
+            backgroundColor: 'rgba(13, 110, 253, 0.1)',
+            tension: 0.1,
+            fill: true
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                title: { display: true, text: 'Minutes' }
+            },
+            x: {
+                title: { display: true, text: 'Build Date' }
+            }
+        }
+    }
+});
+</script>
+{% endif %}
+{% endblock %}

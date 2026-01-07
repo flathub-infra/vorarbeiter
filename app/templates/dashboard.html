@@ -72,7 +72,7 @@
 {% endblock %}
 
 {% block content %}
-<h1>Flathub builds</h1>
+{% include "partials/nav.html" %}
 
 <form hx-get="/api/htmx/builds"
       hx-target="#builds-tbody"
