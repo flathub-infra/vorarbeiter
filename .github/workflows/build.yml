@@ -635,6 +635,38 @@ jobs:
           timeout 5 df -hHl || true
           timeout 30 du -sh "${GITHUB_WORKSPACE}/work/repo" || true
 
+      - name: Report build cost
+        if: ${{ inputs.build_type != 'default' && always() }}
+        run: |
+          if [[ -z "$RUNS_ON_INSTANCE_LAUNCHED_AT" ]]; then
+            echo "Not a RunsOn runner, skipping cost report"
+            exit 0
+          fi
+
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
+
+          COST_RESPONSE=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"instanceType\": \"${RUNS_ON_INSTANCE_TYPE}\",
+              \"instanceLifecycle\": \"${RUNS_ON_INSTANCE_LIFECYCLE:-spot}\",
+              \"region\": \"${RUNS_ON_AWS_REGION}\",
+              \"az\": \"${RUNS_ON_AWS_AZ}\",
+              \"arch\": \"${RUNS_ON_AGENT_ARCH:-x64}\",
+              \"startedAt\": \"${RUNS_ON_INSTANCE_LAUNCHED_AT}\",
+              \"platform\": \"linux\"
+            }" \
+            "https://go.runs-on.com/api/costs" 2>/dev/null || echo "{}")
+
+          TOTAL_COST=$(echo "$COST_RESPONSE" | jq -r '.totalCost // 0')
+
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
+            -d "{\"cost\": $TOTAL_COST}" \
+            "${{ inputs.callback_url }}/cost" || true
+
   # Update callback logic if adding new jobs before this
   callback:
     runs-on: ubuntu-latest
