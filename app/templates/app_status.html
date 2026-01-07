@@ -143,7 +143,7 @@
                 {% endif %}
             </td>
             <td>{{ format_duration(pipeline.started_at, pipeline.finished_at) }}</td>
-            <td>{{ format_cost(pipeline.total_cost) }}</td>
+            <td>{{ '-' if pipeline.finished_at is none else format_cost(pipeline.total_cost) }}</td>
             <td>
                 {% set repro_info = stable_reprocheck.get(pipeline.id) %}
                 {% if repro_info and repro_info.status_code == "0" %}
