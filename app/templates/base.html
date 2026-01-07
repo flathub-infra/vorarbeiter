@@ -9,10 +9,12 @@
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <style>
-        .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
+        a.plain-link {
+            color: inherit;
+            text-decoration: none;
+        }
+        a.plain-link:hover {
+            text-decoration: underline;
         }
     </style>
     {% block head %}{% endblock %}

@@ -75,7 +75,6 @@
 {% endblock %}
 
 {% block content %}
-{% set show_all_builds_link = true %}
 {% include "partials/nav.html" %}
 <h2>Build status of {{ app_id }}</h2>
 
@@ -121,7 +120,7 @@
                 <span class="badge {{ badge_class }}">{{ pipeline.status.value }}</span>
                 {% endif %}
             </td>
-            <td>{{ pipeline.app_id }}</td>
+            <td><a href="/status/{{ pipeline.app_id }}" class="plain-link">{{ pipeline.app_id }}</a></td>
             <td>{{ pipeline.flat_manager_repo or '-' }}</td>
             <td>
                 {% set git_repo = pipeline.params.get('repo', '') %}
