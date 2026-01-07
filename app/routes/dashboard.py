@@ -65,8 +65,15 @@ def format_duration(started_at: datetime | None, finished_at: datetime | None) -
         return f"{hours}h {minutes}m"
 
 
+def format_cost(cost: float | None) -> str:
+    if cost is None:
+        return "-"
+    return f"${cost:.2f}"
+
+
 templates.env.globals["format_time"] = format_time
 templates.env.globals["format_duration"] = format_duration
+templates.env.globals["format_cost"] = format_cost
 
 
 def group_pipelines(
