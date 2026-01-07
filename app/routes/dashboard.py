@@ -74,6 +74,7 @@ def format_cost(cost: float | None) -> str:
 templates.env.globals["format_time"] = format_time
 templates.env.globals["format_duration"] = format_duration
 templates.env.globals["format_cost"] = format_cost
+templates.env.globals["flat_manager_url"] = settings.flat_manager_url
 
 
 def group_pipelines(
