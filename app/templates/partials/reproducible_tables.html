@@ -1,0 +1,88 @@
+{% macro render_table(entries, badge_class, badge_text) %}
+<table>
+    <thead>
+        <tr>
+            <th>App ID</th>
+            <th>Reproducible?</th>
+            <th>Commit</th>
+            <th>Date</th>
+            <th>Diffoscope</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% if entries %}
+        {% for entry in entries %}
+        <tr>
+            <td><a href="/status/{{ entry.app_id }}" class="plain-link">{{ entry.app_id }}</a></td>
+            <td>
+                {% if entry.reprocheck_log_url %}
+                <a href="{{ entry.reprocheck_log_url }}" target="_blank" class="badge {{ badge_class }}">{{ badge_text }}</a>
+                {% else %}
+                <span class="badge {{ badge_class }}">{{ badge_text }}</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if entry.build_commit and entry.git_repo %}
+                <a href="https://github.com/{{ entry.git_repo }}/commit/{{ entry.build_commit }}" target="_blank">{{ entry.build_commit[:7] }}</a>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>{{ entry.finished_at.strftime('%Y-%m-%d') if entry.finished_at else '-' }}</td>
+            <td>
+                {% if entry.result_url %}
+                <a href="{{ entry.result_url }}" target="_blank">link</a>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr>
+            <td colspan="5" style="text-align: center;">No entries</td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+{% endmacro %}
+
+{% if data.reproducible %}
+<details {% if expand_all %}open{% endif %}>
+    <summary>
+        Reproducible builds
+        <span class="count-badge">{{ data.reproducible | length }}</span>
+    </summary>
+    {{ render_table(data.reproducible, "badge-reproducible", "reproducible") }}
+</details>
+{% endif %}
+
+{% if data.unreproducible %}
+<details {% if expand_all %}open{% endif %}>
+    <summary>
+        Unreproducible
+        <span class="count-badge">{{ data.unreproducible | length }}</span>
+    </summary>
+    {{ render_table(data.unreproducible, "badge-unreproducible", "unreproducible") }}
+</details>
+{% endif %}
+
+{% if data.failed_to_rebuild %}
+<details {% if expand_all %}open{% endif %}>
+    <summary>
+        Failed to rebuild
+        <span class="count-badge">{{ data.failed_to_rebuild | length }}</span>
+    </summary>
+    {{ render_table(data.failed_to_rebuild, "badge-failed", "failed to rebuild") }}
+</details>
+{% endif %}
+
+{% if data.unknown %}
+<details {% if expand_all %}open{% endif %}>
+    <summary>
+        Unknown
+        <span class="count-badge">{{ data.unknown | length }}</span>
+    </summary>
+    {{ render_table(data.unknown, "badge-none", "unknown") }}
+</details>
+{% endif %}

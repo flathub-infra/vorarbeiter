@@ -1,11 +1,13 @@
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import String, case, cast, func, or_, select
+from sqlalchemy import String, and_, case, cast, func, or_, select
+from sqlalchemy.orm import aliased
 
 from app.config import settings
 from app.database import get_db
@@ -209,6 +211,128 @@ async def get_app_builds(
         return pipelines, reprocheck_status
 
 
+@dataclass
+class ReproCheckEntry:
+    app_id: str
+    reprocheck_status: str | None
+    result_url: str | None
+    build_commit: str | None
+    git_repo: str | None
+    finished_at: datetime | None
+    reprocheck_log_url: str | None
+
+
+@dataclass
+class ReproducibilityData:
+    reproducible: list[ReproCheckEntry]
+    unreproducible: list[ReproCheckEntry]
+    failed_to_rebuild: list[ReproCheckEntry]
+    unknown: list[ReproCheckEntry]
+
+
+async def get_reproducibility_data(
+    app_id_filter: str | None = None,
+    status_filter: str | None = None,
+) -> ReproducibilityData:
+    async with get_db(use_replica=True) as db:
+        latest_build_subq = (
+            select(
+                Pipeline.app_id,
+                func.max(Pipeline.finished_at).label("max_finished"),
+            )
+            .where(Pipeline.flat_manager_repo == "stable")
+            .where(Pipeline.status == PipelineStatus.PUBLISHED)
+            .where(
+                or_(
+                    cast(Pipeline.params["workflow_id"], String) != '"reprocheck.yml"',
+                    Pipeline.params["workflow_id"].is_(None),
+                )
+            )
+            .group_by(Pipeline.app_id)
+            .subquery()
+        )
+
+        build_alias = aliased(Pipeline)
+        repro_alias = aliased(Pipeline)
+
+        query = (
+            select(build_alias, repro_alias)
+            .join(
+                latest_build_subq,
+                and_(
+                    build_alias.app_id == latest_build_subq.c.app_id,
+                    build_alias.finished_at == latest_build_subq.c.max_finished,
+                ),
+            )
+            .outerjoin(repro_alias, build_alias.repro_pipeline_id == repro_alias.id)
+            .where(build_alias.flat_manager_repo == "stable")
+            .where(build_alias.status == PipelineStatus.PUBLISHED)
+        )
+
+        if app_id_filter:
+            query = query.where(build_alias.app_id.ilike(f"%{app_id_filter}%"))
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        reproducible: list[ReproCheckEntry] = []
+        unreproducible: list[ReproCheckEntry] = []
+        failed_to_rebuild: list[ReproCheckEntry] = []
+        unknown: list[ReproCheckEntry] = []
+
+        for build, repro in rows:
+            status_code = None
+            result_url = None
+            repro_log_url = None
+
+            if repro:
+                repro_result = repro.params.get("reprocheck_result", {})
+                status_code = repro_result.get("status_code")
+                result_url = repro_result.get("result_url")
+                repro_log_url = repro.log_url
+
+            entry = ReproCheckEntry(
+                app_id=build.app_id,
+                reprocheck_status=status_code,
+                result_url=result_url,
+                build_commit=build.params.get("sha"),
+                git_repo=build.params.get("repo"),
+                finished_at=build.finished_at,
+                reprocheck_log_url=repro_log_url,
+            )
+
+            if status_filter:
+                if status_filter == "reproducible" and status_code != "0":
+                    continue
+                elif status_filter == "unreproducible" and status_code != "42":
+                    continue
+                elif status_filter == "failed" and status_code != "1":
+                    continue
+                elif status_filter == "none" and status_code is not None:
+                    continue
+
+            if status_code == "0":
+                reproducible.append(entry)
+            elif status_code == "42":
+                unreproducible.append(entry)
+            elif status_code == "1":
+                failed_to_rebuild.append(entry)
+            else:
+                unknown.append(entry)
+
+        reproducible.sort(key=lambda x: x.app_id)
+        unreproducible.sort(key=lambda x: x.app_id)
+        failed_to_rebuild.sort(key=lambda x: x.app_id)
+        unknown.sort(key=lambda x: x.app_id)
+
+        return ReproducibilityData(
+            reproducible=reproducible,
+            unreproducible=unreproducible,
+            failed_to_rebuild=failed_to_rebuild,
+            unknown=unknown,
+        )
+
+
 @dashboard_router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
@@ -311,5 +435,51 @@ async def app_status(request: Request, app_id: str):
             "stable_reprocheck": stable_reprocheck,
             "chart_data": chart_data,
             "flat_manager_url": settings.flat_manager_url,
+        },
+    )
+
+
+@dashboard_router.get("/reproducible", response_class=HTMLResponse)
+async def reproducible_status(
+    request: Request,
+    app_id: str | None = None,
+    status: str | None = None,
+):
+    data = await get_reproducibility_data(
+        app_id_filter=app_id,
+        status_filter=status,
+    )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="reproducible.html",
+        context={
+            "data": data,
+            "filters": {
+                "app_id": app_id or "",
+                "status": status or "",
+            },
+            "expand_all": bool(app_id),
+        },
+    )
+
+
+@dashboard_router.get("/api/htmx/reproducible", response_class=HTMLResponse)
+async def reproducible_table(
+    request: Request,
+    app_id: str | None = None,
+    status: str | None = None,
+):
+    data = await get_reproducibility_data(
+        app_id_filter=app_id,
+        status_filter=status,
+    )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/reproducible_tables.html",
+        context={
+            "data": data,
+            "expand_all": bool(app_id),
         },
     )

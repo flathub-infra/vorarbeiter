@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}Flathub Reproducibility Status{% endblock %}
+
+{% block head %}
+<style>
+    .badge {
+        display: inline-block;
+        padding: 0.25em 0.5em;
+        font-size: 0.875em;
+        font-weight: 600;
+        border-radius: 0.25rem;
+        text-decoration: none;
+    }
+    .badge-reproducible {
+        background-color: #198754;
+        color: white;
+    }
+    .badge-unreproducible {
+        background-color: #dc3545;
+        color: white;
+    }
+    .badge-failed {
+        background-color: #ffc107;
+        color: black;
+    }
+    .badge-none {
+        background-color: #6c757d;
+        color: white;
+    }
+    .filters {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .filters label {
+        margin-bottom: 0;
+    }
+    table {
+        font-size: 0.9rem;
+    }
+    td, th {
+        white-space: nowrap;
+    }
+    td:first-child {
+        white-space: normal;
+        word-break: break-all;
+    }
+    details {
+        margin-bottom: 1.5rem;
+    }
+    summary {
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 1.1rem;
+        padding: 0.5rem 0;
+    }
+    summary:hover {
+        color: #0d6efd;
+    }
+    .count-badge {
+        display: inline-block;
+        background-color: #e9ecef;
+        color: #495057;
+        padding: 0.1em 0.5em;
+        border-radius: 0.25rem;
+        font-size: 0.85em;
+        margin-left: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{% include "partials/nav.html" %}
+<h2>Reproducibility Status</h2>
+
+<form hx-get="/reproducible"
+      hx-target="#reproducible-content"
+      hx-trigger="change delay:300ms, submit"
+      hx-swap="innerHTML"
+      hx-select="#reproducible-content"
+      hx-push-url="true">
+    <div class="filters">
+        <label>
+            App ID
+            <input type="text" name="app_id" value="{{ filters.app_id }}" autocomplete="off">
+        </label>
+    </div>
+</form>
+
+<div id="reproducible-content">
+    {% include "partials/reproducible_tables.html" %}
+</div>
+{% endblock %}
