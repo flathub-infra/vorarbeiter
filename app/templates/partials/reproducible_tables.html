@@ -3,7 +3,7 @@
     <thead>
         <tr>
             <th>App ID</th>
-            <th>Reproducible?</th>
+            <th>Status</th>
             <th>Commit</th>
             <th>Date</th>
             <th>Diffoscope</th>
@@ -50,7 +50,7 @@
 {% if data.reproducible %}
 <details {% if expand_all %}open{% endif %}>
     <summary>
-        Reproducible builds
+        Reproducible
         <span class="count-badge">{{ data.reproducible | length }}</span>
     </summary>
     {{ render_table(data.reproducible, "badge-reproducible", "reproducible") }}
