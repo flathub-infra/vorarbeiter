@@ -41,6 +41,5 @@
         {% endif %}
     </td>
     <td>{{ format_duration(pipeline.started_at, pipeline.finished_at) }}</td>
-    <td>{{ '-' if pipeline.finished_at is none else format_cost(pipeline.total_cost) }}</td>
 </tr>
 {% endmacro %}

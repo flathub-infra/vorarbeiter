@@ -2,7 +2,7 @@
 
 {% if grouped_pipelines.in_progress %}
 <tr class="section-header">
-    <th colspan="7">In progress</th>
+    <th colspan="6">In progress</th>
 </tr>
 {% for pipeline in grouped_pipelines.in_progress %}
 {{ render_pipeline(pipeline) }}
@@ -11,7 +11,7 @@
 
 {% if grouped_pipelines.awaiting_publishing %}
 <tr class="section-header">
-    <th colspan="7">Awaiting publishing</th>
+    <th colspan="6">Awaiting publishing</th>
 </tr>
 {% for pipeline in grouped_pipelines.awaiting_publishing %}
 {{ render_pipeline(pipeline) }}
@@ -20,7 +20,7 @@
 
 {% if grouped_pipelines.completed %}
 <tr class="section-header">
-    <th colspan="7">Completed</th>
+    <th colspan="6">Completed</th>
 </tr>
 {% for pipeline in grouped_pipelines.completed %}
 {{ render_pipeline(pipeline) }}
@@ -29,6 +29,6 @@
 
 {% if not grouped_pipelines.awaiting_publishing and not grouped_pipelines.in_progress and not grouped_pipelines.completed %}
 <tr>
-    <td colspan="7" style="text-align: center;">No builds found</td>
+    <td colspan="6" style="text-align: center;">No builds found</td>
 </tr>
 {% endif %}

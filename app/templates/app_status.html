@@ -94,7 +94,6 @@
             <th>Source</th>
             <th>Started</th>
             <th>Duration</th>
-            <th>Estimated cost</th>
             <th>Reproducible?</th>
         </tr>
     </thead>
@@ -143,7 +142,6 @@
                 {% endif %}
             </td>
             <td>{{ format_duration(pipeline.started_at, pipeline.finished_at) }}</td>
-            <td>{{ '-' if pipeline.finished_at is none else format_cost(pipeline.total_cost) }}</td>
             <td>
                 {% set repro_info = stable_reprocheck.get(pipeline.id) %}
                 {% if repro_info and repro_info.status_code == "0" %}
@@ -158,7 +156,7 @@
         {% endfor %}
         {% else %}
         <tr>
-            <td colspan="8" style="text-align: center;">No stable builds found</td>
+            <td colspan="7" style="text-align: center;">No stable builds found</td>
         </tr>
         {% endif %}
     </tbody>
@@ -174,7 +172,6 @@
             <th>Source</th>
             <th>Started</th>
             <th>Duration</th>
-            <th>Estimated cost</th>
         </tr>
     </thead>
     <tbody>
@@ -184,7 +181,7 @@
         {% endfor %}
         {% else %}
         <tr>
-            <td colspan="7" style="text-align: center;">No beta builds found</td>
+            <td colspan="6" style="text-align: center;">No beta builds found</td>
         </tr>
         {% endif %}
     </tbody>
@@ -200,7 +197,6 @@
             <th>Source</th>
             <th>Started</th>
             <th>Duration</th>
-            <th>Estimated cost</th>
         </tr>
     </thead>
     <tbody>
@@ -210,7 +206,7 @@
         {% endfor %}
         {% else %}
         <tr>
-            <td colspan="7" style="text-align: center;">No test builds found</td>
+            <td colspan="6" style="text-align: center;">No test builds found</td>
         </tr>
         {% endif %}
     </tbody>
