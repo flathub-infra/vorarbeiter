@@ -78,7 +78,6 @@ def group_pipelines(
     completed: list[Pipeline] = []
 
     in_progress_statuses = {
-        PipelineStatus.PENDING,
         PipelineStatus.RUNNING,
         PipelineStatus.SUCCEEDED,
         PipelineStatus.PUBLISHING,
@@ -122,9 +121,7 @@ async def get_recent_pipelines(
             .order_by(
                 case(
                     (
-                        Pipeline.status.in_(
-                            [PipelineStatus.PENDING, PipelineStatus.RUNNING]
-                        ),
+                        Pipeline.status == PipelineStatus.RUNNING,
                         0,
                     ),
                     else_=1,
