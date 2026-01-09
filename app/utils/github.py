@@ -1,9 +1,13 @@
 import asyncio
-import structlog
+import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
+import structlog
 
-from typing import Any, Callable
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from gql import gql, Client
@@ -30,10 +34,17 @@ GQL_EXCEPTIONS = (
 logger = structlog.get_logger(__name__)
 
 
-class GitHubAPIClient:
-    """Reusable async HTTP client for GitHub REST API."""
+@dataclass
+class GitHubAPIResult:
+    response: httpx.Response | None
+    should_queue: bool = False
+    error_type: str | None = None
+    retry_after: float | None = None
 
+
+class GitHubAPIClient:
     DEFAULT_TIMEOUT = 10.0
+    DEFAULT_MAX_RETRIES = 3
 
     def __init__(self, token: str):
         self.headers = {
@@ -41,48 +52,157 @@ class GitHubAPIClient:
             "Authorization": f"token {token}",
         }
 
+    def _is_rate_limit_error(self, response: httpx.Response) -> bool:
+        if response.status_code != 403:
+            return False
+        try:
+            body = response.json()
+            return "rate limit" in body.get("message", "").lower()
+        except Exception:
+            return False
+
+    def _get_rate_limit_wait_time(self, response: httpx.Response) -> float:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return float(retry_after)
+            except ValueError:
+                pass
+
+        reset_timestamp = response.headers.get("X-RateLimit-Reset")
+        if reset_timestamp:
+            try:
+                wait_time = int(reset_timestamp) - time.time()
+                return max(wait_time, 0) + 1
+            except ValueError:
+                pass
+
+        return 60.0
+
     async def request(
         self,
         method: str,
         url: str,
         context: dict | None = None,
+        max_retries: int | None = None,
+        raise_for_status: bool = True,
         **kwargs,
     ) -> httpx.Response | None:
-        """Execute request with standard error handling."""
+        result = await self.request_with_result(
+            method, url, context, max_retries, raise_for_status, **kwargs
+        )
+        return result.response
+
+    async def request_with_result(
+        self,
+        method: str,
+        url: str,
+        context: dict | None = None,
+        max_retries: int | None = None,
+        raise_for_status: bool = True,
+        **kwargs,
+    ) -> GitHubAPIResult:
         context = context or {}
         kwargs.setdefault("timeout", self.DEFAULT_TIMEOUT)
+        retries = max_retries if max_retries is not None else self.DEFAULT_MAX_RETRIES
 
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await getattr(client, method)(
-                    url, headers=self.headers, **kwargs
+        for attempt in range(retries + 1):
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await getattr(client, method)(
+                        url, headers=self.headers, **kwargs
+                    )
+
+                    if self._is_rate_limit_error(response):
+                        wait_time = self._get_rate_limit_wait_time(response)
+                        logger.warning(
+                            "Rate limited by GitHub API",
+                            url=url,
+                            retry_after=wait_time,
+                            **context,
+                        )
+                        return GitHubAPIResult(
+                            response=None,
+                            should_queue=True,
+                            error_type="rate_limit",
+                            retry_after=wait_time,
+                        )
+
+                    if raise_for_status:
+                        response.raise_for_status()
+                    return GitHubAPIResult(response=response)
+            except httpx.RequestError as e:
+                if attempt < retries:
+                    delay = min(2**attempt, 2)
+                    logger.warning(
+                        "Request error, retrying",
+                        url=url,
+                        error=str(e),
+                        attempt=attempt + 1,
+                        max_retries=retries,
+                        delay_seconds=delay,
+                        **context,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error("Request error", url=url, error=str(e), **context)
+                return GitHubAPIResult(
+                    response=None,
+                    should_queue=True,
+                    error_type="network_error",
                 )
-                response.raise_for_status()
-                return response
-        except httpx.RequestError as e:
-            logger.error("Request error", url=url, error=str(e), **context)
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "HTTP error",
-                url=url,
-                status_code=e.response.status_code,
-                response_text=e.response.text,
-                **context,
-            )
-        except Exception as e:
-            logger.error("Unexpected error", url=url, error=str(e), **context)
-        return None
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code >= 500 and attempt < retries:
+                    delay = min(2**attempt, 2)
+                    logger.warning(
+                        "Server error, retrying",
+                        url=url,
+                        status_code=e.response.status_code,
+                        attempt=attempt + 1,
+                        max_retries=retries,
+                        delay_seconds=delay,
+                        **context,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error(
+                    "HTTP error",
+                    url=url,
+                    status_code=e.response.status_code,
+                    response_text=e.response.text,
+                    **context,
+                )
+                should_queue = e.response.status_code >= 500
+                return GitHubAPIResult(
+                    response=None,
+                    should_queue=should_queue,
+                    error_type="server_error" if should_queue else "client_error",
+                )
+            except Exception as e:
+                logger.error("Unexpected error", url=url, error=str(e), **context)
+                return GitHubAPIResult(response=None, should_queue=False)
+
+        return GitHubAPIResult(
+            response=None, should_queue=True, error_type="max_retries"
+        )
 
 
 _github_client: GitHubAPIClient | None = None
+_github_actions_client: GitHubAPIClient | None = None
 
 
 def get_github_client() -> GitHubAPIClient:
-    """Get or create the GitHub API client."""
     global _github_client
     if _github_client is None:
         _github_client = GitHubAPIClient(settings.github_status_token)
     return _github_client
+
+
+def get_github_actions_client() -> GitHubAPIClient:
+    global _github_actions_client
+    if _github_actions_client is None:
+        _github_actions_client = GitHubAPIClient(settings.github_token)
+    return _github_actions_client
 
 
 async def update_commit_status(
@@ -92,16 +212,17 @@ async def update_commit_status(
     target_url: str | None = None,
     description: str | None = None,
     context: str = "builds/x86_64",
-) -> None:
+    db: "AsyncSession | None" = None,
+) -> bool:
     if not git_repo:
         logger.error(
             "Missing git_repo for GitHub status update. Skipping status update."
         )
-        return
+        return False
 
     if not sha:
         logger.error("Missing commit SHA. Skipping status update.")
-        return
+        return False
 
     if sha == "0000000000000000000000000000000000000000":
         logger.warning(
@@ -109,18 +230,14 @@ async def update_commit_status(
             git_repo=git_repo,
             sha=sha,
         )
-        return
+        return False
 
     if state not in ["error", "failure", "pending", "success"]:
         logger.error(f"Invalid state '{state}'. Skipping status update.")
-        return
+        return False
 
     url = f"https://api.github.com/repos/{git_repo}/statuses/{sha}"
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {settings.github_status_token}",
-    }
-    payload = {
+    payload: dict[str, str] = {
         "state": state,
         "context": context,
     }
@@ -131,111 +248,78 @@ async def update_commit_status(
     if description:
         payload["description"] = description
 
-    max_retries = 3
-    retry_count = 0
-    base_delay = 1.0
+    client = get_github_client()
+    ctx = {"git_repo": git_repo, "commit": sha}
+    result = await client.request_with_result("post", url, json=payload, context=ctx)
 
-    while retry_count <= max_retries:
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=10.0,
-                )
-                response.raise_for_status()
-                logger.info(
-                    "Successfully updated GitHub status",
-                    git_repo=git_repo,
-                    commit=sha,
-                    state=state,
-                )
-                return
-        except httpx.RequestError as e:
-            if retry_count < max_retries:
-                delay = base_delay * (2**retry_count)
-                logger.warning(
-                    "Request error updating GitHub status, retrying after delay",
-                    git_repo=git_repo,
-                    commit=sha,
-                    error=str(e),
-                    retry_count=retry_count + 1,
-                    max_retries=max_retries,
-                    delay_seconds=delay,
-                )
-                retry_count += 1
-                await asyncio.sleep(delay)
-                continue
-            else:
-                logger.error(
-                    "Request error updating GitHub status",
-                    git_repo=git_repo,
-                    commit=sha,
-                    error=str(e),
-                    retry_count=retry_count,
-                    max_retries=max_retries,
-                )
-                return
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 500 and retry_count < max_retries:
-                delay = base_delay * (2**retry_count)
-                logger.warning(
-                    "GitHub API returned 500, retrying after delay",
-                    git_repo=git_repo,
-                    commit=sha,
-                    status_code=e.response.status_code,
-                    retry_count=retry_count + 1,
-                    max_retries=max_retries,
-                    delay_seconds=delay,
-                )
-                retry_count += 1
-                await asyncio.sleep(delay)
-                continue
-            else:
-                logger.error(
-                    "HTTP error updating GitHub status",
-                    git_repo=git_repo,
-                    commit=sha,
-                    status_code=e.response.status_code,
-                    response_text=e.response.text,
-                    retry_count=retry_count,
-                    max_retries=max_retries,
-                )
-                return
-        except Exception as e:
-            logger.error(
-                "Unexpected error updating GitHub status",
-                git_repo=git_repo,
-                commit=sha,
-                error=str(e),
-            )
-            return
+    if result.response:
+        logger.info(
+            "Successfully updated GitHub status",
+            git_repo=git_repo,
+            commit=sha,
+            state=state,
+        )
+        return True
+
+    if result.should_queue and db:
+        from app.services.github_task import GitHubTaskService
+
+        await GitHubTaskService().queue_task(
+            db,
+            task_type="commit_status",
+            method="post",
+            url=url,
+            payload=payload,
+            context=ctx,
+            retry_after=result.retry_after,
+        )
+
+    return False
 
 
-async def create_pr_comment(git_repo: str, pr_number: int, comment: str) -> None:
+async def create_pr_comment(
+    git_repo: str,
+    pr_number: int,
+    comment: str,
+    db: "AsyncSession | None" = None,
+) -> bool:
     if not git_repo:
         logger.error("Missing git_repo for GitHub PR comment. Skipping PR comment.")
-        return
+        return False
 
     if not pr_number:
         logger.error("Missing PR number. Skipping PR comment.")
-        return
+        return False
 
     url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/comments"
+    payload = {"body": comment}
+    ctx = {"git_repo": git_repo, "pr_number": pr_number}
+
     client = get_github_client()
-    response = await client.request(
-        "post",
-        url,
-        json={"body": comment},
-        context={"git_repo": git_repo, "pr_number": pr_number},
-    )
-    if response:
+    result = await client.request_with_result("post", url, json=payload, context=ctx)
+
+    if result.response:
         logger.info(
             "Successfully created PR comment",
             git_repo=git_repo,
             pr_number=pr_number,
         )
+        return True
+
+    if result.should_queue and db:
+        from app.services.github_task import GitHubTaskService
+
+        await GitHubTaskService().queue_task(
+            db,
+            task_type="pr_comment",
+            method="post",
+            url=url,
+            payload=payload,
+            context=ctx,
+            retry_after=result.retry_after,
+        )
+
+    return False
 
 
 async def create_github_issue(git_repo: str, title: str, body: str) -> str | None:
@@ -460,94 +544,45 @@ async def get_check_run_annotations(
     run_id: int,
     job_filter: Callable[[dict], bool] | None = None,
 ) -> list[dict] | None:
-    """Get annotations from all check-runs for a workflow run.
+    client = get_github_client()
+    context = {"owner": owner, "repo": repo, "run_id": run_id}
 
-    Returns a list of annotation dicts with 'message' and 'annotation_level' keys,
-    or None if there was an error.
-    """
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {settings.github_status_token}",
-    }
+    jobs_url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+    response = await client.request("get", jobs_url, context=context)
+    if not response:
+        return None
 
-    annotations: list[dict[str | None, str | None]] = []
+    jobs = response.json().get("jobs", [])
+    annotations: list[dict[str, str | None]] = []
 
-    try:
-        async with httpx.AsyncClient() as client:
-            jobs_url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
-            response = await client.get(
-                jobs_url,
-                headers=headers,
-                timeout=10.0,
+    for job in jobs:
+        if job_filter and not job_filter(job):
+            continue
+
+        if check_run_url := job.get("check_run_url"):
+            annotations_response = await client.request(
+                "get",
+                f"{check_run_url}/annotations",
+                context={**context, "job_id": job.get("id")},
+                raise_for_status=False,
             )
-            response.raise_for_status()
-            jobs = response.json().get("jobs", [])
+            if annotations_response and annotations_response.status_code == 200:
+                annotations.extend(
+                    {
+                        "message": a.get("message"),
+                        "annotation_level": a.get("annotation_level"),
+                    }
+                    for a in annotations_response.json()
+                )
 
-            for job in jobs:
-                if job_filter and not job_filter(job):
-                    continue
-
-                if check_run_url := job.get("check_run_url"):
-                    try:
-                        annotations_response = await client.get(
-                            f"{check_run_url}/annotations",
-                            headers=headers,
-                            timeout=10.0,
-                        )
-                        if annotations_response.status_code == 200:
-                            annotations.extend(
-                                {
-                                    "message": a.get("message"),
-                                    "annotation_level": a.get("annotation_level"),
-                                }
-                                for a in annotations_response.json()
-                            )
-                    except httpx.HTTPError as e:
-                        logger.warning(
-                            "Failed to fetch annotations for job",
-                            job_id=job.get("id"),
-                            owner=owner,
-                            repo=repo,
-                            run_id=run_id,
-                            error=str(e),
-                        )
-                        continue
-
-            logger.info(
-                "Successfully fetched check-run annotations",
-                owner=owner,
-                repo=repo,
-                run_id=run_id,
-                annotation_count=len(annotations),
-            )
-            return annotations
-
-    except httpx.RequestError as e:
-        logger.error(
-            "Request error fetching jobs",
-            owner=owner,
-            repo=repo,
-            run_id=run_id,
-            error=str(e),
-        )
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "HTTP error fetching jobs",
-            owner=owner,
-            repo=repo,
-            run_id=run_id,
-            status_code=e.response.status_code,
-            response_text=e.response.text,
-        )
-    except Exception as e:
-        logger.error(
-            "Unexpected error fetching check-run annotations",
-            owner=owner,
-            repo=repo,
-            run_id=run_id,
-            error=str(e),
-        )
-    return None
+    logger.info(
+        "Successfully fetched check-run annotations",
+        owner=owner,
+        repo=repo,
+        run_id=run_id,
+        annotation_count=len(annotations),
+    )
+    return annotations
 
 
 async def get_linter_warning_messages(

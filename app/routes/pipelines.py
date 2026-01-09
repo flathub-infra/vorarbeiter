@@ -481,3 +481,44 @@ async def check_pipeline_jobs(
             "checked_pipelines": len(pipelines),
             "updated_pipelines": updated_count,
         }
+
+
+@pipelines_router.post(
+    "/github-tasks/process",
+    status_code=http_status.HTTP_200_OK,
+)
+async def process_github_tasks(
+    token: str = Depends(verify_token),
+):
+    from app.services.github_task import GitHubTaskService
+
+    async with get_db() as db:
+        service = GitHubTaskService()
+        processed = await service.process_pending_tasks(db)
+        await db.commit()
+
+        return {
+            "status": "completed",
+            "processed_tasks": processed,
+        }
+
+
+@pipelines_router.post(
+    "/github-tasks/cleanup",
+    status_code=http_status.HTTP_200_OK,
+)
+async def cleanup_github_tasks(
+    token: str = Depends(verify_token),
+    days: int = 7,
+):
+    from app.services.github_task import GitHubTaskService
+
+    async with get_db() as db:
+        service = GitHubTaskService()
+        deleted = await service.cleanup_old_tasks(db, days)
+        await db.commit()
+
+        return {
+            "status": "completed",
+            "deleted_tasks": deleted,
+        }

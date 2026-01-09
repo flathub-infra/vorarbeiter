@@ -19,6 +19,7 @@ from app.utils.github import (
     update_commit_status,
     is_issue_edited,
     get_workflow_run_title,
+    get_github_client,
 )
 
 logger = structlog.get_logger(__name__)
@@ -87,44 +88,39 @@ async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
 
 
 async def validate_retry_permissions(git_repo: str, user_login: str) -> bool:
+    client = get_github_client()
+    context = {"user": user_login, "repo": git_repo}
+
     url = f"https://api.github.com/repos/{git_repo}/collaborators/{user_login}"
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {settings.github_status_token}",
-    }
+    response = await client.request("get", url, context=context, raise_for_status=False)
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, timeout=10.0)
-            if response.status_code == 204:
-                return True
-            elif response.status_code == 404:
-                logger.info(
-                    "User not a collaborator, checking organization membership",
-                    user=user_login,
-                    repo=git_repo,
-                )
+    if response is None:
+        return False
 
-                org = git_repo.split("/")[0]
-                org_url = f"https://api.github.com/orgs/{org}/members/{user_login}"
-                org_response = await client.get(org_url, headers=headers, timeout=10.0)
-                return org_response.status_code == 204
-            else:
-                logger.warning(
-                    "Unexpected response checking user permissions",
-                    status_code=response.status_code,
-                    user=user_login,
-                    repo=git_repo,
-                )
-                return False
-    except Exception as e:
-        logger.error(
-            "Error checking retry permissions",
-            error=str(e),
+    if response.status_code == 204:
+        return True
+
+    if response.status_code == 404:
+        logger.info(
+            "User not a collaborator, checking organization membership",
             user=user_login,
             repo=git_repo,
         )
-        return False
+
+        org = git_repo.split("/")[0]
+        org_url = f"https://api.github.com/orgs/{org}/members/{user_login}"
+        org_response = await client.request(
+            "get", org_url, context=context, raise_for_status=False
+        )
+        return org_response is not None and org_response.status_code == 204
+
+    logger.warning(
+        "Unexpected response checking user permissions",
+        status_code=response.status_code,
+        user=user_login,
+        repo=git_repo,
+    )
+    return False
 
 
 async def handle_issue_retry(

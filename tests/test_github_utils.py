@@ -237,9 +237,9 @@ async def test_update_commit_status_max_retries_exceeded(mock_settings):
 
             assert mock_client_instance.post.call_count == 4
             assert mock_sleep.call_count == 3
-            assert mock_sleep.call_args_list[0][0][0] == 1.0
-            assert mock_sleep.call_args_list[1][0][0] == 2.0
-            assert mock_sleep.call_args_list[2][0][0] == 4.0
+            assert mock_sleep.call_args_list[0][0][0] == 1
+            assert mock_sleep.call_args_list[1][0][0] == 2
+            assert mock_sleep.call_args_list[2][0][0] == 2
 
 
 @pytest.mark.asyncio
@@ -312,7 +312,7 @@ async def test_create_pr_comment_request_error(mock_settings):
             git_repo="flathub/test-app", pr_number=42, comment="Test comment"
         )
 
-        mock_client_instance.post.assert_called_once()
+        assert mock_client_instance.post.call_count == 4
 
 
 @pytest.mark.asyncio
@@ -398,11 +398,12 @@ async def test_create_github_issue_request_error(mock_settings):
         )
         MockClient.return_value.__aenter__.return_value = mock_client_instance
 
-        await create_github_issue(
+        result = await create_github_issue(
             git_repo="flathub/test-app", title="Build failed", body="Error details"
         )
 
-        mock_client_instance.post.assert_called_once()
+        assert result is None
+        assert mock_client_instance.post.call_count == 4
 
 
 @pytest.mark.asyncio
@@ -568,3 +569,99 @@ async def test_add_issue_comment_missing_issue_number(mock_settings):
 
         assert result is False
         MockClient.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_detection(mock_settings):
+    from app.utils.github import GitHubAPIClient
+
+    client = GitHubAPIClient("test-token")
+
+    rate_limit_response = MagicMock()
+    rate_limit_response.status_code = 403
+    rate_limit_response.json.return_value = {
+        "message": "API rate limit exceeded for user ID 12345"
+    }
+
+    assert client._is_rate_limit_error(rate_limit_response) is True
+
+    normal_403_response = MagicMock()
+    normal_403_response.status_code = 403
+    normal_403_response.json.return_value = {"message": "Resource not accessible"}
+
+    assert client._is_rate_limit_error(normal_403_response) is False
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_wait_time_from_retry_after(mock_settings):
+    from app.utils.github import GitHubAPIClient
+
+    client = GitHubAPIClient("test-token")
+
+    response = MagicMock()
+    response.headers = {"Retry-After": "60"}
+
+    wait_time = client._get_rate_limit_wait_time(response)
+    assert wait_time == 60.0
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_wait_time_from_reset_header(mock_settings):
+    import time
+    from app.utils.github import GitHubAPIClient
+
+    client = GitHubAPIClient("test-token")
+
+    future_timestamp = int(time.time()) + 120
+    response = MagicMock()
+    response.headers = {"X-RateLimit-Reset": str(future_timestamp)}
+
+    wait_time = client._get_rate_limit_wait_time(response)
+    assert 119 <= wait_time <= 122
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_fails_fast(mock_settings):
+    with patch("httpx.AsyncClient") as MockClient:
+        rate_limit_response = MagicMock()
+        rate_limit_response.status_code = 403
+        rate_limit_response.json.return_value = {"message": "API rate limit exceeded"}
+        rate_limit_response.headers = {"Retry-After": "60"}
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post = AsyncMock(return_value=rate_limit_response)
+        MockClient.return_value.__aenter__.return_value = mock_client_instance
+
+        result = await create_github_issue(
+            git_repo="flathub/test-app", title="Test", body="Body"
+        )
+
+        assert result is None
+        assert mock_client_instance.post.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_returns_result_with_retry_after(mock_settings):
+    from app.utils.github import get_github_client
+
+    with patch("httpx.AsyncClient") as MockClient:
+        rate_limit_response = MagicMock()
+        rate_limit_response.status_code = 403
+        rate_limit_response.json.return_value = {"message": "API rate limit exceeded"}
+        rate_limit_response.headers = {"Retry-After": "120"}
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post = AsyncMock(return_value=rate_limit_response)
+        MockClient.return_value.__aenter__.return_value = mock_client_instance
+
+        client = get_github_client()
+        result = await client.request_with_result(
+            "post",
+            "https://api.github.com/test",
+            json={},
+        )
+
+        assert result.response is None
+        assert result.should_queue is True
+        assert result.error_type == "rate_limit"
+        assert result.retry_after == 120.0

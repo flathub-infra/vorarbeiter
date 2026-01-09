@@ -13,17 +13,26 @@ from app.main import app
 from app.config import settings
 from app.database import engine as app_engine
 from app.models import Base
+import app.utils.github as github_module
 
 
 @pytest.fixture(scope="session", autouse=True)
 def override_settings():
-    """Override settings for testing."""
     with patch.object(settings, "database_url", "sqlite+aiosqlite:///:memory:"):
         with patch.object(settings, "flat_manager_url", "https://hub.flathub.org"):
             with patch.object(
                 settings, "flat_manager_token", "test_flat_manager_token"
             ):
                 yield
+
+
+@pytest.fixture(autouse=True)
+def reset_github_clients():
+    github_module._github_client = None
+    github_module._github_actions_client = None
+    yield
+    github_module._github_client = None
+    github_module._github_actions_client = None
 
 
 @pytest.fixture

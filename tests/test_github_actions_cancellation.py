@@ -1,7 +1,7 @@
 import pytest
 import zipfile
 from io import BytesIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from app.services.github_actions import GitHubActionsService
 
@@ -13,11 +13,15 @@ def github_actions_service():
 
 @pytest.fixture
 def mock_httpx_get():
-    with patch("httpx.AsyncClient.get") as mock_get:
+    with patch("httpx.AsyncClient") as MockClient:
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
-        yield mock_get, mock_response
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.get = AsyncMock(return_value=mock_response)
+        mock_client_instance.post = AsyncMock(return_value=mock_response)
+        MockClient.return_value.__aenter__.return_value = mock_client_instance
+        yield mock_client_instance.get, mock_response
 
 
 @pytest.fixture
@@ -131,7 +135,11 @@ async def test_get_workflow_run_details_success(
     )
 
     assert result == cancelled_run_response
-    mock_get.assert_called_once_with("/repos/owner/repo/actions/runs/12345")
+    mock_get.assert_called_once()
+    assert (
+        "https://api.github.com/repos/owner/repo/actions/runs/12345"
+        in mock_get.call_args[0][0]
+    )
 
 
 @pytest.mark.asyncio
@@ -176,7 +184,11 @@ async def test_download_run_logs_success(
 
     assert "The operation was canceled." in result
     assert "Starting job..." in result
-    mock_get.assert_called_once_with("/repos/owner/repo/actions/runs/12345/logs")
+    mock_get.assert_called_once()
+    assert (
+        "https://api.github.com/repos/owner/repo/actions/runs/12345/logs"
+        in mock_get.call_args[0][0]
+    )
 
 
 @pytest.mark.asyncio
