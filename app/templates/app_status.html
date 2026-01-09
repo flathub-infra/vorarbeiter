@@ -145,9 +145,9 @@
             <td>
                 {% set repro_info = stable_reprocheck.get(pipeline.id) %}
                 {% if repro_info and repro_info.status_code == "0" %}
-                <a href="{{ repro_info.result_url }}" target="_blank" class="badge badge-reproducible">reproducible</a>
+                <a href="/diffoscope/{{ repro_info.repro_pipeline_id }}" target="_blank" class="badge badge-reproducible">reproducible</a>
                 {% elif repro_info and repro_info.status_code == "42" %}
-                <a href="{{ repro_info.result_url }}" target="_blank" class="badge badge-unreproducible">unreproducible</a>
+                <a href="/diffoscope/{{ repro_info.repro_pipeline_id }}" target="_blank" class="badge badge-unreproducible">unreproducible</a>
                 {% else %}
                 <span class="badge badge-unknown">unknown</span>
                 {% endif %}

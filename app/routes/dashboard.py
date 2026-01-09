@@ -163,11 +163,17 @@ async def get_recent_pipelines(
 
 
 class ReprocheckInfo:
-    __slots__ = ("status_code", "result_url")
+    __slots__ = ("status_code", "result_url", "repro_pipeline_id")
 
-    def __init__(self, status_code: str | None, result_url: str | None):
+    def __init__(
+        self,
+        status_code: str | None,
+        result_url: str | None,
+        repro_pipeline_id: uuid.UUID,
+    ):
         self.status_code = status_code
         self.result_url = result_url
+        self.repro_pipeline_id = repro_pipeline_id
 
 
 async def get_app_builds(
@@ -203,7 +209,7 @@ async def get_app_builds(
                 for p in pipelines:
                     if p.repro_pipeline_id == repro_pipeline.id:
                         reprocheck_status[p.id] = ReprocheckInfo(
-                            status_code, result_url
+                            status_code, result_url, repro_pipeline.id
                         )
 
         return pipelines, reprocheck_status
@@ -218,6 +224,7 @@ class ReproCheckEntry:
     git_repo: str | None
     finished_at: datetime | None
     reprocheck_log_url: str | None
+    repro_pipeline_id: uuid.UUID | None
 
 
 @dataclass
@@ -297,6 +304,7 @@ async def get_reproducibility_data(
                 git_repo=build.params.get("repo"),
                 finished_at=build.finished_at,
                 reprocheck_log_url=repro_log_url,
+                repro_pipeline_id=repro.id if repro else None,
             )
 
             if status_filter:

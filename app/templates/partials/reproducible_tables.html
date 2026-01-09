@@ -30,8 +30,8 @@
             </td>
             <td>{{ entry.finished_at.strftime('%Y-%m-%d') if entry.finished_at else '-' }}</td>
             <td>
-                {% if entry.result_url %}
-                <a href="{{ entry.result_url }}" target="_blank">link</a>
+                {% if entry.repro_pipeline_id %}
+                <a href="/diffoscope/{{ entry.repro_pipeline_id }}" target="_blank">view</a>
                 {% else %}
                 -
                 {% endif %}
