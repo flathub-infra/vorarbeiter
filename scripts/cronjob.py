@@ -8,18 +8,25 @@ import httpx
 
 from app.config import settings
 
+ENDPOINTS = {
+    "publish": "/api/pipelines/publish",
+    "check-jobs": "/api/pipelines/check-jobs",
+    "github-tasks-process": "/api/github-tasks/process",
+    "github-tasks-cleanup": "/api/github-tasks/cleanup",
+}
+
 
 def main():
     parser = argparse.ArgumentParser(description="Execute pipeline operations")
     parser.add_argument(
         "endpoint",
-        choices=["publish", "check-jobs"],
-        help="Which endpoint to call: 'publish' for publishing pipelines, 'check-jobs' for checking job statuses",
+        choices=list(ENDPOINTS.keys()),
+        help="Which endpoint to call",
     )
 
     args = parser.parse_args()
 
-    url = f"{settings.base_url}/api/pipelines/{args.endpoint}"
+    url = f"{settings.base_url}{ENDPOINTS[args.endpoint]}"
     headers = {"Authorization": f"Bearer {settings.admin_token}"}
 
     try:
