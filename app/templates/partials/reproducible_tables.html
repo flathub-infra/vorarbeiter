@@ -1,4 +1,4 @@
-{% macro render_table(entries, badge_class, badge_text) %}
+{% macro render_table(entries, badge_class, badge_text, show_diffoscope=false) %}
 <table>
     <thead>
         <tr>
@@ -30,7 +30,7 @@
             </td>
             <td>{{ entry.finished_at.strftime('%Y-%m-%d') if entry.finished_at else '-' }}</td>
             <td>
-                {% if entry.repro_pipeline_id %}
+                {% if show_diffoscope and entry.repro_pipeline_id %}
                 <a href="/diffoscope/{{ entry.repro_pipeline_id }}" target="_blank">view</a>
                 {% else %}
                 -
@@ -63,7 +63,7 @@
         Unreproducible
         <span class="count-badge">{{ data.unreproducible | length }}</span>
     </summary>
-    {{ render_table(data.unreproducible, "badge-unreproducible", "unreproducible") }}
+    {{ render_table(data.unreproducible, "badge-unreproducible", "unreproducible", show_diffoscope=true) }}
 </details>
 {% endif %}
 
