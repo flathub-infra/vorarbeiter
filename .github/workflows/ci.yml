@@ -40,7 +40,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Run type checking
-        run: uv run mypy .
+        run: uv run ty check .
 
       - name: Run tests
         env:

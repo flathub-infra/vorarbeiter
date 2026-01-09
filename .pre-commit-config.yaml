@@ -13,12 +13,13 @@ repos:
         language: system
         types: [python]
         
-      - id: mypy
-        name: mypy
-        entry: uv run mypy
+      - id: ty
+        name: ty
+        entry: uv run ty check
         language: system
         types: [python]
-        
+        pass_filenames: false
+
       - id: pytest
         name: pytest
         entry: uv run pytest -n 4
