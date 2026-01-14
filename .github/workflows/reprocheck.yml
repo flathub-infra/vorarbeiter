@@ -63,6 +63,7 @@ jobs:
         run: |
           mkdir -p ${GITHUB_WORKSPACE}/reproworkdir
           mkdir -p ${GITHUB_WORKSPACE}/reproworkdir/tmp
+          mkdir -p ${GITHUB_WORKSPACE}/reproworkdir/.local/share
           chmod -R 777 ${GITHUB_WORKSPACE}/reproworkdir
 
       - name: Download seccomp profile
@@ -86,6 +87,7 @@ jobs:
             -v /proc:/host/proc \
             -v "${GITHUB_WORKSPACE}/reproworkdir:/reproworkdir" \
             -e TMPDIR=/reproworkdir/tmp \
+            -e XDG_DATA_HOME=/reproworkdir/.local/share \
             -e GITHUB_SERVER_URL \
             -e GITHUB_REPOSITORY \
             -e GITHUB_RUN_ID \
@@ -162,3 +164,11 @@ jobs:
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "$payload" \
             "${{ inputs.callback_url }}/reprocheck"
+
+      - name: Dump reprocheck log
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          LOG_FILE="${GITHUB_WORKSPACE}/reproworkdir/.local/share/flathub_repro_checker/reprocheck.log"
+          cat "$LOG_FILE" || true
