@@ -13,6 +13,7 @@ ENDPOINTS = {
     "check-jobs": "/api/pipelines/check-jobs",
     "github-tasks-process": "/api/github-tasks/process",
     "github-tasks-cleanup": "/api/github-tasks/cleanup",
+    "prune-beta": None,
 }
 
 
@@ -26,12 +27,18 @@ def main():
 
     args = parser.parse_args()
 
-    url = f"{settings.base_url}{ENDPOINTS[args.endpoint]}"
-    headers = {"Authorization": f"Bearer {settings.admin_token}"}
+    if args.endpoint == "prune-beta":
+        url = f"{settings.flat_manager_url}/api/v1/prune"
+        headers = {"Authorization": f"Bearer {settings.flat_manager_token}"}
+        data = {"repo": "beta"}
+    else:
+        url = f"{settings.base_url}{ENDPOINTS[args.endpoint]}"
+        headers = {"Authorization": f"Bearer {settings.admin_token}"}
+        data = None
 
     try:
         with httpx.Client(timeout=180.0) as client:
-            response = client.post(url, headers=headers)
+            response = client.post(url, headers=headers, json=data)
             response.raise_for_status()
 
         print(json.dumps(response.json(), indent=2))
