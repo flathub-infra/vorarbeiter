@@ -903,7 +903,7 @@ async def test_handle_eol_only_push_republish():
     eol_data = {"end_of_life": "This application is no longer maintained."}
 
     mock_client = AsyncMock()
-    mock_client.republish = AsyncMock(return_value={"status": "ok"})
+    mock_client.republish = AsyncMock(return_value={"id": 12345, "status": "ok"})
 
     with patch(
         "app.routes.webhooks.FlatManagerClient", return_value=mock_client
@@ -928,6 +928,10 @@ async def test_handle_eol_only_push_republish():
 
             assert mock_status.await_args_list[0].kwargs["state"] == "pending"
             assert mock_status.await_args_list[1].kwargs["state"] == "success"
+            assert (
+                mock_status.await_args_list[1].kwargs["target_url"]
+                == f"{settings.flat_manager_url}/status/12345"
+            )
 
 
 @pytest.mark.asyncio

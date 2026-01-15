@@ -569,7 +569,7 @@ async def handle_eol_only_push(
         url=settings.flat_manager_url, token=settings.flat_manager_token
     )
     try:
-        await flat_manager.republish(
+        republish_result = await flat_manager.republish(
             repo=flat_manager_repo,
             app_id=app_id,
             end_of_life=end_of_life,
@@ -591,11 +591,15 @@ async def handle_eol_only_push(
         )
         return
 
+    job_id = republish_result.get("id")
+    job_url = f"{settings.flat_manager_url}/status/{job_id}" if job_id else None
+
     await update_commit_status(
         sha=sha,
         state="success",
         git_repo=event.repository,
         description="EOL-only republish complete",
+        target_url=job_url,
     )
 
 
