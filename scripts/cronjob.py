@@ -14,6 +14,7 @@ ENDPOINTS = {
     "github-tasks-process": "/api/github-tasks/process",
     "github-tasks-cleanup": "/api/github-tasks/cleanup",
     "prune-beta": None,
+    "prune-stable": None,
 }
 
 
@@ -27,10 +28,11 @@ def main():
 
     args = parser.parse_args()
 
-    if args.endpoint == "prune-beta":
+    if args.endpoint in ("prune-beta", "prune-stable"):
+        repo = "beta" if args.endpoint == "prune-beta" else "stable"
         url = f"{settings.flat_manager_url}/api/v1/prune"
         headers = {"Authorization": f"Bearer {settings.flat_manager_token}"}
-        data = {"repo": "beta"}
+        data = {"repo": repo}
     else:
         url = f"{settings.base_url}{ENDPOINTS[args.endpoint]}"
         headers = {"Authorization": f"Bearer {settings.admin_token}"}
