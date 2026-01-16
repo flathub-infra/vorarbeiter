@@ -328,7 +328,7 @@ class PublishingService:
             )
 
         except httpx.HTTPStatusError as e:
-            logger.error(
+            logger.warning(
                 "Failed to publish build",
                 build_id=pipeline.build_id,
                 pipeline_id=str(pipeline.id),

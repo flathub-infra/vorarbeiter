@@ -76,7 +76,7 @@ class JobMonitor:
                 return True
             elif job_status == JobStatus.BROKEN:
                 pipeline.status = PipelineStatus.FAILED
-                logger.error(
+                logger.warning(
                     "Commit job failed, marking pipeline as FAILED",
                     pipeline_id=str(pipeline.id),
                     commit_job_id=pipeline.commit_job_id,
@@ -159,7 +159,7 @@ class JobMonitor:
         create_failure_issue: bool = True,
     ) -> None:
         pipeline.status = PipelineStatus.FAILED
-        logger.error(
+        logger.warning(
             f"{job_type.capitalize()} job failed, marking pipeline as FAILED",
             pipeline_id=str(pipeline.id),
             job_id=job_id,
