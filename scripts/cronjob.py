@@ -11,6 +11,7 @@ from app.config import settings
 ENDPOINTS = {
     "publish": "/api/pipelines/publish",
     "check-jobs": "/api/pipelines/check-jobs",
+    "cleanup-stale": "/api/pipelines/cleanup-stale",
     "github-tasks-process": "/api/github-tasks/process",
     "github-tasks-cleanup": "/api/github-tasks/cleanup",
     "prune-beta": None,

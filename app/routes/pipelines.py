@@ -522,3 +522,43 @@ async def cleanup_github_tasks(
             "status": "completed",
             "deleted_tasks": deleted,
         }
+
+
+@pipelines_router.post(
+    "/pipelines/cleanup-stale",
+    status_code=http_status.HTTP_200_OK,
+)
+async def cleanup_stale_pipelines(
+    token: str = Depends(verify_token),
+    hours: int = 24,
+):
+    async with get_db() as db:
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import select
+
+        cutoff = datetime.now() - timedelta(hours=hours)
+
+        query = select(Pipeline).where(
+            Pipeline.status == PipelineStatus.RUNNING,
+            Pipeline.created_at < cutoff,
+        )
+        result = await db.execute(query)
+        stale_pipelines = list(result.scalars().all())
+
+        cancelled_ids = []
+        for pipeline in stale_pipelines:
+            pipeline.status = PipelineStatus.CANCELLED
+            pipeline.finished_at = datetime.now()
+            cancelled_ids.append(str(pipeline.id))
+
+        if stale_pipelines:
+            await db.commit()
+            logger.info(
+                "Cancelled stale pipelines", count=len(cancelled_ids), ids=cancelled_ids
+            )
+
+        return {
+            "status": "completed",
+            "cancelled_pipelines": len(stale_pipelines),
+        }
