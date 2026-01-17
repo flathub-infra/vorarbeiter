@@ -589,6 +589,13 @@ class BuildPipeline:
                                 original_pipeline_id=str(build_pipeline_id),
                                 reprocheck_pipeline_id=str(pipeline.id),
                             )
+
+                        # Handle reprocheck issue tracking
+                        status_code = reprocheck_result.get("status_code")
+                        if status_code:
+                            await self._handle_reprocheck_issue_tracking(
+                                pipeline, build_pipeline_id, status_code
+                            )
                     else:
                         logger.warning(
                             "Original pipeline not found",
@@ -634,6 +641,51 @@ class BuildPipeline:
                         pass
             updates["pipeline_status"] = status_value
             return pipeline, updates
+
+    async def _handle_reprocheck_issue_tracking(
+        self,
+        reprocheck_pipeline: Pipeline,
+        build_pipeline_id: uuid.UUID,
+        status_code: str,
+    ) -> None:
+        from app.services.reprocheck_issue import ReprocheckIssueService
+
+        try:
+            async with get_db() as issue_db:
+                build_pipeline = await issue_db.get(Pipeline, build_pipeline_id)
+                if not build_pipeline:
+                    logger.warning(
+                        "Could not find build pipeline for issue tracking",
+                        build_pipeline_id=str(build_pipeline_id),
+                        reprocheck_pipeline_id=str(reprocheck_pipeline.id),
+                    )
+                    return
+
+                issue_service = ReprocheckIssueService(issue_db)
+                await issue_service.handle_reprocheck_result(
+                    reprocheck_pipeline, build_pipeline, status_code
+                )
+        except Exception as e:
+            logger.error(
+                "Failed to handle reprocheck issue tracking",
+                reprocheck_pipeline_id=str(reprocheck_pipeline.id),
+                build_pipeline_id=str(build_pipeline_id),
+                status_code=status_code,
+                error=str(e),
+            )
+            try:
+                sentry_sdk.capture_exception(
+                    e,
+                    contexts={
+                        "reprocheck_issue": {
+                            "build_pipeline_id": str(build_pipeline_id),
+                            "reprocheck_pipeline_id": str(reprocheck_pipeline.id),
+                            "status_code": status_code,
+                        }
+                    },
+                )
+            except Exception:
+                pass
 
     async def handle_cost_callback(
         self,
