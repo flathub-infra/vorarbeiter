@@ -1268,3 +1268,214 @@ def test_pipeline_cost_callback_missing_cost(mock_get_db, sample_pipeline):
 
     assert response.status_code == 400
     assert "cost is required" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_supersedes_running_pipeline_on_start():
+    """Test that starting a new pipeline supersedes conflicting RUNNING pipelines."""
+    new_pipeline_id = uuid.uuid4()
+    old_pipeline_id = uuid.uuid4()
+
+    old_pipeline = Pipeline(
+        id=old_pipeline_id,
+        app_id="org.example.app",
+        params={"ref": "refs/heads/master"},
+        status=PipelineStatus.RUNNING,
+        flat_manager_repo="stable",
+        build_id=111,
+        provider_data={"run_id": "12345"},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    new_pipeline = Pipeline(
+        id=new_pipeline_id,
+        app_id="org.example.app",
+        params={"ref": "refs/heads/master"},
+        status=PipelineStatus.PENDING,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = new_pipeline
+
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value.all.return_value = [old_pipeline]
+    mock_db_session.execute.return_value = mock_execute_result
+
+    mock_httpx_instance = MagicMock()
+    mock_httpx_instance.post = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 99999, "token": "test-token"}
+    mock_httpx_instance.post.return_value = mock_response
+
+    mock_github_provider = AsyncMock(spec=GitHubActionsService)
+    mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
+
+    mock_flat_manager = MagicMock()
+    mock_flat_manager.create_build = AsyncMock(return_value={"id": 99999})
+    mock_flat_manager.create_token_subset = AsyncMock(return_value="upload-token")
+    mock_flat_manager.get_build_url = MagicMock(
+        return_value="https://flat-manager/build/99999"
+    )
+    mock_flat_manager.purge = AsyncMock()
+
+    mock_github_actions_cancel = AsyncMock()
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        with patch("httpx.AsyncClient") as mock_httpx_client:
+            with patch(
+                "app.pipelines.build.GitHubActionsService"
+            ) as mock_github_actions_class:
+                mock_get_db.return_value.__aenter__.return_value = mock_db_session
+                mock_httpx_client.return_value.__aenter__.return_value = (
+                    mock_httpx_instance
+                )
+                mock_github_actions_class.return_value.cancel = (
+                    mock_github_actions_cancel
+                )
+
+                build_pipeline = BuildPipeline()
+                build_pipeline.provider = mock_github_provider
+                build_pipeline.flat_manager = mock_flat_manager
+
+                await build_pipeline.start_pipeline(new_pipeline_id)
+
+    assert old_pipeline.status == PipelineStatus.SUPERSEDED
+    mock_flat_manager.purge.assert_called_once_with(111)
+    mock_github_actions_cancel.assert_called_once_with(
+        str(old_pipeline_id), {"run_id": "12345"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_does_not_supersede_test_repo_pipelines():
+    """Test that pipelines in 'test' repo are NOT superseded."""
+    new_pipeline_id = uuid.uuid4()
+    old_pipeline_id = uuid.uuid4()
+
+    old_pipeline = Pipeline(
+        id=old_pipeline_id,
+        app_id="org.example.app",
+        params={"ref": "refs/pull/123/head"},
+        status=PipelineStatus.RUNNING,
+        flat_manager_repo="test",
+        build_id=111,
+        provider_data={"run_id": "12345"},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    new_pipeline = Pipeline(
+        id=new_pipeline_id,
+        app_id="org.example.app",
+        params={"ref": "refs/pull/456/head"},
+        status=PipelineStatus.PENDING,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = new_pipeline
+
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value.all.return_value = []
+    mock_db_session.execute.return_value = mock_execute_result
+
+    mock_httpx_instance = MagicMock()
+    mock_httpx_instance.post = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 99999, "token": "test-token"}
+    mock_httpx_instance.post.return_value = mock_response
+
+    mock_github_provider = AsyncMock(spec=GitHubActionsService)
+    mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
+
+    mock_flat_manager = MagicMock()
+    mock_flat_manager.create_build = AsyncMock(return_value={"id": 99999})
+    mock_flat_manager.create_token_subset = AsyncMock(return_value="upload-token")
+    mock_flat_manager.get_build_url = MagicMock(
+        return_value="https://flat-manager/build/99999"
+    )
+    mock_flat_manager.purge = AsyncMock()
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        with patch("httpx.AsyncClient") as mock_httpx_client:
+            mock_get_db.return_value.__aenter__.return_value = mock_db_session
+            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+
+            build_pipeline = BuildPipeline()
+            build_pipeline.provider = mock_github_provider
+            build_pipeline.flat_manager = mock_flat_manager
+
+            await build_pipeline.start_pipeline(new_pipeline_id)
+
+    assert old_pipeline.status == PipelineStatus.RUNNING
+    mock_flat_manager.purge.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_supersedes_pending_pipeline_without_build_id():
+    """Test that PENDING pipelines without build_id are superseded gracefully."""
+    new_pipeline_id = uuid.uuid4()
+    old_pipeline_id = uuid.uuid4()
+
+    old_pipeline = Pipeline(
+        id=old_pipeline_id,
+        app_id="org.example.app",
+        params={"ref": "refs/heads/beta"},
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="beta",
+        build_id=None,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    new_pipeline = Pipeline(
+        id=new_pipeline_id,
+        app_id="org.example.app",
+        params={"ref": "refs/heads/beta"},
+        status=PipelineStatus.PENDING,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = new_pipeline
+
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value.all.return_value = [old_pipeline]
+    mock_db_session.execute.return_value = mock_execute_result
+
+    mock_httpx_instance = MagicMock()
+    mock_httpx_instance.post = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 99999, "token": "test-token"}
+    mock_httpx_instance.post.return_value = mock_response
+
+    mock_github_provider = AsyncMock(spec=GitHubActionsService)
+    mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
+
+    mock_flat_manager = MagicMock()
+    mock_flat_manager.create_build = AsyncMock(return_value={"id": 99999})
+    mock_flat_manager.create_token_subset = AsyncMock(return_value="upload-token")
+    mock_flat_manager.get_build_url = MagicMock(
+        return_value="https://flat-manager/build/99999"
+    )
+    mock_flat_manager.purge = AsyncMock()
+
+    with patch("app.pipelines.build.get_db") as mock_get_db:
+        with patch("httpx.AsyncClient") as mock_httpx_client:
+            mock_get_db.return_value.__aenter__.return_value = mock_db_session
+            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+
+            build_pipeline = BuildPipeline()
+            build_pipeline.provider = mock_github_provider
+            build_pipeline.flat_manager = mock_flat_manager
+
+            await build_pipeline.start_pipeline(new_pipeline_id)
+
+    assert old_pipeline.status == PipelineStatus.SUPERSEDED
+    mock_flat_manager.purge.assert_not_called()

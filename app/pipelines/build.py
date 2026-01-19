@@ -7,7 +7,7 @@ import httpx
 import sentry_sdk
 import structlog
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -159,6 +159,70 @@ class BuildPipeline:
             await db.commit()
             return pipeline
 
+    async def _supersede_conflicting_pipelines(
+        self,
+        db: AsyncSession,
+        pipeline: Pipeline,
+        flat_manager_repo: str,
+    ) -> None:
+        if flat_manager_repo not in ["stable", "beta"]:
+            return
+
+        query = select(Pipeline).where(
+            Pipeline.app_id == pipeline.app_id,
+            Pipeline.flat_manager_repo == flat_manager_repo,
+            Pipeline.status.in_([PipelineStatus.RUNNING, PipelineStatus.PENDING]),
+            Pipeline.id != pipeline.id,
+        )
+        result = await db.execute(query)
+        conflicting = list(result.scalars().all())
+
+        for old_pipeline in conflicting:
+            old_pipeline.status = PipelineStatus.SUPERSEDED
+            logger.info(
+                "Superseded conflicting pipeline at start time",
+                superseded_pipeline_id=str(old_pipeline.id),
+                new_pipeline_id=str(pipeline.id),
+                app_id=pipeline.app_id,
+                flat_manager_repo=flat_manager_repo,
+            )
+
+            if old_pipeline.build_id:
+                try:
+                    await self.flat_manager.purge(old_pipeline.build_id)
+                    logger.info(
+                        "Purged build for superseded pipeline",
+                        build_id=old_pipeline.build_id,
+                        pipeline_id=str(old_pipeline.id),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to purge build for superseded pipeline",
+                        build_id=old_pipeline.build_id,
+                        pipeline_id=str(old_pipeline.id),
+                        error=str(e),
+                    )
+
+            run_id = (old_pipeline.provider_data or {}).get("run_id")
+            if run_id:
+                try:
+                    github_actions = GitHubActionsService()
+                    await github_actions.cancel(
+                        str(old_pipeline.id), old_pipeline.provider_data
+                    )
+                    logger.info(
+                        "Cancelled GitHub Actions run for superseded pipeline",
+                        run_id=run_id,
+                        pipeline_id=str(old_pipeline.id),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to cancel GitHub Actions run",
+                        run_id=run_id,
+                        pipeline_id=str(old_pipeline.id),
+                        error=str(e),
+                    )
+
     async def start_pipeline(
         self,
         pipeline_id: uuid.UUID,
@@ -195,6 +259,9 @@ class BuildPipeline:
                     flat_manager_repo = "test"
 
             pipeline.flat_manager_repo = flat_manager_repo
+
+            await self._supersede_conflicting_pipelines(db, pipeline, flat_manager_repo)
+
             workflow_id = pipeline.params.get("workflow_id", "build.yml")
             build_type = pipeline.params["build_type"]
 
