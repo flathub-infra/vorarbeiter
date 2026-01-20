@@ -699,6 +699,21 @@ class BuildPipeline:
                         )
                     except Exception:
                         pass
+
+            try:
+                from app.services.reprocheck_notification import (
+                    ReprocheckNotificationService,
+                )
+
+                notification_service = ReprocheckNotificationService()
+                await notification_service.handle_reprocheck_result(db, pipeline)
+            except Exception as e:
+                logger.warning(
+                    "Failed to process reprocheck notification",
+                    pipeline_id=str(pipeline.id),
+                    error=str(e),
+                )
+
             updates["pipeline_status"] = status_value
             return pipeline, updates
 

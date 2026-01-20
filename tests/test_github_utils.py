@@ -357,14 +357,15 @@ async def test_create_github_issue_success(mock_settings):
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
         mock_response.json.return_value = {
-            "html_url": "https://github.com/flathub/test-app/issues/123"
+            "html_url": "https://github.com/flathub/test-app/issues/123",
+            "number": 123,
         }
 
         mock_client_instance = AsyncMock()
         mock_client_instance.post = AsyncMock(return_value=mock_response)
         MockClient.return_value.__aenter__.return_value = mock_client_instance
 
-        await create_github_issue(
+        result = await create_github_issue(
             git_repo="flathub/test-app",
             title="Build failed",
             body="The build failed with error XYZ",
@@ -377,6 +378,7 @@ async def test_create_github_issue_success(mock_settings):
         assert call_args[1]["json"]["title"] == "Build failed"
         assert call_args[1]["json"]["body"] == "The build failed with error XYZ"
         assert call_args[1]["headers"]["Authorization"] == "token test-token"
+        assert result == ("https://github.com/flathub/test-app/issues/123", 123)
 
 
 @pytest.mark.asyncio
@@ -443,21 +445,24 @@ async def test_create_github_issue_unexpected_error(mock_settings):
 
 
 @pytest.mark.asyncio
-async def test_create_github_issue_no_html_url(mock_settings):
+async def test_create_github_issue_no_issue_number(mock_settings):
     with patch("httpx.AsyncClient") as MockClient:
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {}
+        mock_response.json.return_value = {
+            "html_url": "https://github.com/flathub/test-app/issues/123"
+        }
 
         mock_client_instance = AsyncMock()
         mock_client_instance.post = AsyncMock(return_value=mock_response)
         MockClient.return_value.__aenter__.return_value = mock_client_instance
 
-        await create_github_issue(
+        result = await create_github_issue(
             git_repo="flathub/test-app", title="Build failed", body="Error details"
         )
 
         mock_client_instance.post.assert_called_once()
+        assert result is None
 
 
 @pytest.mark.asyncio

@@ -352,6 +352,10 @@ async def test_notify_pr_build_complete_missing_params(github_notifier, mock_pip
 @pytest.mark.asyncio
 async def test_create_stable_build_failure_issue(github_notifier, mock_pipeline):
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.return_value = (
+            "https://github.com/flathub/org.test.App/issues/1",
+            1,
+        )
         await github_notifier.create_stable_build_failure_issue(mock_pipeline)
 
         expected_body = (
@@ -390,6 +394,10 @@ async def test_create_stable_build_failure_issue_no_log_url(
     mock_pipeline.log_url = None
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.return_value = (
+            "https://github.com/flathub/org.test.App/issues/1",
+            1,
+        )
         await github_notifier.create_stable_build_failure_issue(mock_pipeline)
 
         expected_body = (
@@ -531,6 +539,10 @@ async def test_create_stable_job_failure_issue_commit(github_notifier, mock_pipe
     }
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.return_value = (
+            "https://github.com/flathub/org.test.App/issues/1",
+            1,
+        )
         await github_notifier.create_stable_job_failure_issue(
             mock_pipeline, "commit", 12345, job_response
         )
@@ -569,6 +581,10 @@ async def test_create_stable_job_failure_issue_publish(github_notifier, mock_pip
     }
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.return_value = (
+            "https://github.com/flathub/org.test.App/issues/1",
+            1,
+        )
         await github_notifier.create_stable_job_failure_issue(
             mock_pipeline, "publish", 54321, job_response
         )
@@ -608,6 +624,10 @@ async def test_create_stable_job_failure_issue_update_repo(
     }
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.return_value = (
+            "https://github.com/flathub/org.test.App/issues/1",
+            1,
+        )
         await github_notifier.create_stable_job_failure_issue(
             mock_pipeline, "update-repo", 98765, job_response
         )
@@ -643,6 +663,10 @@ async def test_create_stable_job_failure_issue_beta_repo(
     job_response = {"id": 12345, "log": "Error message"}
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.return_value = (
+            "https://github.com/flathub/org.test.App/issues/1",
+            1,
+        )
         await github_notifier.create_stable_job_failure_issue(
             mock_pipeline, "commit", 12345, job_response
         )
@@ -673,6 +697,10 @@ async def test_create_stable_job_failure_issue_long_log(github_notifier, mock_pi
     job_response = {"id": 12345, "log": long_log}
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.return_value = (
+            "https://github.com/flathub/org.test.App/issues/1",
+            1,
+        )
         await github_notifier.create_stable_job_failure_issue(
             mock_pipeline, "commit", 12345, job_response
         )
@@ -690,6 +718,10 @@ async def test_create_stable_job_failure_issue_no_log(github_notifier, mock_pipe
     job_response = {"id": 12345}
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.return_value = (
+            "https://github.com/flathub/org.test.App/issues/1",
+            1,
+        )
         await github_notifier.create_stable_job_failure_issue(
             mock_pipeline, "commit", 12345, job_response
         )
@@ -704,6 +736,10 @@ async def test_create_stable_job_failure_issue_no_job_response(
     github_notifier, mock_pipeline
 ):
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        mock_issue.return_value = (
+            "https://github.com/flathub/org.test.App/issues/1",
+            1,
+        )
         await github_notifier.create_stable_job_failure_issue(
             mock_pipeline, "commit", 12345, None
         )

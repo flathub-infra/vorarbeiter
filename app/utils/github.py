@@ -322,7 +322,13 @@ async def create_pr_comment(
     return False
 
 
-async def create_github_issue(git_repo: str, title: str, body: str) -> str | None:
+async def create_github_issue(
+    git_repo: str, title: str, body: str
+) -> tuple[str, int] | None:
+    """Create a GitHub issue.
+
+    Returns (issue_url, issue_number) on success, None on failure.
+    """
     if not git_repo:
         logger.error("Missing git_repo for GitHub issue. Skipping issue creation.")
         return None
@@ -336,13 +342,17 @@ async def create_github_issue(git_repo: str, title: str, body: str) -> str | Non
         context={"git_repo": git_repo},
     )
     if response:
-        issue_url = response.json().get("html_url", "unknown URL")
+        data = response.json()
+        issue_url = data.get("html_url", "unknown URL")
+        issue_number = data.get("number")
         logger.info(
             "Successfully created GitHub issue",
             git_repo=git_repo,
             issue_url=issue_url,
+            issue_number=issue_number,
         )
-        return issue_url
+        if issue_number is not None:
+            return (issue_url, issue_number)
     return None
 
 
@@ -366,6 +376,71 @@ async def close_github_issue(git_repo: str, issue_number: int) -> bool:
     if response:
         logger.info(
             "Successfully closed GitHub issue",
+            git_repo=git_repo,
+            issue_number=issue_number,
+        )
+        return True
+    return False
+
+
+async def get_github_issue(git_repo: str, issue_number: int) -> dict | None:
+    """Get a GitHub issue by number.
+
+    Returns {"state": "open"|"closed", "state_reason": "completed"|"not_planned"|None}
+    on success, None on failure.
+    """
+    if not git_repo:
+        logger.error("Missing git_repo for GitHub issue. Skipping issue fetch.")
+        return None
+
+    if not issue_number:
+        logger.error("Missing issue number. Skipping issue fetch.")
+        return None
+
+    url = f"https://api.github.com/repos/{git_repo}/issues/{issue_number}"
+    client = get_github_client()
+    response = await client.request(
+        "get",
+        url,
+        context={"git_repo": git_repo, "issue_number": issue_number},
+    )
+    if response:
+        data = response.json()
+        result = {
+            "state": data.get("state"),
+            "state_reason": data.get("state_reason"),
+        }
+        logger.info(
+            "Successfully fetched GitHub issue",
+            git_repo=git_repo,
+            issue_number=issue_number,
+            state=result["state"],
+            state_reason=result["state_reason"],
+        )
+        return result
+    return None
+
+
+async def reopen_github_issue(git_repo: str, issue_number: int) -> bool:
+    if not git_repo:
+        logger.error("Missing git_repo for GitHub issue. Skipping issue reopen.")
+        return False
+
+    if not issue_number:
+        logger.error("Missing issue number. Skipping issue reopen.")
+        return False
+
+    url = f"https://api.github.com/repos/{git_repo}/issues/{issue_number}"
+    client = get_github_client()
+    response = await client.request(
+        "patch",
+        url,
+        json={"state": "open"},
+        context={"git_repo": git_repo, "issue_number": issue_number},
+    )
+    if response:
+        logger.info(
+            "Successfully reopened GitHub issue",
             git_repo=git_repo,
             issue_number=issue_number,
         )

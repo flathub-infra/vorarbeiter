@@ -1,6 +1,7 @@
 from app.models.webhook_event import WebhookEvent, WebhookSource, Base
 from app.models.pipeline import Pipeline, PipelineStatus, PipelineTrigger
 from app.models.github_task import GitHubTask, GitHubTaskStatus
+from app.models.reprocheck_issue import ReprocheckIssue
 
 __all__ = [
     "WebhookEvent",
@@ -11,4 +12,5 @@ __all__ = [
     "PipelineTrigger",
     "GitHubTask",
     "GitHubTaskStatus",
+    "ReprocheckIssue",
 ]

@@ -283,13 +283,14 @@ class GitHubNotifier:
 
             body += "\n\ncc @flathub/build-moderation"
 
-            issue_url = await create_github_issue(
+            result = await create_github_issue(
                 git_repo=git_repo,
                 title=title,
                 body=body,
             )
 
-            if issue_url:
+            if result:
+                issue_url, _ = result
                 logger.info(
                     "Successfully created GitHub issue",
                     pipeline_id=str(pipeline.id),
@@ -362,13 +363,14 @@ class GitHubNotifier:
 
             body += "\ncc @flathub/build-moderation"
 
-            issue_url = await create_github_issue(
+            result = await create_github_issue(
                 git_repo=git_repo,
                 title=title,
                 body=body,
             )
 
-            if issue_url:
+            if result:
+                issue_url, _ = result
                 logger.info(
                     "Successfully created GitHub issue",
                     pipeline_id=str(pipeline.id),
