@@ -4,6 +4,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models import Pipeline, ReprocheckIssue
 from app.utils.github import (
     add_issue_comment,
@@ -67,7 +68,10 @@ class ReprocheckNotificationService:
 
         app_id = pipeline.app_id
         sha = (build_pipeline.params or {}).get("sha", "unknown")
-        log_url = reprocheck_result.get("result_url") or pipeline.log_url
+        if reprocheck_result.get("result_url"):
+            log_url = f"{settings.base_url}/diffoscope/{pipeline.id}"
+        else:
+            log_url = pipeline.log_url
 
         if self._is_failure(status_code):
             await self._handle_failure(db, app_id, git_repo, status_code, sha, log_url)
@@ -179,7 +183,7 @@ class ReprocheckNotificationService:
         sha: str,
         log_url: str | None,
     ) -> None:
-        title = f"Reprocheck failed: {failure_desc}"
+        title = "Reproducible build check failed"
         body = f"Reprocheck failed with status: **{failure_desc}**\n\n"
         body += f"- Commit: {sha}\n"
         if log_url:

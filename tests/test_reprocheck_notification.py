@@ -74,7 +74,7 @@ async def test_handle_failure_creates_new_issue(
             mock_create.assert_called_once()
             call_args = mock_create.call_args
             assert call_args[0][0] == "flathub/org.test.App"
-            assert "not reproducible" in call_args[0][1]
+            assert call_args[0][1] == "Reproducible build check failed"
             assert "abc123def456" in call_args[0][2]
 
             from sqlalchemy import select
