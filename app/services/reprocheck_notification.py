@@ -31,6 +31,13 @@ class ReprocheckNotificationService:
             )
             return
 
+        if status_code == "2":
+            logger.info(
+                "Ignoring unhandled reprocheck result",
+                pipeline_id=str(pipeline.id),
+            )
+            return
+
         build_pipeline_id = (pipeline.params or {}).get("build_pipeline_id")
         if not build_pipeline_id:
             logger.warning(
