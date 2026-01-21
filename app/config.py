@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     flat_manager_token: str = "test_repo_token"
     flat_manager_url: str = "https://hub.flathub.org"
     sentry_dsn: str | None = None
+    ff_reprocheck_issues: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",
