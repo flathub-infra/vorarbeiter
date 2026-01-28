@@ -1,5 +1,5 @@
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,11 +23,6 @@ def mock_pipeline():
         build_id=123,
         params={"pr_number": "42", "repo": "flathub/org.test.App"},
     )
-
-
-@pytest.fixture
-def mock_db():
-    return AsyncMock()
 
 
 @pytest.mark.asyncio

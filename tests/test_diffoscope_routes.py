@@ -2,11 +2,10 @@ import io
 import uuid
 import zipfile
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
@@ -17,11 +16,6 @@ from tests.conftest import create_mock_get_db
 @pytest.fixture
 def client():
     return TestClient(app)
-
-
-@pytest.fixture
-def mock_db():
-    return AsyncMock(spec=AsyncSession)
 
 
 @pytest.fixture

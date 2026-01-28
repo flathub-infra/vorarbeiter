@@ -14,11 +14,6 @@ def job_monitor():
 
 
 @pytest.fixture
-def mock_db():
-    return AsyncMock()
-
-
-@pytest.fixture
 def stable_pipeline_publishing():
     return Pipeline(
         id=uuid.uuid4(),

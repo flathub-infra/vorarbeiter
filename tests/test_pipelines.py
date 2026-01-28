@@ -15,11 +15,6 @@ from tests.conftest import create_mock_get_db
 
 
 @pytest.fixture
-def mock_db():
-    return AsyncMock(spec=AsyncSession)
-
-
-@pytest.fixture
 def mock_provider():
     provider = AsyncMock(spec=GitHubActionsService)
     return provider
@@ -287,21 +282,13 @@ async def test_handle_status_callback_failure_cancellation_check_error(
 
 
 @pytest.fixture
-def mock_db_session():
-    mock_session = AsyncMock(spec=AsyncSession)
-    mock_session.commit = AsyncMock()
-    mock_session.flush = AsyncMock()
-    return mock_session
-
-
-@pytest.fixture
-def mock_get_db(mock_db_session):
+def mock_get_db(mock_db):
     @asynccontextmanager
     async def _mock_get_db(*, use_replica: bool = False):
-        yield mock_db_session
+        yield mock_db
 
     with patch("app.routes.pipelines.get_db", _mock_get_db):
-        yield mock_db_session
+        yield mock_db
 
 
 @pytest.fixture

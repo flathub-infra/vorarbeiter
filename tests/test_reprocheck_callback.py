@@ -50,11 +50,6 @@ def reprocheck_pipeline(original_pipeline):
     )
 
 
-@pytest.fixture
-def mock_db():
-    return AsyncMock(spec=AsyncSession)
-
-
 @pytest.mark.asyncio
 async def test_reprocheck_callback_updates_original_pipeline_repro_id(
     build_pipeline, original_pipeline, reprocheck_pipeline, mock_db

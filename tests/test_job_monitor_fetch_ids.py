@@ -1,5 +1,5 @@
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -10,11 +10,6 @@ from app.services.job_monitor import JobMonitor
 @pytest.fixture
 def job_monitor():
     return JobMonitor()
-
-
-@pytest.fixture
-def mock_db():
-    return AsyncMock()
 
 
 @pytest.mark.asyncio

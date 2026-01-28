@@ -1,10 +1,9 @@
 import uuid
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
 from app.services.publishing import PublishingService, PublishResult
@@ -13,11 +12,6 @@ from app.services.publishing import PublishingService, PublishResult
 @pytest.fixture
 def publishing_service():
     return PublishingService()
-
-
-@pytest.fixture
-def mock_db():
-    return AsyncMock(spec=AsyncSession)
 
 
 @pytest.fixture

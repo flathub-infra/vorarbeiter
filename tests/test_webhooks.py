@@ -135,39 +135,19 @@ SAMPLE_ADMIN_PING_COMMENT_PAYLOAD = {
 
 
 @pytest.fixture
-def mock_db_session():
-    """Create a mock database session."""
-    mock_session = AsyncMock(spec=AsyncSession)
-    mock_session.commit = AsyncMock()
-    mock_session.refresh = AsyncMock()
-    mock_session.flush = AsyncMock()
-    return mock_session
-
-
-@pytest.fixture
-def mock_db(mock_db_session):
-    """Mock the database session factory."""
-
-    mock_get_db = create_mock_get_db(mock_db_session)
-
-    with patch("app.routes.webhooks.get_db", mock_get_db):
-        yield mock_db_session
-
-
-@pytest.fixture
 def client():
     """Create a test client."""
     return TestClient(app)
 
 
-def test_receive_github_webhook_success(client: TestClient, mock_db_session):
+def test_receive_github_webhook_success(client: TestClient, mock_db):
     """Test successful ingestion of a GitHub webhook."""
     delivery_id = str(uuid.uuid4())
     headers = {
         "X-GitHub-Delivery": delivery_id,
     }
 
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.routes.webhooks.get_db", mock_get_db):
         with patch("app.routes.webhooks.settings.github_webhook_secret", ""):
@@ -187,8 +167,8 @@ def test_receive_github_webhook_success(client: TestClient, mock_db_session):
                     assert response_data["message"] == "Webhook received"
                     assert response_data["event_id"] == delivery_id
 
-                    assert mock_db_session.add.called
-                    assert mock_db_session.commit.called
+                    assert mock_db.add.called
+                    assert mock_db.commit.called
 
 
 def test_receive_github_webhook_missing_header(client: TestClient):
@@ -261,9 +241,7 @@ def test_receive_github_webhook_nested_key_error(client: TestClient):
         assert "Missing expected key in GitHub payload" in response.json()["detail"]
 
 
-def test_webhook_with_signature_verification_success(
-    client: TestClient, mock_db_session
-):
+def test_webhook_with_signature_verification_success(client: TestClient, mock_db):
     """Test webhook signature verification."""
     # Save the original setting
     original_secret = settings.github_webhook_secret
@@ -282,7 +260,7 @@ def test_webhook_with_signature_verification_success(
         }
 
         mock_db_context = AsyncMock()
-        mock_db_context.__aenter__.return_value = mock_db_session
+        mock_db_context.__aenter__.return_value = mock_db
         with (
             patch("app.routes.webhooks.get_db", return_value=mock_db_context),
             patch("app.routes.webhooks.create_pipeline", return_value=None),
@@ -434,7 +412,7 @@ def test_should_not_store_event():
         assert should_store_event(payload) is False
 
 
-def test_receive_github_webhook_ignore_event(client: TestClient, mock_db_session):
+def test_receive_github_webhook_ignore_event(client: TestClient, mock_db):
     """Test that events not matching criteria are received but not stored."""
     delivery_id = str(uuid.uuid4())
     headers = {
@@ -451,11 +429,11 @@ def test_receive_github_webhook_ignore_event(client: TestClient, mock_db_session
         assert response_data["message"] == "Webhook received"
         assert response_data["event_id"] == delivery_id
 
-        mock_db_session.add.assert_not_called()
+        mock_db.add.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_receive_github_webhook_ignores_bot_pr(client, mock_db_session):
+async def test_receive_github_webhook_ignores_bot_pr(client, mock_db):
     headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
 
     with (
@@ -530,9 +508,7 @@ async def test_is_submodule_only_pr(mock_files_response, expected):
 
 
 @pytest.mark.asyncio
-async def test_receive_github_webhook_ignores_submodule_only_pr(
-    client, mock_db_session
-):
+async def test_receive_github_webhook_ignores_submodule_only_pr(client, mock_db):
     headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
 
     sample_payload = {
@@ -959,10 +935,10 @@ async def test_create_pipeline_pr():
     mock_pipeline_service.create_pipeline.return_value = mock_pipeline
     mock_pipeline_service.start_pipeline.return_value = mock_pipeline
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = mock_pipeline
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_db.get.return_value = mock_pipeline
 
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service):
         with patch("app.routes.webhooks.get_db", mock_get_db):
@@ -1009,10 +985,10 @@ async def test_create_pipeline_push():
     mock_pipeline_service.create_pipeline.return_value = mock_pipeline
     mock_pipeline_service.start_pipeline.return_value = mock_pipeline
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = mock_pipeline
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_db.get.return_value = mock_pipeline
 
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service):
         with patch("app.routes.webhooks.get_db", mock_get_db):
@@ -1079,10 +1055,10 @@ async def test_create_pipeline_comment():
     mock_pipeline_service.create_pipeline.return_value = mock_pipeline
     mock_pipeline_service.start_pipeline.return_value = mock_pipeline
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = mock_pipeline
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_db.get.return_value = mock_pipeline
 
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service):
         with patch("app.routes.webhooks.get_db", mock_get_db):
@@ -1104,7 +1080,7 @@ async def test_create_pipeline_comment():
 
 
 @pytest.mark.asyncio
-async def test_receive_webhook_creates_pipeline(client, mock_db_session):
+async def test_receive_webhook_creates_pipeline(client, mock_db):
     """Test that PR webhook events create pipelines."""
     delivery_id = str(uuid.uuid4())
     pipeline_id = uuid.uuid4()
@@ -1112,7 +1088,7 @@ async def test_receive_webhook_creates_pipeline(client, mock_db_session):
         "X-GitHub-Delivery": delivery_id,
     }
 
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.routes.webhooks.get_db", mock_get_db):
         with patch(
@@ -1136,8 +1112,8 @@ async def test_receive_webhook_creates_pipeline(client, mock_db_session):
                     assert response_data["event_id"] == delivery_id
                     assert response_data["pipeline_id"] == str(pipeline_id)
 
-                    assert mock_db_session.add.called
-                    assert mock_db_session.commit.called
+                    assert mock_db.add.called
+                    assert mock_db.commit.called
 
 
 @pytest.mark.asyncio
@@ -1165,8 +1141,8 @@ async def test_create_pipeline_admin_ping():
         actor="test-actor",
     )
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db)
 
     with (
         patch(
@@ -1489,8 +1465,8 @@ async def test_create_pipeline_pr_closed_state():
         actor="test-actor",
     )
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.routes.webhooks.get_db", mock_get_db):
         with patch("app.routes.webhooks.logger") as mock_logger:
@@ -1523,8 +1499,8 @@ async def test_create_pipeline_pr_opened_closed_state():
         actor="test-actor",
     )
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.routes.webhooks.get_db", mock_get_db):
         with patch("app.routes.webhooks.logger") as mock_logger:
@@ -1557,8 +1533,8 @@ async def test_create_pipeline_pr_reopened_closed_state():
         actor="test-actor",
     )
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.routes.webhooks.get_db", mock_get_db):
         with patch("app.routes.webhooks.logger") as mock_logger:
@@ -1587,8 +1563,8 @@ async def test_create_pipeline_bot_build_closed_pr():
         actor="test-actor",
     )
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db)
 
     mock_pr_response = {
         "number": 42,
@@ -1645,8 +1621,8 @@ async def test_create_pipeline_bot_build_merged_pr():
         actor="test-actor",
     )
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db)
 
     mock_pr_response = {
         "number": 42,
@@ -1716,9 +1692,9 @@ async def test_create_pipeline_bot_build_open_pr_continues():
     mock_pipeline_service.create_pipeline.return_value = mock_pipeline
     mock_pipeline_service.start_pipeline.return_value = mock_pipeline
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = mock_pipeline
-    mock_get_db = create_mock_get_db(mock_db_session)
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_db.get.return_value = mock_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
 
     mock_pr_response = {"number": 42, "state": "open", "head": {"sha": "abcdef123456"}}
 
