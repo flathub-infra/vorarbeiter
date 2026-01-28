@@ -34,10 +34,7 @@ async def test_job_monitor_skips_notifications_for_test_builds(mock_test_pipelin
         with patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
         ) as mock_notify_completed:
-            db = AsyncMock()
-            result = await job_monitor._process_succeeded_pipeline(
-                db, mock_test_pipeline
-            )
+            result = await job_monitor._process_succeeded_pipeline(mock_test_pipeline)
 
             assert result is True
             assert mock_test_pipeline.status == PipelineStatus.COMMITTED

@@ -54,8 +54,7 @@ async def test_job_monitor_commit_job_success(mock_pipeline):
         with patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
         ) as mock_notify_completed:
-            db = AsyncMock()
-            result = await job_monitor._process_succeeded_pipeline(db, mock_pipeline)
+            result = await job_monitor._process_succeeded_pipeline(mock_pipeline)
 
             assert result is True
             assert mock_pipeline.status == PipelineStatus.COMMITTED
@@ -76,8 +75,7 @@ async def test_job_monitor_commit_job_failure(mock_pipeline):
         with patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
         ) as mock_notify_completed:
-            db = AsyncMock()
-            result = await job_monitor._process_succeeded_pipeline(db, mock_pipeline)
+            result = await job_monitor._process_succeeded_pipeline(mock_pipeline)
 
             assert result is True
             assert mock_pipeline.status == PipelineStatus.FAILED
@@ -106,8 +104,7 @@ async def test_job_monitor_publish_job_with_update_repo(mock_pipeline):
             with patch.object(
                 job_monitor, "_notify_flat_manager_job_started"
             ) as mock_notify_started:
-                db = AsyncMock()
-                result = await job_monitor._process_publish_job(db, mock_pipeline)
+                result = await job_monitor._process_publish_job(mock_pipeline)
 
                 assert result is True
                 assert mock_pipeline.status == PipelineStatus.PUBLISHING
@@ -137,8 +134,7 @@ async def test_job_monitor_update_repo_job_success(mock_pipeline):
         with patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
         ) as mock_notify_completed:
-            db = AsyncMock()
-            result = await job_monitor._process_update_repo_job(db, mock_pipeline)
+            result = await job_monitor._process_update_repo_job(mock_pipeline)
 
             assert result is True
             assert mock_pipeline.status == PipelineStatus.PUBLISHED

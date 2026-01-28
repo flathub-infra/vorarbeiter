@@ -27,23 +27,19 @@ def mock_pipeline():
 
 @pytest.mark.asyncio
 async def test_check_and_update_pipeline_jobs_succeeded_to_committed(
-    job_monitor, mock_pipeline, mock_db
+    job_monitor, mock_pipeline
 ):
     with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
         mock_get_job.return_value = {"status": JobStatus.ENDED}
 
-        result = await job_monitor.check_and_update_pipeline_jobs(
-            mock_db, mock_pipeline
-        )
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_pipeline)
 
         assert result is True
         assert mock_pipeline.status == PipelineStatus.COMMITTED
 
 
 @pytest.mark.asyncio
-async def test_process_succeeded_pipeline_sends_pr_comment(
-    job_monitor, mock_pipeline, mock_db
-):
+async def test_process_succeeded_pipeline_sends_pr_comment(job_monitor, mock_pipeline):
     with (
         patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
         patch.object(
@@ -53,7 +49,7 @@ async def test_process_succeeded_pipeline_sends_pr_comment(
     ):
         mock_get_job.return_value = {"status": JobStatus.ENDED}
 
-        result = await job_monitor._process_succeeded_pipeline(mock_db, mock_pipeline)
+        result = await job_monitor._process_succeeded_pipeline(mock_pipeline)
 
         assert result is True
         assert mock_pipeline.status == PipelineStatus.COMMITTED
@@ -64,9 +60,7 @@ async def test_process_succeeded_pipeline_sends_pr_comment(
 
 
 @pytest.mark.asyncio
-async def test_check_and_update_pipeline_jobs_commit_failed(
-    job_monitor, mock_pipeline, mock_db
-):
+async def test_check_and_update_pipeline_jobs_commit_failed(job_monitor, mock_pipeline):
     job_response = {"status": JobStatus.BROKEN, "log": "Error: commit failed"}
 
     with (
@@ -75,9 +69,7 @@ async def test_check_and_update_pipeline_jobs_commit_failed(
     ):
         mock_get_job.return_value = job_response
 
-        result = await job_monitor.check_and_update_pipeline_jobs(
-            mock_db, mock_pipeline
-        )
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_pipeline)
 
         assert result is True
         assert mock_pipeline.status == PipelineStatus.FAILED
@@ -87,15 +79,11 @@ async def test_check_and_update_pipeline_jobs_commit_failed(
 
 
 @pytest.mark.asyncio
-async def test_check_and_update_pipeline_jobs_still_running(
-    job_monitor, mock_pipeline, mock_db
-):
+async def test_check_and_update_pipeline_jobs_still_running(job_monitor, mock_pipeline):
     with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
         mock_get_job.return_value = {"status": JobStatus.STARTED}
 
-        result = await job_monitor.check_and_update_pipeline_jobs(
-            mock_db, mock_pipeline
-        )
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_pipeline)
 
         assert result is False
         assert mock_pipeline.status == PipelineStatus.SUCCEEDED
@@ -103,38 +91,32 @@ async def test_check_and_update_pipeline_jobs_still_running(
 
 @pytest.mark.asyncio
 async def test_check_and_update_pipeline_jobs_no_commit_job_id(
-    job_monitor, mock_pipeline, mock_db
+    job_monitor, mock_pipeline
 ):
     mock_pipeline.commit_job_id = None
 
-    result = await job_monitor.check_and_update_pipeline_jobs(mock_db, mock_pipeline)
+    result = await job_monitor.check_and_update_pipeline_jobs(mock_pipeline)
 
     assert result is False
     assert mock_pipeline.status == PipelineStatus.SUCCEEDED
 
 
 @pytest.mark.asyncio
-async def test_check_and_update_pipeline_jobs_wrong_status(
-    job_monitor, mock_pipeline, mock_db
-):
+async def test_check_and_update_pipeline_jobs_wrong_status(job_monitor, mock_pipeline):
     mock_pipeline.status = PipelineStatus.RUNNING
 
-    result = await job_monitor.check_and_update_pipeline_jobs(mock_db, mock_pipeline)
+    result = await job_monitor.check_and_update_pipeline_jobs(mock_pipeline)
 
     assert result is False
     assert mock_pipeline.status == PipelineStatus.RUNNING
 
 
 @pytest.mark.asyncio
-async def test_check_and_update_pipeline_jobs_exception(
-    job_monitor, mock_pipeline, mock_db
-):
+async def test_check_and_update_pipeline_jobs_exception(job_monitor, mock_pipeline):
     with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
         mock_get_job.side_effect = Exception("API Error")
 
-        result = await job_monitor.check_and_update_pipeline_jobs(
-            mock_db, mock_pipeline
-        )
+        result = await job_monitor.check_and_update_pipeline_jobs(mock_pipeline)
 
         assert result is False
         assert mock_pipeline.status == PipelineStatus.SUCCEEDED
@@ -201,7 +183,7 @@ async def test_notify_committed_exception(job_monitor, mock_pipeline):
 
 
 @pytest.mark.asyncio
-async def test_process_publish_job_success(job_monitor, mock_db):
+async def test_process_publish_job_success(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -219,7 +201,7 @@ async def test_process_publish_job_success(job_monitor, mock_db):
             "results": '{"update-repo-job": 99999}',
         }
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is True
         assert pipeline.update_repo_job_id == 99999
@@ -227,7 +209,7 @@ async def test_process_publish_job_success(job_monitor, mock_db):
 
 @pytest.mark.asyncio
 async def test_check_published_pipeline_jobs_with_publish_job_success(
-    job_monitor, mock_db
+    job_monitor,
 ):
     pipeline = Pipeline(
         id=uuid.uuid4(),
@@ -245,7 +227,7 @@ async def test_check_published_pipeline_jobs_with_publish_job_success(
         mock_get_job.return_value = {"status": JobStatus.ENDED}
         mock_notify.return_value = None
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is True
         mock_get_job.assert_called_once_with(67890)
@@ -254,7 +236,7 @@ async def test_check_published_pipeline_jobs_with_publish_job_success(
 
 @pytest.mark.asyncio
 async def test_check_published_pipeline_jobs_with_publish_job_failed(
-    job_monitor, mock_db
+    job_monitor,
 ):
     """Test that published pipelines with failed publish_job_id get reported correctly"""
     pipeline = Pipeline(
@@ -273,7 +255,7 @@ async def test_check_published_pipeline_jobs_with_publish_job_failed(
         mock_get_job.return_value = {"status": JobStatus.BROKEN}
         mock_notify.return_value = None
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is True
         mock_get_job.assert_called_once_with(67890)
@@ -282,7 +264,7 @@ async def test_check_published_pipeline_jobs_with_publish_job_failed(
 
 @pytest.mark.asyncio
 async def test_check_published_pipeline_jobs_with_update_repo_job_success(
-    job_monitor, mock_db
+    job_monitor,
 ):
     """Test that published pipelines with update_repo_job_id get reported correctly"""
     pipeline = Pipeline(
@@ -301,7 +283,7 @@ async def test_check_published_pipeline_jobs_with_update_repo_job_success(
         mock_get_job.return_value = {"status": JobStatus.ENDED}
         mock_notify.return_value = None
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is True
         mock_get_job.assert_called_once_with(99999)
@@ -311,7 +293,7 @@ async def test_check_published_pipeline_jobs_with_update_repo_job_success(
 
 
 @pytest.mark.asyncio
-async def test_check_published_pipeline_jobs_with_both_jobs(job_monitor, mock_db):
+async def test_check_published_pipeline_jobs_with_both_jobs(job_monitor):
     """Test that published pipelines with both job IDs get both reported"""
     pipeline = Pipeline(
         id=uuid.uuid4(),
@@ -333,7 +315,7 @@ async def test_check_published_pipeline_jobs_with_both_jobs(job_monitor, mock_db
         ]
         mock_notify.return_value = None
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is True
         assert mock_get_job.call_count == 2
@@ -346,7 +328,7 @@ async def test_check_published_pipeline_jobs_with_both_jobs(job_monitor, mock_db
 
 
 @pytest.mark.asyncio
-async def test_check_published_pipeline_jobs_skips_test_repo(job_monitor, mock_db):
+async def test_check_published_pipeline_jobs_skips_test_repo(job_monitor):
     """Test that published pipelines in test repo are skipped"""
     pipeline = Pipeline(
         id=uuid.uuid4(),
@@ -361,7 +343,7 @@ async def test_check_published_pipeline_jobs_skips_test_repo(job_monitor, mock_d
         patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
         patch.object(job_monitor, "_notify_flat_manager_job_completed") as mock_notify,
     ):
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is False
         mock_get_job.assert_not_called()
@@ -369,7 +351,7 @@ async def test_check_published_pipeline_jobs_skips_test_repo(job_monitor, mock_d
 
 
 @pytest.mark.asyncio
-async def test_check_published_pipeline_jobs_handles_exception(job_monitor, mock_db):
+async def test_check_published_pipeline_jobs_handles_exception(job_monitor):
     """Test that exceptions during job status check are handled gracefully"""
     pipeline = Pipeline(
         id=uuid.uuid4(),
@@ -386,7 +368,7 @@ async def test_check_published_pipeline_jobs_handles_exception(job_monitor, mock
     ):
         mock_get_job.side_effect = Exception("API error")
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is False
         mock_get_job.assert_called_once_with(67890)
@@ -394,7 +376,7 @@ async def test_check_published_pipeline_jobs_handles_exception(job_monitor, mock
 
 
 @pytest.mark.asyncio
-async def test_process_publish_job_failed(job_monitor, mock_db):
+async def test_process_publish_job_failed(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -417,7 +399,7 @@ async def test_process_publish_job_failed(job_monitor, mock_db):
     ):
         mock_get_job.return_value = job_response
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is True
         assert pipeline.status == PipelineStatus.FAILED
@@ -427,7 +409,7 @@ async def test_process_publish_job_failed(job_monitor, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_process_publish_job_no_update_repo_id(job_monitor, mock_db):
+async def test_process_publish_job_no_update_repo_id(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -445,7 +427,7 @@ async def test_process_publish_job_no_update_repo_id(job_monitor, mock_db):
             "results": "{}",
         }
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is False
         assert pipeline.update_repo_job_id is None
@@ -453,7 +435,7 @@ async def test_process_publish_job_no_update_repo_id(job_monitor, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_process_publish_job_invalid_json(job_monitor, mock_db):
+async def test_process_publish_job_invalid_json(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -471,7 +453,7 @@ async def test_process_publish_job_invalid_json(job_monitor, mock_db):
             "results": "invalid json",
         }
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is False
         assert pipeline.update_repo_job_id is None
@@ -479,7 +461,7 @@ async def test_process_publish_job_invalid_json(job_monitor, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_process_update_repo_job_success(job_monitor, mock_db):
+async def test_process_update_repo_job_success(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -497,7 +479,7 @@ async def test_process_update_repo_job_success(job_monitor, mock_db):
             "kind": JobKind.UPDATE_REPO,
         }
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is True
         assert pipeline.status == PipelineStatus.PUBLISHED
@@ -505,7 +487,7 @@ async def test_process_update_repo_job_success(job_monitor, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_process_update_repo_job_failed(job_monitor, mock_db):
+async def test_process_update_repo_job_failed(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -529,7 +511,7 @@ async def test_process_update_repo_job_failed(job_monitor, mock_db):
     ):
         mock_get_job.return_value = job_response
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is True
         assert pipeline.status == PipelineStatus.FAILED
@@ -537,7 +519,7 @@ async def test_process_update_repo_job_failed(job_monitor, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_process_update_repo_job_still_running(job_monitor, mock_db):
+async def test_process_update_repo_job_still_running(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -555,14 +537,14 @@ async def test_process_update_repo_job_still_running(job_monitor, mock_db):
             "kind": JobKind.UPDATE_REPO,
         }
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is False
         assert pipeline.status == PipelineStatus.PUBLISHING
 
 
 @pytest.mark.asyncio
-async def test_process_wrong_job_kind_publish(job_monitor, mock_db):
+async def test_process_wrong_job_kind_publish(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -579,14 +561,14 @@ async def test_process_wrong_job_kind_publish(job_monitor, mock_db):
             "kind": JobKind.COMMIT,  # Wrong kind
         }
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is False
         assert pipeline.status == PipelineStatus.COMMITTED
 
 
 @pytest.mark.asyncio
-async def test_process_wrong_job_kind_update_repo(job_monitor, mock_db):
+async def test_process_wrong_job_kind_update_repo(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -604,7 +586,7 @@ async def test_process_wrong_job_kind_update_repo(job_monitor, mock_db):
             "kind": JobKind.PUBLISH,  # Wrong kind
         }
 
-        result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is False
         assert pipeline.status == PipelineStatus.PUBLISHING

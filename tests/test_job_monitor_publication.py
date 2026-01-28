@@ -43,7 +43,7 @@ def beta_pipeline_publishing():
 
 @pytest.mark.asyncio
 async def test_process_update_repo_job_success_calls_handle_publication(
-    job_monitor, mock_db, stable_pipeline_publishing
+    job_monitor, stable_pipeline_publishing
 ):
     """Test that successful update_repo_job calls BuildPipeline.handle_publication()."""
     with (
@@ -62,9 +62,7 @@ async def test_process_update_repo_job_success_calls_handle_publication(
         mock_build_pipeline_class.return_value = mock_build_pipeline
 
         # Call the method
-        result = await job_monitor._process_update_repo_job(
-            mock_db, stable_pipeline_publishing
-        )
+        result = await job_monitor._process_update_repo_job(stable_pipeline_publishing)
 
         # Verify results
         assert result is True
@@ -85,7 +83,7 @@ async def test_process_update_repo_job_success_calls_handle_publication(
 
 @pytest.mark.asyncio
 async def test_process_update_repo_job_success_handles_publication_errors(
-    job_monitor, mock_db, stable_pipeline_publishing
+    job_monitor, stable_pipeline_publishing
 ):
     """Test that errors in handle_publication don't fail the job monitoring."""
     with (
@@ -107,9 +105,7 @@ async def test_process_update_repo_job_success_handles_publication_errors(
         mock_build_pipeline_class.return_value = mock_build_pipeline
 
         # Call should not raise exception despite publication error
-        result = await job_monitor._process_update_repo_job(
-            mock_db, stable_pipeline_publishing
-        )
+        result = await job_monitor._process_update_repo_job(stable_pipeline_publishing)
 
         # Pipeline status should still be updated correctly
         assert result is True
@@ -123,7 +119,7 @@ async def test_process_update_repo_job_success_handles_publication_errors(
 
 @pytest.mark.asyncio
 async def test_process_update_repo_job_failed_does_not_call_handle_publication(
-    job_monitor, mock_db, stable_pipeline_publishing
+    job_monitor, stable_pipeline_publishing
 ):
     """Test that failed update_repo_job does NOT call BuildPipeline.handle_publication()."""
     with (
@@ -140,9 +136,7 @@ async def test_process_update_repo_job_failed_does_not_call_handle_publication(
         mock_build_pipeline = AsyncMock()
         mock_build_pipeline_class.return_value = mock_build_pipeline
 
-        result = await job_monitor._process_update_repo_job(
-            mock_db, stable_pipeline_publishing
-        )
+        result = await job_monitor._process_update_repo_job(stable_pipeline_publishing)
 
         # Verify results
         assert result is True
@@ -160,7 +154,7 @@ async def test_process_update_repo_job_failed_does_not_call_handle_publication(
 
 @pytest.mark.asyncio
 async def test_process_update_repo_job_still_running_does_not_call_handle_publication(
-    job_monitor, mock_db, stable_pipeline_publishing
+    job_monitor, stable_pipeline_publishing
 ):
     """Test that running update_repo_job does NOT call BuildPipeline.handle_publication()."""
     with (
@@ -176,9 +170,7 @@ async def test_process_update_repo_job_still_running_does_not_call_handle_public
         mock_build_pipeline = AsyncMock()
         mock_build_pipeline_class.return_value = mock_build_pipeline
 
-        result = await job_monitor._process_update_repo_job(
-            mock_db, stable_pipeline_publishing
-        )
+        result = await job_monitor._process_update_repo_job(stable_pipeline_publishing)
 
         # Verify results - no status change
         assert result is False

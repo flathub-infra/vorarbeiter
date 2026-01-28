@@ -1,7 +1,6 @@
 from datetime import datetime
 
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
 from app.utils.flat_manager import (
@@ -41,9 +40,7 @@ class JobMonitor:
     def __init__(self):
         self.flat_manager = get_flat_manager_client()
 
-    async def check_and_update_pipeline_jobs(
-        self, db: AsyncSession, pipeline: Pipeline
-    ) -> bool:
+    async def check_and_update_pipeline_jobs(self, pipeline: Pipeline) -> bool:
         updated = False
 
         if pipeline.build_id and (
@@ -53,31 +50,29 @@ class JobMonitor:
                 updated = True
 
         if pipeline.status == PipelineStatus.SUCCEEDED and pipeline.commit_job_id:
-            if await self._process_succeeded_pipeline(db, pipeline):
+            if await self._process_succeeded_pipeline(pipeline):
                 updated = True
         elif (
             pipeline.status == PipelineStatus.COMMITTED
             and pipeline.publish_job_id
             and pipeline.flat_manager_repo in ["beta", "stable"]
         ):
-            if await self._process_publish_job(db, pipeline):
+            if await self._process_publish_job(pipeline):
                 updated = True
         elif (
             pipeline.status == PipelineStatus.PUBLISHING
             and pipeline.update_repo_job_id
             and pipeline.flat_manager_repo in ["beta", "stable"]
         ):
-            if await self._process_update_repo_job(db, pipeline):
+            if await self._process_update_repo_job(pipeline):
                 updated = True
         elif pipeline.status == PipelineStatus.PUBLISHED:
-            if await self._check_published_pipeline_jobs(db, pipeline):
+            if await self._check_published_pipeline_jobs(pipeline):
                 updated = True
 
         return updated
 
-    async def _process_succeeded_pipeline(
-        self, db: AsyncSession, pipeline: Pipeline
-    ) -> bool:
+    async def _process_succeeded_pipeline(self, pipeline: Pipeline) -> bool:
         if not pipeline.commit_job_id:
             return False
 
@@ -195,7 +190,7 @@ class JobMonitor:
                 pipeline, job_type, job_id, job_response
             )
 
-    async def _process_publish_job(self, db: AsyncSession, pipeline: Pipeline) -> bool:
+    async def _process_publish_job(self, pipeline: Pipeline) -> bool:
         if not pipeline.publish_job_id:
             return False
 
@@ -265,9 +260,7 @@ class JobMonitor:
             )
             return False
 
-    async def _process_update_repo_job(
-        self, db: AsyncSession, pipeline: Pipeline
-    ) -> bool:
+    async def _process_update_repo_job(self, pipeline: Pipeline) -> bool:
         if not pipeline.update_repo_job_id:
             return False
 
@@ -512,9 +505,7 @@ class JobMonitor:
             )
         return False
 
-    async def _check_published_pipeline_jobs(
-        self, db: AsyncSession, pipeline: Pipeline
-    ) -> bool:
+    async def _check_published_pipeline_jobs(self, pipeline: Pipeline) -> bool:
         """Check and report any unreported job statuses for PUBLISHED pipelines."""
         updated = False
 

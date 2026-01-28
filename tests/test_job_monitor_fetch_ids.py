@@ -129,7 +129,7 @@ async def test_fetch_missing_job_ids_no_updates_needed(job_monitor):
 
 @pytest.mark.asyncio
 async def test_check_and_update_fetches_missing_ids_then_checks_status(
-    job_monitor, mock_db
+    job_monitor,
 ):
     pipeline = Pipeline(
         id=uuid.uuid4(),
@@ -154,7 +154,7 @@ async def test_check_and_update_fetches_missing_ids_then_checks_status(
                 {"status": 2},
             ]
 
-            result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+            result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
             assert result is True
             assert pipeline.commit_job_id == 789
@@ -191,7 +191,7 @@ async def test_fetch_missing_job_ids_test_pipeline_skip_publish(job_monitor):
 
 
 @pytest.mark.asyncio
-async def test_check_and_update_no_fetch_if_ids_present(job_monitor, mock_db):
+async def test_check_and_update_no_fetch_if_ids_present(job_monitor):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -207,7 +207,7 @@ async def test_check_and_update_no_fetch_if_ids_present(job_monitor, mock_db):
         with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
             mock_get_job.return_value = {"status": 1}  # STARTED
 
-            result = await job_monitor.check_and_update_pipeline_jobs(mock_db, pipeline)
+            result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
             assert result is False
             mock_get_info.assert_not_called()

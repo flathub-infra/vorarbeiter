@@ -1,5 +1,6 @@
 import uuid
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -25,6 +26,63 @@ logger = structlog.get_logger(__name__)
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
 api_security = HTTPBearer()
+
+
+async def get_verified_build_pipeline(
+    pipeline_id: uuid.UUID,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> BuildPipeline:
+    build_pipeline = BuildPipeline()
+
+    try:
+        await build_pipeline.verify_callback_token(
+            pipeline_id=pipeline_id,
+            token=credentials.credentials,
+        )
+    except ValueError as e:
+        if "not found" in str(e):
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=str(e),
+            )
+        raise HTTPException(
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid callback token",
+        )
+
+    return build_pipeline
+
+
+VerifiedBuildPipeline = Annotated[BuildPipeline, Depends(get_verified_build_pipeline)]
+
+
+async def execute_callback_handler(
+    handler: Callable[..., Awaitable[tuple[Any, dict[str, Any]]]],
+    pipeline_id: uuid.UUID,
+    data: dict[str, Any],
+    conflict_messages: list[str] | None = None,
+) -> dict[str, Any]:
+    try:
+        _, updates = await handler(pipeline_id=pipeline_id, callback_data=data)
+    except ValueError as e:
+        error_str = str(e)
+        if conflict_messages:
+            for msg in conflict_messages:
+                if msg in error_str:
+                    raise HTTPException(
+                        status_code=http_status.HTTP_409_CONFLICT,
+                        detail=msg,
+                    )
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=error_str,
+        )
+
+    return {
+        "status": "ok",
+        "pipeline_id": str(pipeline_id),
+        **updates,
+    }
 
 
 async def verify_token(
@@ -144,43 +202,13 @@ async def get_pipeline(
 async def pipeline_metadata_callback(
     pipeline_id: uuid.UUID,
     data: dict[str, Any],
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    build_pipeline: VerifiedBuildPipeline,
 ):
-    build_pipeline = BuildPipeline()
-
-    try:
-        await build_pipeline.verify_callback_token(
-            pipeline_id=pipeline_id,
-            token=credentials.credentials,
-        )
-    except ValueError as e:
-        if "not found" in str(e):
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=str(e),
-            )
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid callback token",
-            )
-
-    try:
-        _, updates = await build_pipeline.handle_metadata_callback(
-            pipeline_id=pipeline_id,
-            callback_data=data,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-    return {
-        "status": "ok",
-        "pipeline_id": str(pipeline_id),
-        **updates,
-    }
+    return await execute_callback_handler(
+        build_pipeline.handle_metadata_callback,
+        pipeline_id,
+        data,
+    )
 
 
 @pipelines_router.post(
@@ -190,49 +218,14 @@ async def pipeline_metadata_callback(
 async def pipeline_log_url_callback(
     pipeline_id: uuid.UUID,
     data: dict[str, Any],
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    build_pipeline: VerifiedBuildPipeline,
 ):
-    build_pipeline = BuildPipeline()
-
-    try:
-        await build_pipeline.verify_callback_token(
-            pipeline_id=pipeline_id,
-            token=credentials.credentials,
-        )
-    except ValueError as e:
-        if "not found" in str(e):
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=str(e),
-            )
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid callback token",
-            )
-
-    try:
-        _, updates = await build_pipeline.handle_log_url_callback(
-            pipeline_id=pipeline_id,
-            callback_data=data,
-        )
-    except ValueError as e:
-        if "Log URL already set" in str(e):
-            raise HTTPException(
-                status_code=http_status.HTTP_409_CONFLICT,
-                detail="Log URL already set",
-            )
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            )
-
-    return {
-        "status": "ok",
-        "pipeline_id": str(pipeline_id),
-        **updates,
-    }
+    return await execute_callback_handler(
+        build_pipeline.handle_log_url_callback,
+        pipeline_id,
+        data,
+        conflict_messages=["Log URL already set"],
+    )
 
 
 @pipelines_router.post(
@@ -242,49 +235,14 @@ async def pipeline_log_url_callback(
 async def pipeline_status_callback(
     pipeline_id: uuid.UUID,
     data: dict[str, Any],
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    build_pipeline: VerifiedBuildPipeline,
 ):
-    build_pipeline = BuildPipeline()
-
-    try:
-        await build_pipeline.verify_callback_token(
-            pipeline_id=pipeline_id,
-            token=credentials.credentials,
-        )
-    except ValueError as e:
-        if "not found" in str(e):
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=str(e),
-            )
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid callback token",
-            )
-
-    try:
-        _, updates = await build_pipeline.handle_status_callback(
-            pipeline_id=pipeline_id,
-            callback_data=data,
-        )
-    except ValueError as e:
-        if "Pipeline status already finalized" in str(e):
-            raise HTTPException(
-                status_code=http_status.HTTP_409_CONFLICT,
-                detail="Pipeline status already finalized",
-            )
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            )
-
-    return {
-        "status": "ok",
-        "pipeline_id": str(pipeline_id),
-        **updates,
-    }
+    return await execute_callback_handler(
+        build_pipeline.handle_status_callback,
+        pipeline_id,
+        data,
+        conflict_messages=["Pipeline status already finalized"],
+    )
 
 
 @pipelines_router.post(
@@ -294,49 +252,14 @@ async def pipeline_status_callback(
 async def pipeline_reprocheck_callback(
     pipeline_id: uuid.UUID,
     data: dict[str, Any],
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    build_pipeline: VerifiedBuildPipeline,
 ):
-    build_pipeline = BuildPipeline()
-
-    try:
-        await build_pipeline.verify_callback_token(
-            pipeline_id=pipeline_id,
-            token=credentials.credentials,
-        )
-    except ValueError as e:
-        if "not found" in str(e):
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=str(e),
-            )
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid callback token",
-            )
-
-    try:
-        _, updates = await build_pipeline.handle_reprocheck_callback(
-            pipeline_id=pipeline_id,
-            callback_data=data,
-        )
-    except ValueError as e:
-        if "Pipeline status already finalized" in str(e):
-            raise HTTPException(
-                status_code=http_status.HTTP_409_CONFLICT,
-                detail="Pipeline status already finalized",
-            )
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            )
-
-    return {
-        "status": "ok",
-        "pipeline_id": str(pipeline_id),
-        **updates,
-    }
+    return await execute_callback_handler(
+        build_pipeline.handle_reprocheck_callback,
+        pipeline_id,
+        data,
+        conflict_messages=["Pipeline status already finalized"],
+    )
 
 
 @pipelines_router.post(
@@ -346,43 +269,13 @@ async def pipeline_reprocheck_callback(
 async def pipeline_cost_callback(
     pipeline_id: uuid.UUID,
     data: dict[str, Any],
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    build_pipeline: VerifiedBuildPipeline,
 ):
-    build_pipeline = BuildPipeline()
-
-    try:
-        await build_pipeline.verify_callback_token(
-            pipeline_id=pipeline_id,
-            token=credentials.credentials,
-        )
-    except ValueError as e:
-        if "not found" in str(e):
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=str(e),
-            )
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid callback token",
-            )
-
-    try:
-        _, updates = await build_pipeline.handle_cost_callback(
-            pipeline_id=pipeline_id,
-            callback_data=data,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-    return {
-        "status": "ok",
-        "pipeline_id": str(pipeline_id),
-        **updates,
-    }
+    return await execute_callback_handler(
+        build_pipeline.handle_cost_callback,
+        pipeline_id,
+        data,
+    )
 
 
 @pipelines_router.get(
@@ -470,7 +363,7 @@ async def check_pipeline_jobs(
         updated_count = 0
 
         for pipeline in pipelines:
-            if await job_monitor.check_and_update_pipeline_jobs(db, pipeline):
+            if await job_monitor.check_and_update_pipeline_jobs(pipeline):
                 updated_count += 1
 
         if updated_count > 0:
