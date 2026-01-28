@@ -52,8 +52,9 @@ app_build_types = {
     "io.qt.qtwebengine.BaseApp": "large",
 }
 
-FAST_BUILD_P90_THRESHOLD_MINUTES = 10.0
+FAST_BUILD_P90_THRESHOLD_MINUTES = 15.0
 FAST_BUILD_MIN_BUILDS = 3
+FAST_BUILD_LOOKBACK_DAYS = 90
 
 
 async def get_app_p90_build_time(db: AsyncSession, app_id: str) -> float | None:
@@ -67,10 +68,16 @@ async def get_app_p90_build_time(db: AsyncSession, app_id: str) -> float | None:
           AND finished_at IS NOT NULL
           AND started_at IS NOT NULL
           AND (params->>'build_type' IS NULL OR params->>'build_type' != 'large')
+          AND started_at > NOW() - INTERVAL '1 day' * :lookback_days
         HAVING COUNT(*) >= :min_builds
     """)
     result = await db.execute(
-        query, {"app_id": app_id, "min_builds": FAST_BUILD_MIN_BUILDS}
+        query,
+        {
+            "app_id": app_id,
+            "min_builds": FAST_BUILD_MIN_BUILDS,
+            "lookback_days": FAST_BUILD_LOOKBACK_DAYS,
+        },
     )
     row = result.first()
     if row is None or row[0] is None:

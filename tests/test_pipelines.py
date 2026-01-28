@@ -657,7 +657,8 @@ async def test_start_pipeline_build_type_precedence():
     [
         (8.0, "default"),
         (10.0, "default"),
-        (15.0, "medium"),
+        (15.0, "default"),
+        (15.1, "medium"),
         (None, "medium"),
     ],
 )
