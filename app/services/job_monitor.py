@@ -13,6 +13,29 @@ from app.utils.flat_manager import (
 
 logger = structlog.get_logger(__name__)
 
+JOB_DESCRIPTIONS = {
+    "started": {
+        "commit": "Committing build...",
+        "publish": "Publishing build...",
+        "update-repo": "Updating repository...",
+    },
+    "queued": {
+        "commit": "Commit job queued",
+        "publish": "Publish job queued",
+        "update-repo": "Update-repo job queued",
+    },
+    "success": {
+        "commit": "Build committed",
+        "publish": "Build published",
+        "update-repo": "Repository updated",
+    },
+    "failure": {
+        "commit": "Commit failed",
+        "publish": "Publish failed",
+        "update-repo": "Repository update failed",
+    },
+}
+
 
 class JobMonitor:
     def __init__(self):
@@ -370,8 +393,15 @@ class JobMonitor:
                 error=str(e),
             )
 
-    async def _notify_flat_manager_job_started(
-        self, pipeline: Pipeline, job_type: str, job_id: int
+    async def _notify_flat_manager_job(
+        self,
+        pipeline: Pipeline,
+        job_type: str,
+        job_id: int,
+        notification_type: str,
+        state: str,
+        fallback_description: str,
+        error_action: str,
     ) -> None:
         if pipeline.flat_manager_repo not in ["stable", "beta"]:
             return
@@ -380,22 +410,33 @@ class JobMonitor:
             from app.services.github_notifier import GitHubNotifier
 
             github_notifier = GitHubNotifier()
-            description = {
-                "commit": "Committing build...",
-                "publish": "Publishing build...",
-                "update-repo": "Updating repository...",
-            }.get(job_type, f"{job_type} in progress...")
+            description = JOB_DESCRIPTIONS.get(notification_type, {}).get(
+                job_type, fallback_description
+            )
 
             await github_notifier.notify_flat_manager_job_status(
-                pipeline, job_type, job_id, "pending", description
+                pipeline, job_type, job_id, state, description
             )
         except Exception as e:
             logger.error(
-                f"Failed to notify {job_type} job started",
+                f"Failed to notify {job_type} job {error_action}",
                 pipeline_id=str(pipeline.id),
                 job_id=job_id,
                 error=str(e),
             )
+
+    async def _notify_flat_manager_job_started(
+        self, pipeline: Pipeline, job_type: str, job_id: int
+    ) -> None:
+        await self._notify_flat_manager_job(
+            pipeline,
+            job_type,
+            job_id,
+            notification_type="started",
+            state="pending",
+            fallback_description=f"{job_type} in progress...",
+            error_action="started",
+        )
 
     async def _check_and_notify_new_job(
         self, pipeline: Pipeline, job_type: str, job_id: int
@@ -420,29 +461,15 @@ class JobMonitor:
     async def _notify_flat_manager_job_new(
         self, pipeline: Pipeline, job_type: str, job_id: int
     ) -> None:
-        if pipeline.flat_manager_repo not in ["stable", "beta"]:
-            return
-
-        try:
-            from app.services.github_notifier import GitHubNotifier
-
-            github_notifier = GitHubNotifier()
-            description = {
-                "commit": "Commit job queued",
-                "publish": "Publish job queued",
-                "update-repo": "Update-repo job queued",
-            }.get(job_type, f"{job_type} job queued")
-
-            await github_notifier.notify_flat_manager_job_status(
-                pipeline, job_type, job_id, "pending", description
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to notify {job_type} job queued",
-                pipeline_id=str(pipeline.id),
-                job_id=job_id,
-                error=str(e),
-            )
+        await self._notify_flat_manager_job(
+            pipeline,
+            job_type,
+            job_id,
+            notification_type="queued",
+            state="pending",
+            fallback_description=f"{job_type} job queued",
+            error_action="queued",
+        )
 
     async def _report_published_job_status(
         self, pipeline: Pipeline, job_id: int, job_type: str
@@ -511,39 +538,24 @@ class JobMonitor:
     async def _notify_flat_manager_job_completed(
         self, pipeline: Pipeline, job_type: str, job_id: int, success: bool
     ) -> None:
-        if pipeline.flat_manager_repo not in ["stable", "beta"]:
-            return
+        if success:
+            notification_type = "success"
+            state = "success"
+            fallback = f"{job_type} completed"
+        else:
+            notification_type = "failure"
+            state = "failure"
+            fallback = f"{job_type} failed"
 
-        try:
-            from app.services.github_notifier import GitHubNotifier
-
-            github_notifier = GitHubNotifier()
-            if success:
-                state = "success"
-                description = {
-                    "commit": "Build committed",
-                    "publish": "Build published",
-                    "update-repo": "Repository updated",
-                }.get(job_type, f"{job_type} completed")
-            else:
-                state = "failure"
-                description = {
-                    "commit": "Commit failed",
-                    "publish": "Publish failed",
-                    "update-repo": "Repository update failed",
-                }.get(job_type, f"{job_type} failed")
-
-            await github_notifier.notify_flat_manager_job_status(
-                pipeline, job_type, job_id, state, description
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to notify {job_type} job completion",
-                pipeline_id=str(pipeline.id),
-                job_id=job_id,
-                success=success,
-                error=str(e),
-            )
+        await self._notify_flat_manager_job(
+            pipeline,
+            job_type,
+            job_id,
+            notification_type=notification_type,
+            state=state,
+            fallback_description=fallback,
+            error_action="completion",
+        )
 
     async def _create_job_failure_issue(
         self, pipeline: Pipeline, job_type: str, job_id: int, job_response: JobResponse
