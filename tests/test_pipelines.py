@@ -103,7 +103,8 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch("httpx.AsyncClient", return_value=mock_httpx_client):
-            result = await build_pipeline.start_pipeline(pipeline_id)
+            with patch("app.pipelines.build.get_app_p90_build_time", return_value=None):
+                result = await build_pipeline.start_pipeline(pipeline_id)
 
     assert result.status == PipelineStatus.RUNNING
     assert build_pipeline.provider.dispatch.called
@@ -115,6 +116,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
 
 @pytest.mark.asyncio
+@patch("app.pipelines.build.get_app_p90_build_time", return_value=None)
 @patch("app.pipelines.build.get_db")
 @patch("app.services.github_actions_service")
 @patch("httpx.AsyncClient")
@@ -132,6 +134,7 @@ async def test_start_pipeline_branch_mapping(
     mock_httpx_client,
     mock_github_provider,
     mock_get_db,
+    mock_p90,
     source_branch,
     expected_branch,
     expected_flat_manager_repo,
@@ -521,15 +524,20 @@ async def test_start_pipeline_stores_default_build_type():
 
     with patch("app.pipelines.build.get_db") as mock_get_db:
         with patch("httpx.AsyncClient") as mock_httpx_client:
-            mock_get_db.return_value.__aenter__.return_value = mock_db_session
-            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+            with patch("app.pipelines.build.get_app_p90_build_time") as mock_p90:
+                mock_p90.return_value = None
+                mock_get_db.return_value.__aenter__.return_value = mock_db_session
+                mock_httpx_client.return_value.__aenter__.return_value = (
+                    mock_httpx_instance
+                )
 
-            build_pipeline = BuildPipeline()
-            build_pipeline.provider = mock_github_provider
+                build_pipeline = BuildPipeline()
+                build_pipeline.provider = mock_github_provider
 
-            await build_pipeline.start_pipeline(pipeline_id)
+                await build_pipeline.start_pipeline(pipeline_id)
 
-            assert mock_pipeline.params["build_type"] == "medium"
+                assert mock_pipeline.params["build_type"] == "medium"
+                mock_p90.assert_called_once_with(mock_db_session, "org.example.app")
 
 
 @pytest.mark.asyncio
@@ -599,15 +607,19 @@ async def test_start_pipeline_stores_parameter_build_type():
 
     with patch("app.pipelines.build.get_db") as mock_get_db:
         with patch("httpx.AsyncClient") as mock_httpx_client:
-            mock_get_db.return_value.__aenter__.return_value = mock_db_session
-            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+            with patch("app.pipelines.build.get_app_p90_build_time") as mock_p90:
+                mock_p90.return_value = None
+                mock_get_db.return_value.__aenter__.return_value = mock_db_session
+                mock_httpx_client.return_value.__aenter__.return_value = (
+                    mock_httpx_instance
+                )
 
-            build_pipeline = BuildPipeline()
-            build_pipeline.provider = mock_github_provider
+                build_pipeline = BuildPipeline()
+                build_pipeline.provider = mock_github_provider
 
-            await build_pipeline.start_pipeline(pipeline_id)
+                await build_pipeline.start_pipeline(pipeline_id)
 
-            assert mock_pipeline.params["build_type"] == "medium"
+                assert mock_pipeline.params["build_type"] == "medium"
 
 
 @pytest.mark.asyncio
@@ -647,6 +659,63 @@ async def test_start_pipeline_build_type_precedence():
             await build_pipeline.start_pipeline(pipeline_id)
 
             assert mock_pipeline.params["build_type"] == "large"
+
+
+@pytest.mark.asyncio
+@patch("app.pipelines.build.get_app_p90_build_time")
+@patch("app.pipelines.build.get_db")
+@patch("httpx.AsyncClient")
+@pytest.mark.parametrize(
+    "p90_value, expected_build_type",
+    [
+        (8.0, "default"),
+        (10.0, "default"),
+        (15.0, "medium"),
+        (None, "medium"),
+    ],
+)
+async def test_start_pipeline_p90_routing(
+    mock_httpx_client,
+    mock_get_db,
+    mock_p90,
+    p90_value,
+    expected_build_type,
+):
+    pipeline_id = uuid.uuid4()
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="org.example.app",
+        params={"repo": "test", "branch": "main"},
+        status=PipelineStatus.PENDING,
+        provider_data={},
+        callback_token=str(uuid.uuid4()),
+    )
+
+    mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = mock_pipeline
+    mock_get_db.return_value.__aenter__.return_value = mock_db_session
+
+    mock_httpx_instance = MagicMock()
+    mock_httpx_instance.post = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 12345, "token": "test-token"}
+    mock_httpx_instance.post.return_value = mock_response
+    mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+
+    mock_github_provider = AsyncMock(spec=GitHubActionsService)
+    mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
+
+    mock_p90.return_value = p90_value
+
+    build_pipeline = BuildPipeline()
+    build_pipeline.provider = mock_github_provider
+
+    await build_pipeline.start_pipeline(pipeline_id)
+
+    assert mock_pipeline.params["build_type"] == expected_build_type
+    mock_p90.assert_called_once_with(mock_db_session, "org.example.app")
 
 
 @pytest.mark.asyncio

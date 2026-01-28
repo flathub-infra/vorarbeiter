@@ -52,6 +52,42 @@ app_build_types = {
     "io.qt.qtwebengine.BaseApp": "large",
 }
 
+FAST_BUILD_P90_THRESHOLD_MINUTES = 10.0
+FAST_BUILD_MIN_BUILDS = 3
+
+
+async def get_app_p90_build_time(db: AsyncSession, app_id: str) -> float | None:
+    query = text("""
+        SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (
+            ORDER BY EXTRACT(EPOCH FROM (finished_at - started_at))/60
+        ) as p90_min
+        FROM pipeline
+        WHERE app_id = :app_id
+          AND status = 'published'
+          AND finished_at IS NOT NULL
+          AND started_at IS NOT NULL
+          AND (params->>'build_type' IS NULL OR params->>'build_type' != 'large')
+        HAVING COUNT(*) >= :min_builds
+    """)
+    result = await db.execute(
+        query, {"app_id": app_id, "min_builds": FAST_BUILD_MIN_BUILDS}
+    )
+    row = result.first()
+    if row is None or row[0] is None:
+        return None
+    return float(row[0])
+
+
+async def determine_build_type(db: AsyncSession, app_id: str) -> str:
+    if app_id in app_build_types:
+        return app_build_types[app_id]
+
+    p90 = await get_app_p90_build_time(db, app_id)
+    if p90 is not None and p90 <= FAST_BUILD_P90_THRESHOLD_MINUTES:
+        return "default"
+
+    return "medium"
+
 
 async def _validate_and_prepare_callback(
     validator_class: type,
@@ -238,11 +274,7 @@ class BuildPipeline:
             pipeline.status = PipelineStatus.RUNNING
             pipeline.started_at = datetime.now()
 
-            if pipeline.app_id in app_build_types:
-                build_type = app_build_types[pipeline.app_id]
-            else:
-                build_type = "medium"
-
+            build_type = await determine_build_type(db, pipeline.app_id)
             pipeline.params = {**pipeline.params, "build_type": build_type}
 
             ref = pipeline.params.get("ref")
