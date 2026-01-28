@@ -8,6 +8,17 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+def get_flat_manager_repo(ref: str | None) -> str:
+    if ref == "refs/heads/master":
+        return "stable"
+    elif ref == "refs/heads/beta":
+        return "beta"
+    elif isinstance(ref, str) and ref.startswith("refs/heads/branch/"):
+        return "stable"
+    else:
+        return "test"
+
+
 class JobStatus(IntEnum):
     NEW = 0
     STARTED = 1

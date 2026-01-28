@@ -16,7 +16,11 @@ from app.models import Pipeline, PipelineStatus
 from app.services import github_actions_service
 from app.services.github_actions import GitHubActionsService
 from app.services.github_notifier import GitHubNotifier
-from app.utils.flat_manager import FlatManagerClient, get_flat_manager_client
+from app.utils.flat_manager import (
+    FlatManagerClient,
+    get_flat_manager_client,
+    get_flat_manager_repo,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -285,18 +289,7 @@ class BuildPipeline:
             pipeline.params = {**pipeline.params, "build_type": build_type}
 
             ref = pipeline.params.get("ref")
-            match ref:
-                case "refs/heads/master":
-                    flat_manager_repo = "stable"
-                case "refs/heads/beta":
-                    flat_manager_repo = "beta"
-                case ref if isinstance(ref, str) and ref.startswith(
-                    "refs/heads/branch/"
-                ):
-                    flat_manager_repo = "stable"
-                case _:
-                    flat_manager_repo = "test"
-
+            flat_manager_repo = get_flat_manager_repo(ref)
             pipeline.flat_manager_repo = flat_manager_repo
 
             await self._supersede_conflicting_pipelines(db, pipeline, flat_manager_repo)

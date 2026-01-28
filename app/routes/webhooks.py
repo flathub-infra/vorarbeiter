@@ -11,7 +11,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types
-from app.utils.flat_manager import FlatManagerClient
+from app.utils.flat_manager import FlatManagerClient, get_flat_manager_repo
 from app.utils.github import (
     add_issue_comment,
     close_github_issue,
@@ -532,13 +532,8 @@ async def handle_eol_only_push(
     if not ref or not sha:
         return
 
-    if ref == "refs/heads/master":
-        flat_manager_repo = "stable"
-    elif ref == "refs/heads/beta":
-        flat_manager_repo = "beta"
-    elif ref.startswith("refs/heads/branch/"):
-        flat_manager_repo = "stable"
-    else:
+    flat_manager_repo = get_flat_manager_repo(ref)
+    if flat_manager_repo == "test":
         logger.info(
             "Skipping EOL-only republish for non-production ref",
             repo=event.repository,
