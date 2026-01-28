@@ -47,10 +47,26 @@ jobs:
             -d '{"log_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
             "${{ inputs.callback_url }}/log_url"
 
+  setup-runner:
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.set-runner.outputs.runner }}
+      timeout: ${{ steps.set-runner.outputs.timeout }}
+    steps:
+      - id: set-runner
+        run: |
+          if [[ "${{ inputs.build_type }}" == "default" ]]; then
+            echo "runner=ubuntu-24.04" >> $GITHUB_OUTPUT
+            echo "timeout=360" >> $GITHUB_OUTPUT
+          else
+            echo "runner=runs-on=${{ github.run_id }}-${{ github.run_attempt }}/runner=medium-amd64/tag=arch-amd64/retry=false/spot=false" >> $GITHUB_OUTPUT
+            echo "timeout=240" >> $GITHUB_OUTPUT
+          fi
+
   reprocheck:
-    needs: update-log-url
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/runner=medium-amd64/tag=arch-amd64/retry=false/spot=false
-    timeout-minutes: 240
+    needs: [update-log-url, setup-runner]
+    runs-on: ${{ needs.setup-runner.outputs.runner }}
+    timeout-minutes: ${{ fromJSON(needs.setup-runner.outputs.timeout) }}
     steps:
       - name: Disable AppArmor
         run: |
