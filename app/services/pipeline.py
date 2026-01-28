@@ -1,4 +1,3 @@
-import uuid
 from typing import Any
 
 import structlog
@@ -24,25 +23,6 @@ class PipelineService:
     def __init__(self):
         self.flat_manager_client = get_flat_manager_client()
         self.job_monitor = JobMonitor()
-
-    async def get_pipeline_with_job_updates(
-        self, db: AsyncSession, pipeline_id: uuid.UUID
-    ) -> Pipeline | None:
-        """
-        Get a pipeline and update its job IDs if necessary.
-
-        Args:
-            db: Database session
-            pipeline_id: Pipeline ID to fetch
-
-        Returns:
-            Pipeline instance or None if not found
-        """
-        pipeline = await db.get(Pipeline, pipeline_id)
-        if not pipeline:
-            return None
-
-        return pipeline
 
     async def list_pipelines_with_filters(
         self,

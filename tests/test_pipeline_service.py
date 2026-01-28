@@ -31,32 +31,6 @@ def mock_pipeline():
 
 
 @pytest.mark.asyncio
-async def test_get_pipeline_with_job_updates_not_found(pipeline_service):
-    mock_db = AsyncMock(spec=AsyncSession)
-    mock_db.get.return_value = None
-
-    result = await pipeline_service.get_pipeline_with_job_updates(mock_db, uuid.uuid4())
-
-    assert result is None
-    mock_db.commit.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_get_pipeline_with_job_updates_returns_pipeline(
-    pipeline_service, mock_pipeline
-):
-    mock_db = AsyncMock(spec=AsyncSession)
-    mock_db.get.return_value = mock_pipeline
-
-    result = await pipeline_service.get_pipeline_with_job_updates(
-        mock_db, mock_pipeline.id
-    )
-
-    assert result == mock_pipeline
-    mock_db.commit.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_list_pipelines_with_filters_basic(pipeline_service):
     pipelines = [
         MagicMock(id=uuid.uuid4(), commit_job_id=1, publish_job_id=2),

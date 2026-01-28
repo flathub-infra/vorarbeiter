@@ -127,7 +127,7 @@ async def get_pipeline(
     pipeline_id: uuid.UUID,
 ):
     async with get_db(use_replica=True) as db:
-        pipeline = await pipeline_service.get_pipeline_with_job_updates(db, pipeline_id)
+        pipeline = await db.get(Pipeline, pipeline_id)
         if not pipeline:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
