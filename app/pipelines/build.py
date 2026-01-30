@@ -54,11 +54,10 @@ app_build_types = {
     "org.mamedev.MAME": "large",
     "org.catacombing.kumo": "large",
     "io.qt.qtwebengine.BaseApp": "large",
+    "com.collaboraoffice.Office": "large",
 }
 
-app_medium_builds: set[str] = {
-    "com.collaboraoffice.Office",
-}
+app_medium_builds: set[str] = set()
 
 FAST_BUILD_P90_THRESHOLD_MINUTES = 15.0
 FAST_BUILD_MIN_BUILDS = 3
