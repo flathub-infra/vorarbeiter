@@ -57,8 +57,6 @@ app_build_types = {
     "com.collaboraoffice.Office": "large",
 }
 
-app_medium_builds: set[str] = set()
-
 FAST_BUILD_P90_THRESHOLD_MINUTES = 15.0
 FAST_BUILD_MIN_BUILDS = 3
 FAST_BUILD_LOOKBACK_DAYS = 90
@@ -95,9 +93,6 @@ async def get_app_p90_build_time(db: AsyncSession, app_id: str) -> float | None:
 async def determine_build_type(db: AsyncSession, app_id: str) -> str:
     if app_id in app_build_types:
         return app_build_types[app_id]
-
-    if app_id in app_medium_builds:
-        return "medium"
 
     p90 = await get_app_p90_build_time(db, app_id)
     if p90 is not None and p90 <= FAST_BUILD_P90_THRESHOLD_MINUTES:
