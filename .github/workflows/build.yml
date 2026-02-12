@@ -629,6 +629,12 @@ jobs:
           oras login ghcr.io --password "${{ secrets.GITHUB_TOKEN }}" -u "${{ github.actor }}" || exit 0
           oras push ghcr.io/flathub-infra/vorarbeiter/cache/flatpak-builder/${app_id_lc}/stable-${{ matrix.arch }}:latest .flatpak-builder || exit 0
 
+      - name: List files in build directory
+        if: always()
+        run: |
+          cd "${GITHUB_WORKSPACE}/work/builddir/files" || true
+          timeout 80 du -xhad 5 . | sort -hr || true
+
       - name: Get free space
         if: always()
         run: |
