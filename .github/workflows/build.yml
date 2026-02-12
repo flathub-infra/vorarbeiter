@@ -633,7 +633,7 @@ jobs:
         if: always()
         run: |
           cd "${GITHUB_WORKSPACE}/work/builddir/files" || true
-          timeout 80 du -xhad 5 . --exclude=./lib/debug --exclude=./share/locale --exclude=./share/runtime || true
+          timeout 80 du -xhad 5 . --exclude=./lib/debug --exclude=./share/locale --exclude=./share/runtime | sort -k2 || true
 
       - name: Get free space
         if: always()
