@@ -194,17 +194,17 @@ validate-build:
     set -euxo pipefail
 
     case "${REF}" in
-        "refs/heads/master" | "refs/heads/beta" | refs/heads/branch/*)
-            build_type="official"
+        "refs/heads/master")
+            should_janitor="yes"
             ;;
         *)
-            build_type="test"
+            should_janitor="no"
             ;;
     esac
 
     lint_args=(--gha-format --exceptions --debug)
 
-    if [ "$build_type" != "test" ]; then
+    if [ "$should_janitor" == "yes" ]; then
         lint_args+=(--janitor-exceptions)
     fi
 
