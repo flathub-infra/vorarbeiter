@@ -561,7 +561,10 @@ async def test_create_stable_job_failure_issue_commit(github_notifier, mock_pipe
             "Error: Could not commit to repository\n"
             "flat-manager: commit failed\n"
             "Build artifacts not found\n```\n\n"
-            "cc @flathub/build-moderation"
+            "cc @flathub/build-moderation\n\n"
+            "This issue is being opened for tracking by Flathub admins and may indicate "
+            "an infrastructure problem. Please do not close or modify this until "
+            "an admin has responded.\n"
         )
 
         mock_issue.assert_called_once_with(
@@ -602,7 +605,10 @@ async def test_create_stable_job_failure_issue_publish(github_notifier, mock_pip
             "**Error Details:**\n```\n"
             "Error: Publish failed\n"
             "Repository access denied\n```\n\n"
-            "cc @flathub/build-moderation"
+            "cc @flathub/build-moderation\n\n"
+            "This issue is being opened for tracking by Flathub admins and may indicate "
+            "an infrastructure problem. Please do not close or modify this until "
+            "an admin has responded.\n"
         )
 
         mock_issue.assert_called_once_with(
@@ -645,7 +651,10 @@ async def test_create_stable_job_failure_issue_update_repo(
             "**Error Details:**\n```\n"
             "Error: Repository update failed\n"
             "Disk space insufficient\n```\n\n"
-            "cc @flathub/build-moderation"
+            "cc @flathub/build-moderation\n\n"
+            "This issue is being opened for tracking by Flathub admins and may indicate "
+            "an infrastructure problem. Please do not close or modify this until "
+            "an admin has responded.\n"
         )
 
         mock_issue.assert_called_once_with(

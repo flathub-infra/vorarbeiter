@@ -363,6 +363,12 @@ class GitHubNotifier:
 
             body += "\ncc @flathub/build-moderation"
 
+            body += (
+                "\n\nThis issue is being opened for tracking by Flathub admins and may indicate "
+                "an infrastructure problem. Please do not close or modify this until "
+                "an admin has responded.\n"
+            )
+
             result = await create_github_issue(
                 git_repo=git_repo,
                 title=title,
