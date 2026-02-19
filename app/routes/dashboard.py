@@ -12,6 +12,7 @@ from sqlalchemy.orm import aliased
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
+from app.status_banner import get_status_banner
 
 dashboard_router = APIRouter(tags=["dashboard"])
 
@@ -357,6 +358,7 @@ async def dashboard(
     )
 
     grouped = group_pipelines(pipelines)
+    banner = await get_status_banner()
 
     return templates.TemplateResponse(
         request=request,
@@ -380,6 +382,7 @@ async def dashboard(
                 "date_to": date_to or "",
             },
             "flat_manager_url": settings.flat_manager_url,
+            "status_banner": banner,
         },
     )
 
@@ -420,6 +423,7 @@ async def app_status(request: Request, app_id: str):
     )
     beta_builds, _ = await get_app_builds(app_id, "beta", limit=5)
     test_builds, _ = await get_app_builds(app_id, "test", limit=5)
+    banner = await get_status_banner()
 
     chart_data = [
         {
@@ -441,6 +445,7 @@ async def app_status(request: Request, app_id: str):
             "stable_reprocheck": stable_reprocheck,
             "chart_data": chart_data,
             "flat_manager_url": settings.flat_manager_url,
+            "status_banner": banner,
         },
     )
 
@@ -455,6 +460,7 @@ async def reproducible_status(
         app_id_filter=app_id,
         status_filter=status,
     )
+    banner = await get_status_banner()
 
     return templates.TemplateResponse(
         request=request,
@@ -466,6 +472,7 @@ async def reproducible_status(
                 "status": status or "",
             },
             "expand_all": bool(app_id),
+            "status_banner": banner,
         },
     )
 

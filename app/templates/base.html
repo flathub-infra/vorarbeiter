@@ -17,11 +17,37 @@
         a.plain-link:hover {
             text-decoration: underline;
         }
+        .status-banner {
+            padding: 0.75rem 1.25rem;
+            border-radius: 0.375rem;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            color: white;
+        }
+        .status-banner a {
+            color: white;
+            font-weight: 600;
+            text-decoration: underline;
+        }
+        .status-banner a:hover {
+            opacity: 0.85;
+        }
+        .status-banner--warn {
+            background-color: #cc4400;
+        }
+        .status-banner--error {
+            background-color: #dc3545;
+        }
+        .status-banner--info {
+            background-color: #24478f;
+        }
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
     <main class="container">
+        {% include "partials/status_banner.html" %}
         {% block content %}{% endblock %}
     </main>
 </body>

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     github_webhook_secret: str = "test_webhook_secret"
     flat_manager_token: str = "test_repo_token"
     flat_manager_url: str = "https://hub.flathub.org"
+    statuspage_url: str = "https://status.flathub.org"
     sentry_dsn: str | None = None
     ff_reprocheck_issues: bool = False
 

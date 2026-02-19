@@ -1,0 +1,9 @@
+{% if status_banner %}
+{% set b = status_banner %}
+<div class="status-banner status-banner--{{ b.severity }}" role="alert" style="text-align: center;">
+    &#9888; <strong>{{ b.label }}:</strong>
+    {% for issue in b.issues %}
+        <a href="{{ issue.permalink }}" target="_blank" rel="noopener">{{ issue.system }}</a>{% if not loop.last %} &middot; {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
