@@ -233,7 +233,7 @@ def test_receive_github_webhook_nested_key_error(client: TestClient):
     with patch("app.routes.webhooks.settings.github_webhook_secret", ""):
         response = client.post(
             "/api/webhooks/github",
-            json=payload,  # type: ignore
+            json=payload,
             headers=headers,
         )
 
