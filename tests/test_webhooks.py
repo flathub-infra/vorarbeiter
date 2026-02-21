@@ -940,20 +940,23 @@ async def test_create_pipeline_pr():
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service):
-        with patch("app.routes.webhooks.get_db", mock_get_db):
-            with patch("app.pipelines.build.get_db", mock_get_db):
-                from app.routes.webhooks import create_pipeline
+    with (
+        patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch("app.pipelines.build.get_db", mock_get_db),
+    ):
+        from app.routes.webhooks import create_pipeline
 
-                result = await create_pipeline(webhook_event)
+        result = await create_pipeline(webhook_event)
 
-                assert result == pipeline_id
+        assert result == pipeline_id
 
-                mock_pipeline_service.create_pipeline.assert_called_once()
+        mock_pipeline_service.create_pipeline.assert_called_once()
 
-                mock_pipeline_service.start_pipeline.assert_called_once_with(
-                    pipeline_id=pipeline_id
-                )
+        mock_pipeline_service.start_pipeline.assert_called_once_with(
+            pipeline_id=pipeline_id
+        )
 
 
 @pytest.mark.asyncio
@@ -1060,23 +1063,25 @@ async def test_create_pipeline_comment():
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service):
-        with patch("app.routes.webhooks.get_db", mock_get_db):
-            with patch("app.pipelines.build.get_db", mock_get_db):
-                from app.routes.webhooks import create_pipeline
+    with (
+        patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch("app.pipelines.build.get_db", mock_get_db),
+    ):
+        from app.routes.webhooks import create_pipeline
 
-                result = await create_pipeline(webhook_event)
+        result = await create_pipeline(webhook_event)
 
-                assert result == pipeline_id
+        assert result == pipeline_id
 
-                args, kwargs = mock_pipeline_service.create_pipeline.call_args
-                assert "params" in kwargs
-                assert kwargs["params"].get("pr_number") == "42"
-                assert kwargs["params"].get("ref") == "refs/pull/42/head"
-
-                assert mock_pipeline_service.create_pipeline.called
-                assert mock_pipeline_service.start_pipeline.called
-                assert isinstance(result, uuid.UUID)
+        args, kwargs = mock_pipeline_service.create_pipeline.call_args
+        assert "params" in kwargs
+        assert kwargs["params"].get("pr_number") == "42"
+        assert kwargs["params"].get("ref") == "refs/pull/42/head"
+        assert mock_pipeline_service.create_pipeline.called
+        assert mock_pipeline_service.start_pipeline.called
+        assert isinstance(result, uuid.UUID)
 
 
 @pytest.mark.asyncio
@@ -1728,41 +1733,44 @@ async def test_create_pipeline_bot_build_closed_pr():
         "head": {"sha": "abcdef123456"},
     }
 
-    with patch("app.routes.webhooks.get_db", mock_get_db):
-        with patch("app.routes.webhooks.logger") as mock_logger:
-            with patch(
-                "app.routes.webhooks.create_pr_comment", AsyncMock()
-            ) as mock_comment:
+    with patch("app.routes.webhooks.settings.ff_disable_test_builds", False):
+        with patch("app.routes.webhooks.get_db", mock_get_db):
+            with patch("app.routes.webhooks.logger") as mock_logger:
                 with patch(
-                    "app.routes.webhooks.settings.github_status_token", "test-token"
-                ):
-                    with patch("httpx.AsyncClient") as MockClient:
-                        mock_response = MagicMock()
-                        mock_response.json.return_value = mock_pr_response
-                        mock_response.raise_for_status.return_value = None
+                    "app.routes.webhooks.create_pr_comment", AsyncMock()
+                ) as mock_comment:
+                    with patch(
+                        "app.routes.webhooks.settings.github_status_token", "test-token"
+                    ):
+                        with patch("httpx.AsyncClient") as MockClient:
+                            mock_response = MagicMock()
+                            mock_response.json.return_value = mock_pr_response
+                            mock_response.raise_for_status.return_value = None
 
-                        mock_client_instance = AsyncMock()
-                        mock_client_instance.get = AsyncMock(return_value=mock_response)
-                        MockClient.return_value.__aenter__.return_value = (
-                            mock_client_instance
-                        )
+                            mock_client_instance = AsyncMock()
+                            mock_client_instance.get = AsyncMock(
+                                return_value=mock_response
+                            )
+                            MockClient.return_value.__aenter__.return_value = (
+                                mock_client_instance
+                            )
 
-                        from app.routes.webhooks import create_pipeline
+                            from app.routes.webhooks import create_pipeline
 
-                        result = await create_pipeline(webhook_event)
+                            result = await create_pipeline(webhook_event)
 
-                        assert result is None
-                        mock_logger.info.assert_called_once_with(
-                            "PR is closed/merged, ignoring 'bot, build' command",
-                            pr_number=42,
-                            repo="test-owner/test-repo",
-                            pr_state="closed",
-                        )
-                        mock_comment.assert_called_once_with(
-                            git_repo="test-owner/test-repo",
-                            pr_number=42,
-                            comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
-                        )
+                            assert result is None
+                            mock_logger.info.assert_called_once_with(
+                                "PR is closed/merged, ignoring 'bot, build' command",
+                                pr_number=42,
+                                repo="test-owner/test-repo",
+                                pr_state="closed",
+                            )
+                            mock_comment.assert_called_once_with(
+                                git_repo="test-owner/test-repo",
+                                pr_number=42,
+                                comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
+                            )
 
 
 @pytest.mark.asyncio
@@ -1786,41 +1794,44 @@ async def test_create_pipeline_bot_build_merged_pr():
         "head": {"sha": "abcdef123456"},
     }
 
-    with patch("app.routes.webhooks.get_db", mock_get_db):
-        with patch("app.routes.webhooks.logger") as mock_logger:
-            with patch(
-                "app.routes.webhooks.create_pr_comment", AsyncMock()
-            ) as mock_comment:
+    with patch("app.routes.webhooks.settings.ff_disable_test_builds", False):
+        with patch("app.routes.webhooks.get_db", mock_get_db):
+            with patch("app.routes.webhooks.logger") as mock_logger:
                 with patch(
-                    "app.routes.webhooks.settings.github_status_token", "test-token"
-                ):
-                    with patch("httpx.AsyncClient") as MockClient:
-                        mock_response = MagicMock()
-                        mock_response.json.return_value = mock_pr_response
-                        mock_response.raise_for_status.return_value = None
+                    "app.routes.webhooks.create_pr_comment", AsyncMock()
+                ) as mock_comment:
+                    with patch(
+                        "app.routes.webhooks.settings.github_status_token", "test-token"
+                    ):
+                        with patch("httpx.AsyncClient") as MockClient:
+                            mock_response = MagicMock()
+                            mock_response.json.return_value = mock_pr_response
+                            mock_response.raise_for_status.return_value = None
 
-                        mock_client_instance = AsyncMock()
-                        mock_client_instance.get = AsyncMock(return_value=mock_response)
-                        MockClient.return_value.__aenter__.return_value = (
-                            mock_client_instance
-                        )
+                            mock_client_instance = AsyncMock()
+                            mock_client_instance.get = AsyncMock(
+                                return_value=mock_response
+                            )
+                            MockClient.return_value.__aenter__.return_value = (
+                                mock_client_instance
+                            )
 
-                        from app.routes.webhooks import create_pipeline
+                            from app.routes.webhooks import create_pipeline
 
-                        result = await create_pipeline(webhook_event)
+                            result = await create_pipeline(webhook_event)
 
-                        assert result is None
-                        mock_logger.info.assert_called_once_with(
-                            "PR is closed/merged, ignoring 'bot, build' command",
-                            pr_number=42,
-                            repo="test-owner/test-repo",
-                            pr_state="merged",
-                        )
-                        mock_comment.assert_called_once_with(
-                            git_repo="test-owner/test-repo",
-                            pr_number=42,
-                            comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
-                        )
+                            assert result is None
+                            mock_logger.info.assert_called_once_with(
+                                "PR is closed/merged, ignoring 'bot, build' command",
+                                pr_number=42,
+                                repo="test-owner/test-repo",
+                                pr_state="merged",
+                            )
+                            mock_comment.assert_called_once_with(
+                                git_repo="test-owner/test-repo",
+                                pr_number=42,
+                                comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
+                            )
 
 
 @pytest.mark.asyncio
@@ -1854,37 +1865,41 @@ async def test_create_pipeline_bot_build_open_pr_continues():
 
     mock_pr_response = {"number": 42, "state": "open", "head": {"sha": "abcdef123456"}}
 
-    with patch("app.routes.webhooks.get_db", mock_get_db):
-        with patch("app.pipelines.build.get_db", mock_get_db):
-            with patch(
-                "app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service
-            ):
-                with patch("app.routes.webhooks.update_commit_status", AsyncMock()):
-                    with patch("app.routes.webhooks.create_pr_comment", AsyncMock()):
+    with patch("app.routes.webhooks.settings.ff_disable_test_builds", False):
+        with patch("app.routes.webhooks.get_db", mock_get_db):
+            with patch("app.pipelines.build.get_db", mock_get_db):
+                with patch(
+                    "app.routes.webhooks.BuildPipeline",
+                    return_value=mock_pipeline_service,
+                ):
+                    with patch("app.routes.webhooks.update_commit_status", AsyncMock()):
                         with patch(
-                            "app.routes.webhooks.settings.github_status_token",
-                            "test-token",
+                            "app.routes.webhooks.create_pr_comment", AsyncMock()
                         ):
-                            with patch("httpx.AsyncClient") as MockClient:
-                                mock_response = MagicMock()
-                                mock_response.json.return_value = mock_pr_response
-                                mock_response.raise_for_status.return_value = None
+                            with patch(
+                                "app.routes.webhooks.settings.github_status_token",
+                                "test-token",
+                            ):
+                                with patch("httpx.AsyncClient") as MockClient:
+                                    mock_response = MagicMock()
+                                    mock_response.json.return_value = mock_pr_response
+                                    mock_response.raise_for_status.return_value = None
 
-                                mock_client_instance = AsyncMock()
-                                mock_client_instance.get = AsyncMock(
-                                    return_value=mock_response
-                                )
-                                MockClient.return_value.__aenter__.return_value = (
-                                    mock_client_instance
-                                )
+                                    mock_client_instance = AsyncMock()
+                                    mock_client_instance.get = AsyncMock(
+                                        return_value=mock_response
+                                    )
+                                    MockClient.return_value.__aenter__.return_value = (
+                                        mock_client_instance
+                                    )
 
-                                from app.routes.webhooks import create_pipeline
+                                    from app.routes.webhooks import create_pipeline
 
-                                result = await create_pipeline(webhook_event)
+                                    result = await create_pipeline(webhook_event)
 
-                                assert result == pipeline_id
-                                mock_pipeline_service.create_pipeline.assert_called_once()
-                                mock_pipeline_service.start_pipeline.assert_called_once()
+                                    assert result == pipeline_id
+                                    mock_pipeline_service.create_pipeline.assert_called_once()
+                                    mock_pipeline_service.start_pipeline.assert_called_once()
 
 
 @pytest.mark.asyncio
