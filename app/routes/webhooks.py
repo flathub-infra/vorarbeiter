@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import re
 import uuid
+import json
 
 import httpx
 import structlog
@@ -349,6 +350,11 @@ async def fetch_flathub_json(
                 logger.warning("flathub.json is not a JSON object", repo=repo, ref=ref)
                 return {}
             return data
+    except json.JSONDecodeError as err:
+        logger.warning(
+            "Failed to decode flathub.json", error=str(err), repo=repo, ref=ref
+        )
+        return None
     except (httpx.HTTPError, ValueError) as err:
         logger.error("Error fetching flathub.json from GitHub", error=str(err))
         return None
