@@ -856,6 +856,19 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             if not pr_url or issue_number is None:
                 return None
 
+            if settings.ff_disable_test_builds:
+                await create_pr_comment(
+                    git_repo=repo,
+                    pr_number=issue_number,
+                    comment="Test builds are currently disabled. Please refer to https://status.flathub.org for updates. You can retry this build when the incident is over.",
+                )
+                logger.info(
+                    "Test build trigger ignored because test builds are disabled",
+                    repo=repo,
+                    pr_number=issue_number,
+                )
+                return None
+
             pr_ref = f"refs/pull/{issue_number}/head"
 
             github_api_url = f"https://api.github.com/repos/{repo}/pulls/{issue_number}"

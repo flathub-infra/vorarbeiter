@@ -1176,6 +1176,105 @@ async def test_create_pipeline_admin_ping(flag_enabled, should_post):
             mock_add_comment.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_create_pipeline_comment_bot_build_disabled_posts_comment_and_skips_pipeline():
+    event_id = uuid.uuid4()
+
+    comment_payload = dict(SAMPLE_COMMENT_PAYLOAD)
+    comment_payload["issue"] = {
+        "number": 42,
+        "pull_request": {
+            "url": "https://api.github.com/repos/test-owner/test-repo/pulls/42"
+        },
+    }
+    comment_payload["comment"] = {
+        "body": "please bot, build this",
+        "id": 12345,
+        "user": {"login": "test-user"},
+        "html_url": "https://github.com/test-owner/test-repo/pull/42#comment-12345",
+    }
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=comment_payload,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_pipeline_service = AsyncMock()
+
+    with (
+        patch("app.routes.webhooks.settings.ff_disable_test_builds", True),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.create_pr_comment", new_callable=AsyncMock) as mock_comment,
+    ):
+        from app.routes.webhooks import create_pipeline
+
+        result = await create_pipeline(webhook_event)
+
+        assert result is None
+        mock_pipeline_service.create_pipeline.assert_not_called()
+        mock_pipeline_service.start_pipeline.assert_not_called()
+        mock_comment.assert_awaited_once_with(
+            git_repo="test-owner/test-repo",
+            pr_number=42,
+            comment="Test builds are currently disabled. Please refer to https://status.flathub.org for updates. You can retry this build when the incident is over.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_comment_bot_build_enabled_starts_pipeline():
+    event_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+
+    comment_payload = dict(SAMPLE_COMMENT_PAYLOAD)
+    comment_payload["issue"] = {
+        "number": 42,
+        "pull_request": {
+            "url": "https://api.github.com/repos/test-owner/test-repo/pulls/42"
+        },
+    }
+    comment_payload["comment"] = {
+        "body": "please bot, build this",
+        "id": 12345,
+        "user": {"login": "test-user"},
+        "html_url": "https://github.com/test-owner/test-repo/pull/42#comment-12345",
+    }
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=comment_payload,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="org.flathub.test-repo",
+        params={},
+        webhook_event_id=event_id,
+        status=PipelineStatus.PENDING,
+    )
+    mock_pipeline_service = AsyncMock()
+    mock_pipeline_service.create_pipeline.return_value = mock_pipeline
+    mock_pipeline_service.start_pipeline.return_value = mock_pipeline
+
+    with (
+        patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.create_pr_comment", new_callable=AsyncMock),
+    ):
+        from app.routes.webhooks import create_pipeline
+
+        result = await create_pipeline(webhook_event)
+
+        assert result == pipeline_id
+        mock_pipeline_service.create_pipeline.assert_called_once()
+        mock_pipeline_service.start_pipeline.assert_called_once()
+
+
 # Test data for retry functionality
 SAMPLE_ISSUE_BODY_STABLE = """The stable build pipeline for `test-app` failed.
 
