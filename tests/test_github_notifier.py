@@ -254,20 +254,36 @@ async def test_notify_pr_build_complete_success_no_build_id(
 
 
 @pytest.mark.asyncio
-async def test_notify_pr_build_complete_failure(github_notifier, mock_pipeline):
-    with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
+@pytest.mark.parametrize("flag_enabled", [True, False])
+async def test_notify_pr_build_complete_failure(
+    github_notifier, mock_pipeline, flag_enabled
+):
+    with (
+        patch(
+            "app.services.github_notifier.settings.ff_admin_ping_comment",
+            flag_enabled,
+        ),
+        patch("app.services.github_notifier.create_pr_comment") as mock_comment,
+    ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "failure")
+
+        expected_comment = (
+            "❌ [Test build](https://example.com/logs/123) failed.\n\n"
+            "<details><summary>Help</summary>\n\n"
+            "- <code>bot, build</code> - Restart the test build\n"
+        )
+
+        if flag_enabled:
+            expected_comment += (
+                "- <code>bot, ping admins</code> - Contact Flathub admins\n"
+            )
+
+        expected_comment += "</details>"
 
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App",
             pr_number=42,
-            comment=(
-                "❌ [Test build](https://example.com/logs/123) failed.\n\n"
-                "<details><summary>Help</summary>\n\n"
-                "- <code>bot, build</code> - Restart the test build\n"
-                "- <code>bot, ping admins</code> - Contact Flathub admins\n"
-                "</details>"
-            ),
+            comment=expected_comment,
         )
 
 
@@ -337,7 +353,13 @@ async def test_notify_pr_build_complete_committed_no_build_id(
 
 @pytest.mark.asyncio
 async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline):
-    with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
+    with (
+        patch(
+            "app.services.github_notifier.settings.ff_admin_ping_comment",
+            True,
+        ),
+        patch("app.services.github_notifier.create_pr_comment") as mock_comment,
+    ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "cancelled")
 
         mock_comment.assert_called_once_with(
@@ -357,7 +379,13 @@ async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline
 async def test_notify_pr_build_complete_commit_failure(github_notifier, mock_pipeline):
     mock_pipeline.commit_job_id = 12345
 
-    with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
+    with (
+        patch(
+            "app.services.github_notifier.settings.ff_admin_ping_comment",
+            True,
+        ),
+        patch("app.services.github_notifier.create_pr_comment") as mock_comment,
+    ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "commit_failure")
 
         mock_comment.assert_called_once_with(

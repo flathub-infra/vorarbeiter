@@ -1117,7 +1117,14 @@ async def test_receive_webhook_creates_pipeline(client, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_create_pipeline_admin_ping():
+@pytest.mark.parametrize(
+    "flag_enabled, should_post",
+    [
+        (True, True),
+        (False, False),
+    ],
+)
+async def test_create_pipeline_admin_ping(flag_enabled, should_post):
     event_id = uuid.uuid4()
     comment_payload = dict(SAMPLE_COMMENT_PAYLOAD)
     comment_payload["issue"] = {
@@ -1145,8 +1152,10 @@ async def test_create_pipeline_admin_ping():
     mock_get_db = create_mock_get_db(mock_db)
 
     with (
+        patch("app.routes.webhooks.settings.ff_admin_ping_comment", flag_enabled),
         patch(
-            "app.routes.webhooks.add_issue_comment", new_callable=AsyncMock
+            "app.routes.webhooks.add_issue_comment",
+            new_callable=AsyncMock,
         ) as mock_add_comment,
         patch("app.routes.webhooks.get_db", mock_get_db),
     ):
@@ -1156,12 +1165,15 @@ async def test_create_pipeline_admin_ping():
 
         assert result is None
 
-        mock_add_comment.assert_awaited_once_with(
-            git_repo="test-owner/test-repo",
-            issue_number=99,
-            comment="Contacted Flathub admins: cc @flathub/build-moderation",
-            check_duplicates=True,
-        )
+        if should_post:
+            mock_add_comment.assert_awaited_once_with(
+                git_repo="test-owner/test-repo",
+                issue_number=99,
+                comment="Contacted Flathub admins: cc @flathub/build-moderation",
+                check_duplicates=True,
+            )
+        else:
+            mock_add_comment.assert_not_awaited()
 
 
 # Test data for retry functionality

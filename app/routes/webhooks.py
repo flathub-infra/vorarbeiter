@@ -834,13 +834,16 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             if issue_number is None:
                 logger.error("Missing issue number for admin ping")
             else:
-                logger.info("Handling admin ping")
-                await add_issue_comment(
-                    git_repo=repo,
-                    issue_number=issue_number,
-                    comment="Contacted Flathub admins: cc @flathub/build-moderation",
-                    check_duplicates=True,
-                )
+                if settings.ff_admin_ping_comment:
+                    logger.info("Handling admin ping")
+                    await add_issue_comment(
+                        git_repo=repo,
+                        issue_number=issue_number,
+                        comment="Contacted Flathub admins: cc @flathub/build-moderation",
+                        check_duplicates=True,
+                    )
+                else:
+                    logger.info("Admin ping is disabled via settings")
             return None
 
         elif "bot, build" in comment_body:

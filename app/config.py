@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     statuspage_url: str = "https://status.flathub.org"
     sentry_dsn: str | None = None
     ff_reprocheck_issues: bool = False
+    ff_admin_ping_comment: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
