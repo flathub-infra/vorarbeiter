@@ -394,7 +394,7 @@ async def test_notify_pr_build_complete_commit_failure(github_notifier, mock_pip
             comment=(
                 "❌ Test build failed. "
                 "The [commit job](https://hub.flathub.org/status/12345) failed. "
-                "This may indicate an infrastructure issue.\n\n"
+                "This may indicate [an infrastructure issue](https://status.flathub.org).\n\n"
                 "<details><summary>Help</summary>\n\n"
                 "- <code>bot, build</code> - Restart the test build\n"
                 "- <code>bot, ping admins</code> - Contact Flathub admins\n"

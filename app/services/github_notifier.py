@@ -234,7 +234,7 @@ class GitHubNotifier:
                 comment = (
                     f"❌ Test build failed. "
                     f"{f'The [commit job]({settings.flat_manager_url}/status/{pipeline.commit_job_id}) failed.' if pipeline.commit_job_id else 'The commit job failed.'} "
-                    f"This may indicate an infrastructure issue.\n\n"
+                    f"This may indicate [an infrastructure issue](https://status.flathub.org).\n\n"
                     f"{footnote}"
                 )
 
