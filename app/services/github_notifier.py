@@ -376,7 +376,7 @@ class GitHubNotifier:
 
             body += (
                 "\n\nThis issue is being opened for tracking by Flathub admins and may indicate "
-                "an infrastructure problem. Please do not close or modify this until "
+                "an [infrastructure problem](https://status.flathub.org). Please do not close or modify this until "
                 "an admin has responded.\n"
             )
 

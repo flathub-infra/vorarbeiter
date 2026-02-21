@@ -627,7 +627,7 @@ async def test_create_stable_job_failure_issue_commit(github_notifier, mock_pipe
             "Build artifacts not found\n```\n\n"
             "cc @flathub/build-moderation\n\n"
             "This issue is being opened for tracking by Flathub admins and may indicate "
-            "an infrastructure problem. Please do not close or modify this until "
+            "an [infrastructure problem](https://status.flathub.org). Please do not close or modify this until "
             "an admin has responded.\n"
         )
 
@@ -671,7 +671,7 @@ async def test_create_stable_job_failure_issue_publish(github_notifier, mock_pip
             "Repository access denied\n```\n\n"
             "cc @flathub/build-moderation\n\n"
             "This issue is being opened for tracking by Flathub admins and may indicate "
-            "an infrastructure problem. Please do not close or modify this until "
+            "an [infrastructure problem](https://status.flathub.org). Please do not close or modify this until "
             "an admin has responded.\n"
         )
 
@@ -717,7 +717,7 @@ async def test_create_stable_job_failure_issue_update_repo(
             "Disk space insufficient\n```\n\n"
             "cc @flathub/build-moderation\n\n"
             "This issue is being opened for tracking by Flathub admins and may indicate "
-            "an infrastructure problem. Please do not close or modify this until "
+            "an [infrastructure problem](https://status.flathub.org). Please do not close or modify this until "
             "an admin has responded.\n"
         )
 
