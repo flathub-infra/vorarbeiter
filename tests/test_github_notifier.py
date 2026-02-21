@@ -354,6 +354,28 @@ async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline
 
 
 @pytest.mark.asyncio
+async def test_notify_pr_build_complete_commit_failure(github_notifier, mock_pipeline):
+    mock_pipeline.commit_job_id = 12345
+
+    with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
+        await github_notifier.notify_pr_build_complete(mock_pipeline, "commit_failure")
+
+        mock_comment.assert_called_once_with(
+            git_repo="flathub/org.test.App",
+            pr_number=42,
+            comment=(
+                "❌ Test build failed. "
+                "The [commit job](https://hub.flathub.org/status/12345) failed. "
+                "This may indicate an infrastructure issue.\n\n"
+                "<details><summary>Help</summary>\n\n"
+                "- <code>bot, build</code> - Restart the test build\n"
+                "- <code>bot, ping admins</code> - Contact Flathub admins\n"
+                "</details>"
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_notify_pr_build_complete_missing_params(github_notifier, mock_pipeline):
     mock_pipeline.params = {"sha": "abc123"}
 

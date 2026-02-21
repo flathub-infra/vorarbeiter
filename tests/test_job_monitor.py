@@ -88,7 +88,7 @@ async def test_check_and_update_pipeline_jobs_commit_failed(job_monitor, mock_pi
             mock_pipeline, "failure"
         )
         mock_notifier.notify_pr_build_complete.assert_called_once_with(
-            mock_pipeline, "failure"
+            mock_pipeline, "commit_failure"
         )
 
 

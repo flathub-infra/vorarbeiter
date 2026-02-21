@@ -112,7 +112,7 @@ class JobMonitor:
                         github_notifier = GitHubNotifier()
                         await github_notifier.notify_build_status(pipeline, "failure")
                         await github_notifier.notify_pr_build_complete(
-                            pipeline, "failure"
+                            pipeline, "commit_failure"
                         )
                     except Exception as e:
                         logger.error(

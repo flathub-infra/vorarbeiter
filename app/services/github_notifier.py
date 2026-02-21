@@ -229,6 +229,14 @@ class GitHubNotifier:
                 comment = f"❌ [Test build]({log_url}) failed.\n\n{footnote}"
             elif status == "cancelled":
                 comment = f"❌ [Test build]({log_url}) was cancelled.\n\n{footnote}"
+            elif status == "commit_failure":
+                status = "failure"
+                comment = (
+                    f"❌ Test build failed. "
+                    f"{f'The [commit job]({settings.flat_manager_url}/status/{pipeline.commit_job_id}) failed.' if pipeline.commit_job_id else 'The commit job failed.'} "
+                    f"This may indicate an infrastructure issue.\n\n"
+                    f"{footnote}"
+                )
 
             if comment:
                 await create_pr_comment(
