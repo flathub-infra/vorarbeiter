@@ -800,6 +800,20 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             return None
 
         pr_number = pr.get("number")
+
+        if settings.ff_disable_test_builds:
+            logger.info(
+                "Test builds are disabled, skipping PR pipeline creation",
+                pr_number=pr_number,
+                repo=event.repository,
+            )
+            await create_pr_comment(
+                git_repo=event.repository,
+                pr_number=pr_number,
+                comment=f"🚧 Test builds are currently disabled. Once the maintenance is over, this build can be retried by posting a `bot, build` comment. Please refer to {settings.statuspage_url} for updates.",
+            )
+            return None
+
         sha = pr.get("head", {}).get("sha")
         params.update(
             {
@@ -854,6 +868,19 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
         elif "bot, build" in comment_body:
             if not pr_url or issue_number is None:
+                return None
+
+            if settings.ff_disable_test_builds:
+                logger.info(
+                    "Test builds are disabled, skipping bot, build pipeline creation",
+                    pr_number=issue_number,
+                    repo=repo,
+                )
+                await create_pr_comment(
+                    git_repo=repo,
+                    pr_number=issue_number,
+                    comment=f"🚧 Test builds are currently disabled. Once the maintenance is over, this build can be retried by posting a `bot, build` comment. Please refer to {settings.statuspage_url} for updates.",
+                )
                 return None
 
             pr_ref = f"refs/pull/{issue_number}/head"
