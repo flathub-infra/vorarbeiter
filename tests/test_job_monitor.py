@@ -1,5 +1,5 @@
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -63,9 +63,17 @@ async def test_process_succeeded_pipeline_sends_pr_comment(job_monitor, mock_pip
 async def test_check_and_update_pipeline_jobs_commit_failed(job_monitor, mock_pipeline):
     job_response = {"status": JobStatus.BROKEN, "log": "Error: commit failed"}
 
+    mock_notifier = MagicMock()
+    mock_notifier.notify_build_status = AsyncMock()
+    mock_notifier.notify_pr_build_complete = AsyncMock()
+
     with (
         patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
         patch.object(job_monitor, "_create_job_failure_issue") as mock_create_issue,
+        patch(
+            "app.services.github_notifier.GitHubNotifier",
+            return_value=mock_notifier,
+        ),
     ):
         mock_get_job.return_value = job_response
 
@@ -75,6 +83,12 @@ async def test_check_and_update_pipeline_jobs_commit_failed(job_monitor, mock_pi
         assert mock_pipeline.status == PipelineStatus.FAILED
         mock_create_issue.assert_called_once_with(
             mock_pipeline, "commit", 12345, job_response
+        )
+        mock_notifier.notify_build_status.assert_called_once_with(
+            mock_pipeline, "failure"
+        )
+        mock_notifier.notify_pr_build_complete.assert_called_once_with(
+            mock_pipeline, "failure"
         )
 
 

@@ -116,6 +116,20 @@ async def test_notify_build_status_committed(github_notifier, mock_pipeline):
 
 
 @pytest.mark.asyncio
+async def test_notify_build_status_committing(github_notifier, mock_pipeline):
+    with patch("app.services.github_notifier.update_commit_status") as mock_update:
+        await github_notifier.notify_build_status(mock_pipeline, "committing")
+
+        mock_update.assert_called_once_with(
+            sha="abc123def456",
+            state="pending",
+            git_repo="flathub/org.test.App",
+            description="Committing build...",
+            target_url="https://example.com/logs/123",
+        )
+
+
+@pytest.mark.asyncio
 async def test_notify_build_status_unknown(github_notifier, mock_pipeline):
     with patch("app.services.github_notifier.update_commit_status") as mock_update:
         await github_notifier.notify_build_status(mock_pipeline, "unknown_status")
@@ -427,7 +441,7 @@ async def test_handle_build_completion_success(github_notifier, mock_pipeline):
         with patch.object(github_notifier, "notify_pr_build_complete") as mock_pr:
             await github_notifier.handle_build_completion(mock_pipeline, "success")
 
-            mock_status.assert_called_once_with(mock_pipeline, "success")
+            mock_status.assert_called_once_with(mock_pipeline, "committing")
             mock_pr.assert_not_called()
 
 
@@ -469,7 +483,7 @@ async def test_handle_build_completion_with_flat_manager(
         )
 
         assert github_notifier.flat_manager == new_flat_manager
-        mock_status.assert_called_once()
+        mock_status.assert_called_once_with(mock_pipeline, "committing")
 
 
 @pytest.mark.asyncio

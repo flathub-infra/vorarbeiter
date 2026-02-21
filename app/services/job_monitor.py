@@ -105,6 +105,21 @@ class JobMonitor:
                 await self._create_job_failure_issue(
                     pipeline, "commit", pipeline.commit_job_id, job_response
                 )
+                if pipeline.params.get("pr_number"):
+                    try:
+                        from app.services.github_notifier import GitHubNotifier
+
+                        github_notifier = GitHubNotifier()
+                        await github_notifier.notify_build_status(pipeline, "failure")
+                        await github_notifier.notify_pr_build_complete(
+                            pipeline, "failure"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Failed to send commit failure notification",
+                            pipeline_id=str(pipeline.id),
+                            error=str(e),
+                        )
                 return True
             else:
                 logger.debug(

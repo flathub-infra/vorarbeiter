@@ -179,6 +179,17 @@ class BuildPipeline:
                         pipeline, job_type, job_id, "pending", status_message
                     )
 
+                if (
+                    github_notifier
+                    and pipeline.params.get("pr_number")
+                    and job_type == "commit"
+                ):
+                    await github_notifier.notify_build_status(
+                        pipeline,
+                        "committing",
+                        log_url=f"{settings.flat_manager_url}/status/{job_id}",
+                    )
+
                 return True
         except Exception as e:
             logger.warning(

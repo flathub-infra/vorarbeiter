@@ -48,6 +48,9 @@ class GitHubNotifier:
             case "success":
                 description = "Build succeeded"
                 github_state = "success"
+            case "committing":
+                description = "Committing build..."
+                github_state = "pending"
             case "committed":
                 description = "Build ready"
                 github_state = "success"
@@ -400,7 +403,10 @@ class GitHubNotifier:
         if flat_manager_client:
             self.flat_manager = flat_manager_client
 
-        await self.notify_build_status(pipeline, status)
+        if status == "success" and pipeline.params.get("pr_number"):
+            await self.notify_build_status(pipeline, "committing")
+        else:
+            await self.notify_build_status(pipeline, status)
 
         if status == "failure":
             await self.create_stable_build_failure_issue(pipeline)
