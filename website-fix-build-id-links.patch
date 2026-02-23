@@ -1,0 +1,66 @@
+From 9447ae65ec0d90c34f9840aa748685dc8d675cf1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 23 Feb 2026 15:43:14 +0000
+Subject: [PATCH] fix: correct build_id links to use flat-manager API endpoint
+
+The /status/{id} endpoint in flat-manager is exclusively for jobs (commit,
+publish, update-repo), not builds. Linking build_id to /status/{build_id}
+either returns a 404 or shows an unrelated job's status.
+
+- build-detail-client.tsx: Change "Build Job" link from /status/{build_id}
+  to /api/v1/build/{build_id} and rename label to "Build #{id}"
+- build-group.tsx: Fix column header from "Commit" to "Build" and change
+  link to /api/v1/build/{build_id}
+
+The commit_job_id, publish_job_id, and update_repo_job_id links to /status/
+remain correct as those are actual flat-manager job IDs.
+---
+ frontend/@/components/build/build-group.tsx               | 4 ++--
+ frontend/app/[locale]/builds/[id]/build-detail-client.tsx | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/frontend/@/components/build/build-group.tsx b/frontend/@/components/build/build-group.tsx
+index e0b476b4..8d219316 100644
+--- a/frontend/@/components/build/build-group.tsx
++++ b/frontend/@/components/build/build-group.tsx
+@@ -89,7 +89,7 @@ export function BuildGroup({ title, builds, repo }: BuildGroupProps) {
+             <thead className="border-b">
+               <tr>
+                 <th className="px-4 py-3 text-left font-semibold">Status</th>
+-                <th className="px-4 py-3 text-left font-semibold">Commit</th>
++                <th className="px-4 py-3 text-left font-semibold">Build</th>
+                 <th className="px-4 py-3 text-left font-semibold">Created</th>
+                 <th className="px-4 py-3 text-left font-semibold">Duration</th>
+                 <th className="px-4 py-3 text-left font-semibold">
+@@ -121,7 +121,7 @@ export function BuildGroup({ title, builds, repo }: BuildGroupProps) {
+                         asChild
+                       >
+                         <a
+-                          href={`https://hub.flathub.org/status/${build.build_id}`}
++                          href={`https://hub.flathub.org/api/v1/build/${build.build_id}`}
+                           target="_blank"
+                           rel="noreferrer"
+                         >
+diff --git a/frontend/app/[locale]/builds/[id]/build-detail-client.tsx b/frontend/app/[locale]/builds/[id]/build-detail-client.tsx
+index 3cbd2636..4e2d3291 100644
+--- a/frontend/app/[locale]/builds/[id]/build-detail-client.tsx
++++ b/frontend/app/[locale]/builds/[id]/build-detail-client.tsx
+@@ -177,13 +177,13 @@ export default function BuildDetailClient({ pipelineId }: Props) {
+                 className="w-full justify-start h-auto py-4 px-5 hover:bg-primary/5 transition-all group"
+               >
+                 <a
+-                  href={`https://hub.flathub.org/status/${build_id}`}
++                  href={`https://hub.flathub.org/api/v1/build/${build_id}`}
+                   target="_blank"
+                   rel="noreferrer"
+                   className="gap-3"
+                 >
+                   <ExternalLink className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+-                  <span className="font-semibold">Build Job</span>
++                  <span className="font-semibold">Build #{build_id}</span>
+                 </a>
+               </Button>
+             )}
+-- 
+2.43.0
+
