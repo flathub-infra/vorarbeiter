@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     ff_reprocheck_issues: bool = False
     ff_admin_ping_comment: bool = True
     ff_disable_test_builds: bool = False
+    max_concurrent_builds: int = 15
 
     model_config = SettingsConfigDict(
         env_file=".env",

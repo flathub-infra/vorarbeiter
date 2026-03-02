@@ -169,6 +169,7 @@ async def test_build_pipeline_sets_initial_commit_status():
         "app.pipelines.build.get_flat_manager_client", return_value=mock_fm_instance
     ):
         build_pipeline = BuildPipeline()
+        build_pipeline.start_pending_builds = AsyncMock(return_value=[])  # ty: ignore[invalid-assignment]
 
         with patch("app.pipelines.build.get_db") as mock_get_db:
             mock_db = AsyncMock()

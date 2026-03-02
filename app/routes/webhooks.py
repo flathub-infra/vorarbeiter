@@ -967,35 +967,60 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         params=params,
         webhook_event_id=event.id,
     )
+    pipeline = await pipeline_service.prepare_pipeline_for_start(pipeline.id)
+    await pipeline_service.supersede_conflicting_test_pipelines(pipeline.id)
+    should_queue_test_build = await pipeline_service.should_queue_test_build(
+        pipeline.id
+    )
 
     commit_sha = pipeline.params.get("sha")
     git_repo = pipeline.params.get("repo")
 
     if commit_sha and git_repo:
         target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
-        await update_commit_status(
-            sha=commit_sha,
-            state="pending",
-            git_repo=git_repo,
-            description="Build enqueued",
-            target_url=target_url,
+        description = (
+            "Build queued — waiting for capacity"
+            if should_queue_test_build
+            else "Build enqueued"
         )
+        try:
+            await update_commit_status(
+                sha=commit_sha,
+                state="pending",
+                git_repo=git_repo,
+                description=description,
+                target_url=target_url,
+            )
+        except Exception as e:
+            logger.warning(
+                "Error setting initial commit status",
+                pipeline_id=str(pipeline.id),
+                git_repo=git_repo,
+                commit_sha=commit_sha,
+                error=str(e),
+            )
     elif commit_sha and not git_repo:
         logger.error(
             "Missing git_repo in params. Cannot update commit status.",
             pipeline_id=str(pipeline.id),
         )
 
-    pipeline = await pipeline_service.start_pipeline(pipeline_id=pipeline.id)
+    if not should_queue_test_build:
+        pipeline = await pipeline_service.start_pipeline(pipeline_id=pipeline.id)
 
     pr_number_str = pipeline.params.get("pr_number")
     if pr_number_str and git_repo:
         try:
             pr_number = int(pr_number_str)
+            comment = (
+                "🚧 Test build queued — waiting for capacity."
+                if should_queue_test_build
+                else "🚧 Test build [enqueued](https://github.com/flathub-infra/vorarbeiter/actions/workflows/build.yml)."
+            )
             await create_pr_comment(
                 git_repo=git_repo,
                 pr_number=pr_number,
-                comment="🚧 Test build [enqueued](https://github.com/flathub-infra/vorarbeiter/actions/workflows/build.yml).",
+                comment=comment,
             )
         except ValueError:
             logger.error(

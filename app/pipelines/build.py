@@ -60,6 +60,7 @@ app_build_types = {
 FAST_BUILD_P90_THRESHOLD_MINUTES = 15.0
 FAST_BUILD_MIN_BUILDS = 3
 FAST_BUILD_LOOKBACK_DAYS = 90
+SPOT_BUILD_TYPES = ("medium", "large")
 
 
 async def get_app_p90_build_time(db: AsyncSession, app_id: str) -> float | None:
@@ -129,6 +130,10 @@ class BuildPipeline:
     def __init__(self):
         self.provider = github_actions_service
         self.flat_manager = get_flat_manager_client()
+
+    @staticmethod
+    def is_spot_build_type(build_type: str | None) -> bool:
+        return build_type in SPOT_BUILD_TYPES
 
     @staticmethod
     async def fetch_and_store_job_id(
@@ -218,21 +223,122 @@ class BuildPipeline:
             await db.commit()
             return pipeline
 
+    async def _prepare_pipeline_metadata(
+        self,
+        db: AsyncSession,
+        pipeline: Pipeline,
+    ) -> tuple[str, str]:
+        params = dict(pipeline.params or {})
+        stored_build_type = params.get("build_type")
+        if stored_build_type is None:
+            build_type = await determine_build_type(db, pipeline.app_id)
+            params["build_type"] = build_type
+        else:
+            build_type = str(stored_build_type)
+
+        pipeline.params = params
+
+        flat_manager_repo = pipeline.flat_manager_repo
+        if flat_manager_repo is None:
+            flat_manager_repo = get_flat_manager_repo(params.get("ref"))
+            pipeline.flat_manager_repo = flat_manager_repo
+
+        return build_type, flat_manager_repo
+
+    async def prepare_pipeline_for_start(
+        self,
+        pipeline_id: uuid.UUID,
+    ) -> Pipeline:
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+
+            await self._prepare_pipeline_metadata(db, pipeline)
+            await db.commit()
+            return pipeline
+
+    async def _count_running_spot_builds(self, db: AsyncSession) -> int:
+        query = text("""
+            SELECT COUNT(*)
+            FROM pipeline
+            WHERE status = :status
+              AND params->>'build_type' = ANY(:spot_types)
+        """)
+        result = await db.execute(
+            query,
+            {
+                "status": PipelineStatus.RUNNING.value,
+                "spot_types": list(SPOT_BUILD_TYPES),
+            },
+        )
+        return int(result.scalar() or 0)
+
+    async def _can_start_test_spot_build(self, db: AsyncSession) -> bool:
+        if settings.max_concurrent_builds == 0:
+            return True
+
+        running_spot_builds = await self._count_running_spot_builds(db)
+        return running_spot_builds < settings.max_concurrent_builds
+
+    async def supersede_conflicting_test_pipelines(
+        self, pipeline_id: uuid.UUID
+    ) -> None:
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+
+            if pipeline.flat_manager_repo != "test":
+                return
+
+            await self._supersede_conflicting_pipelines(
+                db=db,
+                pipeline=pipeline,
+                flat_manager_repo="test",
+            )
+            await db.commit()
+
+    async def should_queue_test_build(self, pipeline_id: uuid.UUID) -> bool:
+        """Check if a test spot build should be queued instead of started immediately.
+
+        Returns True if the build should be queued (not started immediately).
+        Returns False for non-test builds or non-spot test builds.
+        """
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+
+            if pipeline.flat_manager_repo != "test":
+                return False
+
+            if not self.is_spot_build_type((pipeline.params or {}).get("build_type")):
+                return False
+
+            return not await self._can_start_test_spot_build(db)
+
     async def _supersede_conflicting_pipelines(
         self,
         db: AsyncSession,
         pipeline: Pipeline,
         flat_manager_repo: str,
     ) -> None:
-        if flat_manager_repo not in ["stable", "beta"]:
-            return
-
         query = select(Pipeline).where(
             Pipeline.app_id == pipeline.app_id,
-            Pipeline.flat_manager_repo == flat_manager_repo,
             Pipeline.status.in_([PipelineStatus.RUNNING, PipelineStatus.PENDING]),
             Pipeline.id != pipeline.id,
         )
+
+        if flat_manager_repo in ["stable", "beta"]:
+            query = query.where(Pipeline.flat_manager_repo == flat_manager_repo)
+        elif flat_manager_repo == "test":
+            ref = (pipeline.params or {}).get("ref")
+            if not ref:
+                return
+            query = query.where(text("params->>'ref' = :ref")).params(ref=ref)
+        else:
+            return
         result = await db.execute(query)
         conflicting = list(result.scalars().all())
 
@@ -297,17 +403,21 @@ class BuildPipeline:
             pipeline.status = PipelineStatus.RUNNING
             pipeline.started_at = datetime.now()
 
-            build_type = await determine_build_type(db, pipeline.app_id)
-            pipeline.params = {**pipeline.params, "build_type": build_type}
-
-            ref = pipeline.params.get("ref")
-            flat_manager_repo = get_flat_manager_repo(ref)
-            pipeline.flat_manager_repo = flat_manager_repo
-
-            await self._supersede_conflicting_pipelines(db, pipeline, flat_manager_repo)
+            params = dict(pipeline.params or {})
+            stored_build_type = params.get("build_type")
+            flat_manager_repo = pipeline.flat_manager_repo
+            if stored_build_type is None or flat_manager_repo is None:
+                build_type, flat_manager_repo = await self._prepare_pipeline_metadata(
+                    db, pipeline
+                )
+            else:
+                build_type = str(stored_build_type)
+            if flat_manager_repo in ["stable", "beta"]:
+                await self._supersede_conflicting_pipelines(
+                    db, pipeline, flat_manager_repo
+                )
 
             workflow_id = pipeline.params.get("workflow_id", "build.yml")
-            build_type = pipeline.params["build_type"]
 
             requires_flat_manager = workflow_id != "reprocheck.yml"
 
@@ -380,6 +490,59 @@ class BuildPipeline:
 
             await db.commit()
             return pipeline
+
+    async def start_pending_builds(self) -> list[uuid.UUID]:
+        query = """
+            SELECT id
+            FROM pipeline
+            WHERE status = :pending_status
+              AND flat_manager_repo = 'test'
+              AND params->>'build_type' = ANY(:spot_types)
+            ORDER BY created_at ASC
+        """
+
+        params: dict[str, Any] = {
+            "pending_status": PipelineStatus.PENDING.value,
+            "spot_types": list(SPOT_BUILD_TYPES),
+        }
+        limit: int | None = None
+        async with get_db() as db:
+            if settings.max_concurrent_builds > 0:
+                running_spot_builds = await self._count_running_spot_builds(db)
+                remaining_capacity = max(
+                    settings.max_concurrent_builds - running_spot_builds,
+                    0,
+                )
+                if remaining_capacity == 0:
+                    return []
+                limit = remaining_capacity
+
+            if limit is not None:
+                query += "\nLIMIT :limit"
+                params["limit"] = limit
+
+            result = await db.execute(text(query), params)
+            rows = result.fetchall()
+            pending_pipeline_ids = [row[0] for row in rows]
+
+        started_pipeline_ids: list[uuid.UUID] = []
+        for pending_pipeline_id in pending_pipeline_ids:
+            try:
+                started_pipeline = await self.start_pipeline(pending_pipeline_id)
+                started_pipeline_ids.append(started_pipeline.id)
+            except ValueError:
+                logger.info(
+                    "Skipping pending pipeline that is no longer startable",
+                    pipeline_id=str(pending_pipeline_id),
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to start queued pipeline",
+                    pipeline_id=str(pending_pipeline_id),
+                    error=str(e),
+                )
+
+        return started_pipeline_ids
 
     async def handle_metadata_callback(
         self,
@@ -529,6 +692,7 @@ class BuildPipeline:
                         retry_pipeline_id=str(retry_pipeline.id),
                         flat_manager_repo=pipeline.flat_manager_repo,
                     )
+                    await self.start_pending_builds()
                     return pipeline, updates
                 except Exception as e:
                     logger.error(
@@ -592,6 +756,7 @@ class BuildPipeline:
                 )
 
             updates["pipeline_status"] = status_value
+            await self.start_pending_builds()
             return pipeline, updates
 
     async def handle_reprocheck_callback(

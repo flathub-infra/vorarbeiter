@@ -82,6 +82,7 @@ async def test_build_pipeline_skips_notification_for_test_builds():
     mock_pipeline.flat_manager_repo = "test"  # Test repo
 
     build_pipeline = BuildPipeline()
+    build_pipeline.start_pending_builds = AsyncMock(return_value=[])  # ty: ignore[invalid-assignment]
 
     with patch("app.pipelines.build.get_db") as mock_get_db:
         mock_db = AsyncMock()

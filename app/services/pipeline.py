@@ -206,9 +206,14 @@ class PipelineService:
             await db.flush()
             pipeline = db_pipeline
 
-        pipeline = await build_pipeline.start_pipeline(
-            pipeline_id=pipeline.id,
-        )
+        pipeline = await build_pipeline.prepare_pipeline_for_start(pipeline.id)
+        await build_pipeline.supersede_conflicting_test_pipelines(pipeline.id)
+        should_queue = await build_pipeline.should_queue_test_build(pipeline.id)
+
+        if not should_queue:
+            pipeline = await build_pipeline.start_pipeline(
+                pipeline_id=pipeline.id,
+            )
 
         return {
             "status": "created",

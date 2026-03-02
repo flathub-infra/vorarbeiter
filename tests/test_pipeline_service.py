@@ -163,10 +163,15 @@ async def test_trigger_manual_pipeline_success(pipeline_service):
     mock_pipeline.app_id = app_id
     mock_pipeline.status = PipelineStatus.RUNNING
     mock_pipeline.triggered_by = PipelineTrigger.MANUAL
+    mock_pipeline.params = {"ref": "refs/pull/42/head", "build_type": "default"}
+    mock_pipeline.flat_manager_repo = "test"
 
     with patch("app.pipelines.BuildPipeline") as MockBuildPipeline:
         mock_build = AsyncMock()
         mock_build.create_pipeline.return_value = mock_pipeline
+        mock_build.prepare_pipeline_for_start.return_value = mock_pipeline
+        mock_build.supersede_conflicting_test_pipelines.return_value = None
+        mock_build.should_queue_test_build.return_value = False
         mock_build.start_pipeline.return_value = mock_pipeline
         MockBuildPipeline.return_value = mock_build
 
@@ -185,7 +190,49 @@ async def test_trigger_manual_pipeline_success(pipeline_service):
             mock_build.create_pipeline.assert_called_once_with(
                 app_id=app_id, params=params, webhook_event_id=None
             )
+            mock_build.prepare_pipeline_for_start.assert_called_once_with(pipeline_id)
+            mock_build.supersede_conflicting_test_pipelines.assert_called_once_with(
+                pipeline_id
+            )
+            mock_build.should_queue_test_build.assert_called_once_with(pipeline_id)
             mock_build.start_pipeline.assert_called_once_with(pipeline_id=pipeline_id)
+
+
+@pytest.mark.asyncio
+async def test_trigger_manual_pipeline_queues_spot_test_when_at_capacity(
+    pipeline_service,
+):
+    app_id = "org.test.App"
+    params = {"ref": "refs/pull/42/head"}
+    pipeline_id = uuid.uuid4()
+
+    mock_pipeline = MagicMock(spec=Pipeline)
+    mock_pipeline.id = pipeline_id
+    mock_pipeline.app_id = app_id
+    mock_pipeline.status = PipelineStatus.PENDING
+    mock_pipeline.triggered_by = PipelineTrigger.MANUAL
+    mock_pipeline.params = {"ref": "refs/pull/42/head", "build_type": "medium"}
+    mock_pipeline.flat_manager_repo = "test"
+
+    with patch("app.pipelines.BuildPipeline") as MockBuildPipeline:
+        mock_build = AsyncMock()
+        mock_build.create_pipeline.return_value = mock_pipeline
+        mock_build.prepare_pipeline_for_start.return_value = mock_pipeline
+        mock_build.supersede_conflicting_test_pipelines.return_value = None
+        mock_build.should_queue_test_build.return_value = True
+        MockBuildPipeline.return_value = mock_build
+
+        with patch("app.database.get_db") as mock_get_db:
+            mock_db = AsyncMock()
+            mock_db.get.return_value = mock_pipeline
+            mock_get_db.return_value.__aenter__.return_value = mock_db
+
+            result = await pipeline_service.trigger_manual_pipeline(app_id, params)
+
+            assert result["status"] == "created"
+            assert result["pipeline_id"] == str(pipeline_id)
+            assert result["pipeline_status"] == "pending"
+            mock_build.start_pipeline.assert_not_called()
 
 
 @pytest.mark.asyncio
