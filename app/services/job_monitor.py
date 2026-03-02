@@ -131,7 +131,7 @@ class JobMonitor:
                 return False
 
         except Exception as e:
-            logger.error(
+            logger.warning(
                 "Failed to check commit job status",
                 pipeline_id=str(pipeline.id),
                 commit_job_id=pipeline.commit_job_id,
@@ -144,7 +144,7 @@ class JobMonitor:
             job_response = await self.flat_manager.get_job(job_id)
             return JobStatus(job_response["status"])
         except Exception as e:
-            logger.error(
+            logger.warning(
                 "Failed to check job status",
                 job_id=job_id,
                 error=str(e),
@@ -175,7 +175,7 @@ class JobMonitor:
 
             return (job_status, job_response)
         except Exception as e:
-            logger.error(
+            logger.warning(
                 f"Failed to check {job_type} job status",
                 pipeline_id=str(pipeline.id),
                 **{job_id_field_name: job_id},
@@ -374,7 +374,7 @@ class JobMonitor:
 
             return updated
         except Exception as e:
-            logger.error(
+            logger.warning(
                 "Failed to fetch job IDs from flat-manager",
                 pipeline_id=str(pipeline.id),
                 build_id=pipeline.build_id,
@@ -459,7 +459,7 @@ class JobMonitor:
             if job_status == JobStatus.NEW:
                 await self._notify_flat_manager_job_new(pipeline, job_type, job_id)
         except Exception as e:
-            logger.error(
+            logger.warning(
                 f"Failed to check {job_type} job status for NEW notification",
                 pipeline_id=str(pipeline.id),
                 job_id=job_id,
@@ -512,7 +512,7 @@ class JobMonitor:
                 )
                 return True
         except Exception as e:
-            logger.error(
+            logger.warning(
                 f"Failed to check {job_type} job status for published pipeline",
                 pipeline_id=str(pipeline.id),
                 job_id=job_id,
