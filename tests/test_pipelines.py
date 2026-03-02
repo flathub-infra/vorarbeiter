@@ -279,7 +279,7 @@ async def test_handle_status_callback_success_drains_oldest_pending_pipeline():
         for call in build_pipeline.start_pipeline.await_args_list  # ty: ignore[unresolved-attribute]
     ]
     assert started_ids == [oldest_pending_id, newer_pending_id]
-    pending_query = str(pending_db.execute.await_args.args[0])
+    pending_query = str(pending_db.execute.await_args.args[0])  # ty: ignore[unresolved-attribute]
     assert "ORDER BY created_at ASC" in pending_query
     assert not db_sessions
 

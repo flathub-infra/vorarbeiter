@@ -1149,10 +1149,10 @@ async def test_create_pipeline_queues_spot_test_build_at_capacity():
     )
     mock_pipeline_service.should_queue_test_build.assert_awaited_once_with(pipeline_id)
     assert (
-        mock_status.await_args.kwargs["description"]  # ty: ignore[possibly-missing-attribute]
+        mock_status.await_args.kwargs["description"]  # ty: ignore[unresolved-attribute]
         == "Build queued — waiting for capacity"
     )
-    assert "queued" in mock_comment.await_args.kwargs["comment"].lower()  # ty: ignore[possibly-missing-attribute]
+    assert "queued" in mock_comment.await_args.kwargs["comment"].lower()  # ty: ignore[unresolved-attribute]
 
 
 @pytest.mark.asyncio
@@ -1208,8 +1208,8 @@ async def test_create_pipeline_starts_default_test_build_even_at_capacity():
     mock_pipeline_service.start_pipeline.assert_awaited_once_with(
         pipeline_id=pipeline_id
     )
-    assert mock_status.await_args.kwargs["description"] == "Build enqueued"  # ty: ignore[possibly-missing-attribute]
-    assert "enqueued" in mock_comment.await_args.kwargs["comment"].lower()  # ty: ignore[possibly-missing-attribute]
+    assert mock_status.await_args.kwargs["description"] == "Build enqueued"  # ty: ignore[unresolved-attribute]
+    assert "enqueued" in mock_comment.await_args.kwargs["comment"].lower()  # ty: ignore[unresolved-attribute]
 
 
 @pytest.mark.asyncio
@@ -1330,7 +1330,7 @@ async def test_create_pipeline_starts_stable_build_even_at_capacity():
     mock_pipeline_service.start_pipeline.assert_awaited_once_with(
         pipeline_id=pipeline_id
     )
-    assert mock_status.await_args.kwargs["description"] == "Build enqueued"  # ty: ignore[possibly-missing-attribute]
+    assert mock_status.await_args.kwargs["description"] == "Build enqueued"  # ty: ignore[unresolved-attribute]
 
 
 @pytest.mark.asyncio
