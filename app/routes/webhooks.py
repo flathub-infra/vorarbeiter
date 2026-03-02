@@ -356,7 +356,12 @@ async def fetch_flathub_json(
         )
         return None
     except (httpx.HTTPError, ValueError) as err:
-        logger.error("Error fetching flathub.json from GitHub", error=str(err))
+        logger.error(
+            "Error fetching flathub.json from GitHub",
+            error=str(err),
+            repo=repo,
+            ref=ref,
+        )
         return None
 
 
@@ -429,7 +434,12 @@ async def is_eol_only_pr(
             r.raise_for_status()
             files = r.json()
     except (httpx.HTTPError, ValueError) as err:
-        logger.error("Error fetching PR file details from GitHub", error=str(err))
+        logger.error(
+            "Error fetching PR file details from GitHub",
+            error=str(err),
+            repo=repo,
+            pr_number=number,
+        )
         return False, None
 
     if not files or len(files) != 1:
@@ -467,7 +477,9 @@ async def is_eol_only_push(
             r.raise_for_status()
             comparison = r.json()
     except (httpx.HTTPError, ValueError) as err:
-        logger.error("Error fetching compare details from GitHub", error=str(err))
+        logger.error(
+            "Error fetching compare details from GitHub", error=str(err), repo=repo
+        )
         return False, None
 
     files = comparison.get("files", [])
@@ -628,7 +640,12 @@ async def is_submodule_only_pr(
             r.raise_for_status()
             files = r.json()
     except (httpx.HTTPError, ValueError) as err:
-        logger.error("Error fetching PR file details from GitHub", error=str(err))
+        logger.error(
+            "Error fetching PR file details from GitHub",
+            error=str(err),
+            repo=repo,
+            pr_number=number,
+        )
         return False
 
     if not files:
@@ -852,10 +869,16 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
         if "bot, ping admins" in comment_body and repo not in ("flathub/flathub",):
             if issue_number is None:
-                logger.error("Missing issue number for admin ping")
+                logger.error(
+                    "Missing issue number for admin ping",
+                    repo=repo,
+                    comment_author=comment_author,
+                )
             else:
                 if settings.ff_admin_ping_comment:
-                    logger.info("Handling admin ping")
+                    logger.info(
+                        "Handling admin ping", repo=repo, issue_number=issue_number
+                    )
                     await add_issue_comment(
                         git_repo=repo,
                         issue_number=issue_number,
@@ -863,7 +886,11 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                         check_duplicates=True,
                     )
                 else:
-                    logger.info("Admin ping is disabled via settings")
+                    logger.info(
+                        "Admin ping is disabled via settings",
+                        repo=repo,
+                        issue_number=issue_number,
+                    )
             return None
 
         elif "bot, build" in comment_body:
@@ -913,12 +940,19 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                         )
                         return None
             except httpx.RequestError as e:
-                logger.error("Error fetching PR details from GitHub", error=str(e))
+                logger.error(
+                    "Error fetching PR details from GitHub",
+                    error=str(e),
+                    repo=repo,
+                    pr_number=issue_number,
+                )
             except httpx.HTTPStatusError as e:
                 logger.error(
                     "GitHub API error",
                     status_code=e.response.status_code,
                     response_text=e.response.text,
+                    repo=repo,
+                    pr_number=issue_number,
                 )
 
             params.update(
@@ -931,7 +965,12 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
         elif "bot, retry" in comment_body:
             if not issue_number or not issue_body:
-                logger.error("Missing issue number or body for retry request")
+                logger.error(
+                    "Missing issue number or body for retry request",
+                    repo=repo,
+                    issue_number=issue_number,
+                    comment_author=comment_author,
+                )
                 return None
 
             if issue_author != "flathubbot":
@@ -944,7 +983,9 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
             if issue.get("pull_request"):
                 logger.info(
-                    "Retry comment on PR, ignoring (only for build failure issues)"
+                    "Retry comment on PR, ignoring (only for build failure issues)",
+                    repo=repo,
+                    issue_number=issue_number,
                 )
                 return None
 
