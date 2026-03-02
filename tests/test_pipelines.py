@@ -732,8 +732,8 @@ async def test_start_pipeline_reuses_stored_metadata():
     [
         (8.0, "default"),
         (10.0, "default"),
-        (15.0, "default"),
-        (15.1, "medium"),
+        (20.0, "default"),
+        (20.1, "medium"),
         (None, "medium"),
     ],
 )

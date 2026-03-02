@@ -57,7 +57,7 @@ app_build_types = {
     "com.collaboraoffice.Office": "large",
 }
 
-FAST_BUILD_P90_THRESHOLD_MINUTES = 15.0
+FAST_BUILD_P90_THRESHOLD_MINUTES = 20.0
 FAST_BUILD_MIN_BUILDS = 3
 FAST_BUILD_LOOKBACK_DAYS = 90
 SPOT_BUILD_TYPES = ("medium", "large")
