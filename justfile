@@ -189,6 +189,27 @@ build app_id git_ref build_arch:
         --override-source-date-epoch 1321009871 \
         builddir "$manifest"
 
+install-if-extra-data app_id git_ref:
+    #!/usr/bin/env bash
+    set -euxo pipefail
+
+    case "{{git_ref}}" in
+        "refs/heads/master" | "refs/heads/beta" | refs/heads/branch/*)
+            echo "Not a test build, skipping install test"
+            exit 0
+            ;;
+    esac
+
+    if ! grep -qF extra-data builddir/files/manifest.json; then
+        echo "No extra-data sources found, skipping install test"
+        exit 0
+    fi
+
+    echo "Extra-data sources detected, testing install..."
+
+    flatpak remote-add --user --no-gpg-verify local-test repo
+    flatpak install -y --user local-test {{app_id}}//test
+
 validate-build:
     #!/usr/bin/env bash
     set -euxo pipefail

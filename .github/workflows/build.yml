@@ -561,6 +561,7 @@ jobs:
             /bin/bash -c '
               just -f .flathub.justfile prepare-env || exit 1
               just -f .flathub.justfile build $APP_ID $REF $BUILD_ARCH || exit 1
+              just -f .flathub.justfile install-if-extra-data $APP_ID $REF || exit 1
             '
 
       - name: Validate build
