@@ -72,7 +72,6 @@ class Pipeline(Base):
     publish_job_id: Mapped[int | None] = mapped_column(nullable=True)
     update_repo_job_id: Mapped[int | None] = mapped_column(nullable=True)
     repro_pipeline_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    is_extra_data: Mapped[bool | None] = mapped_column(nullable=True)
     callback_token: Mapped[str] = mapped_column(
         String(32), default=lambda: secrets.token_hex(16)
     )

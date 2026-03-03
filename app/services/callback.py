@@ -13,7 +13,6 @@ class MetadataCallbackValidator:
 
         return CallbackData(
             app_id=data.get("app_id"),
-            is_extra_data=data.get("is_extra_data"),
             end_of_life=data.get("end_of_life"),
             end_of_life_rebase=data.get("end_of_life_rebase"),
         )

@@ -29,7 +29,6 @@ class CallbackData(BaseModel):
     status: Optional[str] = None
     log_url: Optional[str] = None
     app_id: Optional[str] = None
-    is_extra_data: Optional[bool] = None
     end_of_life: Optional[str] = None
     end_of_life_rebase: Optional[str] = None
     build_pipeline_id: Optional[str] = None
@@ -564,10 +563,6 @@ class BuildPipeline:
             if pipeline.app_id == "flathub" and parsed_data.app_id:
                 pipeline.app_id = parsed_data.app_id
                 updates["app_id"] = pipeline.app_id
-
-            if parsed_data.is_extra_data is not None:
-                pipeline.is_extra_data = parsed_data.is_extra_data
-                updates["is_extra_data"] = pipeline.is_extra_data
 
             if parsed_data.end_of_life:
                 pipeline.end_of_life = parsed_data.end_of_life
