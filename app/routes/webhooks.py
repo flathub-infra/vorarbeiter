@@ -3,15 +3,19 @@ import hmac
 import re
 import uuid
 import json
+from datetime import datetime, timezone
 
 import httpx
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
+from sqlalchemy import select, text
 from typing import Any
 from app.config import settings
 from app.database import get_db
+from app.models.pipeline import Pipeline, PipelineStatus
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types
+from app.services.github_actions import GitHubActionsService
 from app.utils.flat_manager import FlatManagerClient, get_flat_manager_repo
 from app.utils.github import (
     add_issue_comment,
@@ -311,6 +315,8 @@ def should_store_event(payload: dict) -> bool:
                     "<code>bot, retry</code>",
                     "`bot, ping admins`",
                     "<code>bot, ping admins</code>",
+                    "`bot, cancel`",
+                    "<code>bot, cancel</code>",
                 )
             ):
                 continue
@@ -324,6 +330,9 @@ def should_store_event(payload: dict) -> bool:
             return True
 
         if "bot, ping admins" in filtered_comment.lower():
+            return True
+
+        if "bot, cancel" in filtered_comment.lower():
             return True
 
     return False
@@ -891,6 +900,96 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                         repo=repo,
                         issue_number=issue_number,
                     )
+            return None
+
+        elif "bot, cancel" in comment_body:
+            if not pr_url or issue_number is None:
+                return None
+
+            pr_ref = f"refs/pull/{issue_number}/head"
+
+            async with get_db() as db:
+                query = (
+                    select(Pipeline)
+                    .where(
+                        Pipeline.app_id == app_id,
+                        Pipeline.status.in_(
+                            [PipelineStatus.PENDING, PipelineStatus.RUNNING]
+                        ),
+                        text("params->>'ref' = :ref"),
+                    )
+                    .params(ref=pr_ref)
+                )
+                result = await db.execute(query)
+                active_pipelines = list(result.scalars().all())
+
+                if not active_pipelines:
+                    await create_pr_comment(
+                        git_repo=repo,
+                        pr_number=issue_number,
+                        comment="No active builds found to cancel.",
+                    )
+                    return None
+
+                pipelines_to_purge = []
+                pipelines_to_cancel = []
+
+                for pipeline in active_pipelines:
+                    pipeline.status = PipelineStatus.CANCELLED
+                    pipeline.finished_at = datetime.now(timezone.utc)
+
+                    if pipeline.build_id:
+                        pipelines_to_purge.append((pipeline.build_id, str(pipeline.id)))
+
+                    run_id = (pipeline.provider_data or {}).get("run_id")
+                    if run_id:
+                        pipelines_to_cancel.append(
+                            (str(pipeline.id), pipeline.provider_data)
+                        )
+
+                await db.commit()
+
+            flat_manager = FlatManagerClient(
+                url=settings.flat_manager_url,
+                token=settings.flat_manager_token,
+            )
+
+            for build_id, pipeline_id in pipelines_to_purge:
+                try:
+                    await flat_manager.purge(build_id)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to purge build for cancelled pipeline",
+                        build_id=build_id,
+                        pipeline_id=pipeline_id,
+                        error=str(e),
+                    )
+
+            for pipeline_id, provider_data in pipelines_to_cancel:
+                try:
+                    github_actions = GitHubActionsService()
+                    await github_actions.cancel(pipeline_id, provider_data)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to cancel GitHub Actions run",
+                        pipeline_id=pipeline_id,
+                        error=str(e),
+                    )
+
+            count = len(active_pipelines)
+            await create_pr_comment(
+                git_repo=repo,
+                pr_number=issue_number,
+                comment=f"Cancelled {count} active build(s).",
+            )
+
+            logger.info(
+                "Cancelled active pipelines via bot command",
+                app_id=app_id,
+                pr_number=issue_number,
+                cancelled_count=count,
+            )
+
             return None
 
         elif "bot, build" in comment_body:

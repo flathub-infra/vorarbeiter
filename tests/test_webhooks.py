@@ -133,6 +133,21 @@ SAMPLE_ADMIN_PING_COMMENT_PAYLOAD = {
     "comment": {"body": "bot, ping admins"},
 }
 
+SAMPLE_BOT_CANCEL_PAYLOAD = {
+    "repository": {"full_name": "test-owner/test-repo"},
+    "sender": {"login": "test-actor"},
+    "action": "created",
+    "comment": {"body": "bot, cancel", "user": {"login": "test-actor"}},
+    "issue": {
+        "number": 42,
+        "user": {"login": "pr-author"},
+        "body": "",
+        "pull_request": {
+            "url": "https://api.github.com/repos/test-owner/test-repo/pulls/42"
+        },
+    },
+}
+
 
 @pytest.fixture
 def client():
@@ -2337,3 +2352,167 @@ async def test_fetch_flathub_json_non_object():
         result = await fetch_flathub_json("test-owner/test-repo", "abc123")
 
     assert result == {}
+
+
+def test_should_store_event_bot_cancel():
+    from app.routes.webhooks import should_store_event
+
+    assert should_store_event(SAMPLE_BOT_CANCEL_PAYLOAD) is True
+
+
+def test_should_store_event_bot_cancel_in_code_ticks():
+    from app.routes.webhooks import should_store_event
+
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "sender": {"login": "test-actor"},
+        "action": "created",
+        "comment": {"body": "`bot, cancel`"},
+    }
+    assert should_store_event(payload) is False
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_bot_cancel_active_pipelines():
+    event_id = uuid.uuid4()
+    pipeline_id_1 = uuid.uuid4()
+    pipeline_id_2 = uuid.uuid4()
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=SAMPLE_BOT_CANCEL_PAYLOAD,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_pipeline_1 = Pipeline(
+        id=pipeline_id_1,
+        app_id="test-repo",
+        params={"ref": "refs/pull/42/head"},
+        webhook_event_id=event_id,
+        status=PipelineStatus.RUNNING,
+        build_id=100,
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 999},
+    )
+    mock_pipeline_2 = Pipeline(
+        id=pipeline_id_2,
+        app_id="test-repo",
+        params={"ref": "refs/pull/42/head"},
+        webhook_event_id=event_id,
+        status=PipelineStatus.PENDING,
+        provider_data={},
+    )
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [
+        mock_pipeline_1,
+        mock_pipeline_2,
+    ]
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_db.execute.return_value = mock_result
+    mock_get_db = create_mock_get_db(mock_db)
+
+    with (
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch(
+            "app.routes.webhooks.create_pr_comment", new_callable=AsyncMock
+        ) as mock_comment,
+        patch("app.routes.webhooks.FlatManagerClient") as MockFlatManager,
+        patch("app.routes.webhooks.GitHubActionsService") as MockGHActions,
+    ):
+        mock_fm = AsyncMock()
+        MockFlatManager.return_value = mock_fm
+
+        mock_gh_actions = AsyncMock()
+        MockGHActions.return_value = mock_gh_actions
+
+        from app.routes.webhooks import create_pipeline
+
+        result = await create_pipeline(webhook_event)
+
+        assert result is None
+        assert mock_pipeline_1.status == PipelineStatus.CANCELLED
+        assert mock_pipeline_2.status == PipelineStatus.CANCELLED
+        assert mock_pipeline_1.finished_at is not None
+        assert mock_pipeline_2.finished_at is not None
+
+        mock_fm.purge.assert_awaited_once_with(100)
+        mock_gh_actions.cancel.assert_awaited_once_with(
+            str(pipeline_id_1),
+            {"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 999},
+        )
+        mock_comment.assert_awaited_once_with(
+            git_repo="test-owner/test-repo",
+            pr_number=42,
+            comment="Cancelled 2 active build(s).",
+        )
+        mock_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_bot_cancel_no_active_pipelines():
+    event_id = uuid.uuid4()
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=SAMPLE_BOT_CANCEL_PAYLOAD,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_db.execute.return_value = mock_result
+    mock_get_db = create_mock_get_db(mock_db)
+
+    with (
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch(
+            "app.routes.webhooks.create_pr_comment", new_callable=AsyncMock
+        ) as mock_comment,
+    ):
+        from app.routes.webhooks import create_pipeline
+
+        result = await create_pipeline(webhook_event)
+
+        assert result is None
+        mock_comment.assert_awaited_once_with(
+            git_repo="test-owner/test-repo",
+            pr_number=42,
+            comment="No active builds found to cancel.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_bot_cancel_no_pr_url():
+    event_id = uuid.uuid4()
+
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "sender": {"login": "test-actor"},
+        "action": "created",
+        "comment": {"body": "bot, cancel", "user": {"login": "test-actor"}},
+        "issue": {
+            "number": 42,
+            "user": {"login": "issue-author"},
+            "body": "",
+        },
+    }
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=payload,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    from app.routes.webhooks import create_pipeline
+
+    result = await create_pipeline(webhook_event)
+    assert result is None
