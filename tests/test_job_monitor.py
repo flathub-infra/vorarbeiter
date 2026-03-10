@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -519,17 +520,14 @@ async def test_process_update_repo_job_failed(job_monitor):
         "log": "Error: update-repo failed",
     }
 
-    with (
-        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
-        patch.object(job_monitor, "_create_job_failure_issue") as mock_create_issue,
-    ):
+    with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
         mock_get_job.return_value = job_response
 
         result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
         assert result is True
-        assert pipeline.status == PipelineStatus.FAILED
-        mock_create_issue.assert_not_called()
+        assert pipeline.status == PipelineStatus.PUBLISHING
+        assert pipeline.update_repo_job_id is None
 
 
 @pytest.mark.asyncio
@@ -634,3 +632,249 @@ async def test_create_job_failure_issue_exception(job_monitor, mock_pipeline):
         await job_monitor._create_job_failure_issue(
             mock_pipeline, "commit", 12345, job_response
         )
+
+
+@pytest.mark.asyncio
+async def test_update_repo_recovery_succeeds_with_peer(db_session_maker):
+    async with db_session_maker() as db:
+        now = datetime.now()
+        peer = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.other.App",
+            status=PipelineStatus.PUBLISHED,
+            flat_manager_repo="stable",
+            update_repo_job_id=88888,
+            published_at=now - timedelta(hours=1),
+            params={},
+        )
+        pipeline = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.App",
+            status=PipelineStatus.PUBLISHING,
+            flat_manager_repo="stable",
+            update_repo_job_id=None,
+            build_id=123,
+            created_at=now - timedelta(hours=2),
+            params={},
+        )
+        db.add_all([peer, pipeline])
+        await db.commit()
+
+        job_monitor = JobMonitor(db=db)
+
+        with (
+            patch.object(
+                job_monitor, "_notify_flat_manager_job_completed"
+            ) as mock_notify,
+            patch("app.pipelines.build.BuildPipeline") as mock_bp_class,
+        ):
+            mock_bp = AsyncMock()
+            mock_bp_class.return_value = mock_bp
+
+            result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+            assert result is True
+            assert pipeline.status == PipelineStatus.PUBLISHED
+            assert pipeline.published_at is not None
+            assert pipeline.update_repo_job_id == peer.update_repo_job_id
+            mock_notify.assert_called_once_with(
+                pipeline, "update-repo", 88888, success=True
+            )
+            mock_bp.handle_publication.assert_called_once_with(pipeline)
+
+
+@pytest.mark.asyncio
+async def test_update_repo_recovery_prefers_most_recent_peer(db_session_maker):
+    async with db_session_maker() as db:
+        now = datetime.now()
+        older_peer = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.older.App",
+            status=PipelineStatus.PUBLISHED,
+            flat_manager_repo="stable",
+            update_repo_job_id=11111,
+            published_at=now - timedelta(hours=2),
+            params={},
+        )
+        newer_peer = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.newer.App",
+            status=PipelineStatus.PUBLISHED,
+            flat_manager_repo="stable",
+            update_repo_job_id=22222,
+            published_at=now - timedelta(hours=1),
+            params={},
+        )
+        pipeline = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.App",
+            status=PipelineStatus.PUBLISHING,
+            flat_manager_repo="stable",
+            update_repo_job_id=None,
+            build_id=123,
+            created_at=now - timedelta(hours=3),
+            params={},
+        )
+        db.add_all([older_peer, newer_peer, pipeline])
+        await db.commit()
+
+        job_monitor = JobMonitor(db=db)
+
+        with (
+            patch.object(
+                job_monitor, "_notify_flat_manager_job_completed"
+            ) as mock_notify,
+            patch("app.pipelines.build.BuildPipeline") as mock_bp_class,
+        ):
+            mock_bp = AsyncMock()
+            mock_bp_class.return_value = mock_bp
+
+            result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+            assert result is True
+            assert pipeline.status == PipelineStatus.PUBLISHED
+            assert pipeline.update_repo_job_id == newer_peer.update_repo_job_id
+            mock_notify.assert_called_once_with(
+                pipeline,
+                "update-repo",
+                newer_peer.update_repo_job_id,
+                success=True,
+            )
+            mock_bp.handle_publication.assert_called_once_with(pipeline)
+
+
+@pytest.mark.asyncio
+async def test_update_repo_recovery_skipped_no_peer(db_session_maker):
+    async with db_session_maker() as db:
+        pipeline = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.App",
+            status=PipelineStatus.PUBLISHING,
+            flat_manager_repo="stable",
+            update_repo_job_id=None,
+            build_id=123,
+            params={},
+        )
+        db.add(pipeline)
+        await db.commit()
+
+        job_monitor = JobMonitor(db=db)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+        assert result is False
+        assert pipeline.status == PipelineStatus.PUBLISHING
+
+
+@pytest.mark.asyncio
+async def test_update_repo_recovery_skipped_stale_peer(db_session_maker):
+    async with db_session_maker() as db:
+        now = datetime.now()
+        peer = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.other.App",
+            status=PipelineStatus.PUBLISHED,
+            flat_manager_repo="stable",
+            update_repo_job_id=88888,
+            published_at=now - timedelta(hours=2),
+            params={},
+        )
+        pipeline = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.App",
+            status=PipelineStatus.PUBLISHING,
+            flat_manager_repo="stable",
+            update_repo_job_id=None,
+            build_id=123,
+            created_at=now - timedelta(hours=1),
+            params={},
+        )
+        db.add_all([peer, pipeline])
+        await db.commit()
+
+        job_monitor = JobMonitor(db=db)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+        assert result is False
+        assert pipeline.status == PipelineStatus.PUBLISHING
+        assert pipeline.update_repo_job_id is None
+
+
+@pytest.mark.asyncio
+async def test_update_repo_recovery_skipped_different_repo(db_session_maker):
+    async with db_session_maker() as db:
+        peer = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.other.App",
+            status=PipelineStatus.PUBLISHED,
+            flat_manager_repo="beta",
+            update_repo_job_id=88888,
+            published_at=datetime.now() - timedelta(hours=1),
+            params={},
+        )
+        pipeline = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.App",
+            status=PipelineStatus.PUBLISHING,
+            flat_manager_repo="stable",
+            update_repo_job_id=None,
+            build_id=123,
+            params={},
+        )
+        db.add_all([peer, pipeline])
+        await db.commit()
+
+        job_monitor = JobMonitor(db=db)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+        assert result is False
+        assert pipeline.status == PipelineStatus.PUBLISHING
+
+
+@pytest.mark.asyncio
+async def test_update_repo_recovery_expiry(db_session_maker):
+    async with db_session_maker() as db:
+        pipeline = Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.App",
+            status=PipelineStatus.PUBLISHING,
+            flat_manager_repo="stable",
+            update_repo_job_id=None,
+            build_id=123,
+            created_at=datetime.now() - timedelta(hours=49),
+            params={},
+        )
+        db.add(pipeline)
+        await db.commit()
+
+        job_monitor = JobMonitor(db=db)
+        mock_notifier = MagicMock()
+        mock_notifier.notify_build_status = AsyncMock()
+
+        with patch(
+            "app.services.github_notifier.GitHubNotifier",
+            return_value=mock_notifier,
+        ):
+            result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+        assert result is True
+        assert pipeline.status == PipelineStatus.FAILED
+        mock_notifier.notify_build_status.assert_called_once_with(pipeline, "failure")
+
+
+@pytest.mark.asyncio
+async def test_update_repo_recovery_skipped_no_db():
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHING,
+        flat_manager_repo="stable",
+        update_repo_job_id=None,
+        build_id=123,
+        params={},
+    )
+
+    job_monitor = JobMonitor(db=None)
+    result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+    assert result is False
+    assert pipeline.status == PipelineStatus.PUBLISHING

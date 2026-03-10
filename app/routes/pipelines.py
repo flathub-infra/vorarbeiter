@@ -334,32 +334,37 @@ async def check_pipeline_jobs(
         cutoff_date = datetime.now() - timedelta(hours=24)
 
         query = select(Pipeline).where(
-            (Pipeline.created_at > cutoff_date)
-            & or_(
-                (Pipeline.status == PipelineStatus.SUCCEEDED)
-                & Pipeline.commit_job_id.isnot(None),
-                (Pipeline.status == PipelineStatus.COMMITTED)
-                & Pipeline.publish_job_id.isnot(None),
-                (Pipeline.status == PipelineStatus.PUBLISHING)
-                & Pipeline.update_repo_job_id.isnot(None),
-                (Pipeline.status == PipelineStatus.SUCCEEDED)
-                & Pipeline.build_id.isnot(None)
-                & Pipeline.commit_job_id.is_(None),
-                (Pipeline.status == PipelineStatus.COMMITTED)
-                & Pipeline.build_id.isnot(None)
-                & Pipeline.publish_job_id.is_(None),
-                (Pipeline.status == PipelineStatus.PUBLISHED)
-                & (Pipeline.published_at > cutoff_date)
-                & (
-                    Pipeline.publish_job_id.isnot(None)
-                    | Pipeline.update_repo_job_id.isnot(None)
+            or_(
+                (Pipeline.created_at > cutoff_date)
+                & or_(
+                    (Pipeline.status == PipelineStatus.SUCCEEDED)
+                    & Pipeline.commit_job_id.isnot(None),
+                    (Pipeline.status == PipelineStatus.COMMITTED)
+                    & Pipeline.publish_job_id.isnot(None),
+                    (Pipeline.status == PipelineStatus.PUBLISHING)
+                    & Pipeline.update_repo_job_id.isnot(None),
+                    (Pipeline.status == PipelineStatus.SUCCEEDED)
+                    & Pipeline.build_id.isnot(None)
+                    & Pipeline.commit_job_id.is_(None),
+                    (Pipeline.status == PipelineStatus.COMMITTED)
+                    & Pipeline.build_id.isnot(None)
+                    & Pipeline.publish_job_id.is_(None),
+                    (Pipeline.status == PipelineStatus.PUBLISHED)
+                    & (Pipeline.published_at > cutoff_date)
+                    & (
+                        Pipeline.publish_job_id.isnot(None)
+                        | Pipeline.update_repo_job_id.isnot(None)
+                    ),
                 ),
+                (Pipeline.status == PipelineStatus.PUBLISHING)
+                & Pipeline.update_repo_job_id.is_(None)
+                & Pipeline.flat_manager_repo.in_(["stable", "beta"]),
             )
         )
         result = await db.execute(query)
         pipelines = list(result.scalars().all())
 
-        job_monitor = JobMonitor()
+        job_monitor = JobMonitor(db=db)
         updated_count = 0
 
         for pipeline in pipelines:

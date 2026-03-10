@@ -1,6 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import structlog
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
 from app.utils.flat_manager import (
@@ -37,8 +39,9 @@ JOB_DESCRIPTIONS = {
 
 
 class JobMonitor:
-    def __init__(self):
+    def __init__(self, db: AsyncSession | None = None):
         self.flat_manager = get_flat_manager_client()
+        self.db = db
 
     async def check_and_update_pipeline_jobs(self, pipeline: Pipeline) -> bool:
         updated = False
@@ -65,6 +68,34 @@ class JobMonitor:
             and pipeline.flat_manager_repo in ["beta", "stable"]
         ):
             if await self._process_update_repo_job(pipeline):
+                updated = True
+        elif (
+            pipeline.status == PipelineStatus.PUBLISHING
+            and pipeline.update_repo_job_id is None
+            and pipeline.flat_manager_repo in ["beta", "stable"]
+        ):
+            if await self._attempt_update_repo_recovery(pipeline):
+                updated = True
+            elif (
+                pipeline.created_at
+                and pipeline.created_at < datetime.now() - timedelta(hours=48)
+            ):
+                pipeline.status = PipelineStatus.FAILED
+                logger.warning(
+                    "Recovery window expired, marking pipeline as FAILED",
+                    pipeline_id=str(pipeline.id),
+                )
+                try:
+                    from app.services.github_notifier import GitHubNotifier
+
+                    github_notifier = GitHubNotifier()
+                    await github_notifier.notify_build_status(pipeline, "failure")
+                except Exception as e:
+                    logger.error(
+                        "Failed to send recovery expiry notification",
+                        pipeline_id=str(pipeline.id),
+                        error=str(e),
+                    )
                 updated = True
         elif pipeline.status == PipelineStatus.PUBLISHED:
             if await self._check_published_pipeline_jobs(pipeline):
@@ -317,13 +348,12 @@ class JobMonitor:
 
             return True
         elif job_status == JobStatus.BROKEN:
-            await self._handle_broken_flat_manager_job(
-                pipeline,
-                "update-repo",
-                pipeline.update_repo_job_id,
-                job_response,
-                create_failure_issue=False,
+            logger.warning(
+                "Update-repo job failed, clearing job ID to attempt recovery via peer pipeline",
+                pipeline_id=str(pipeline.id),
+                update_repo_job_id=pipeline.update_repo_job_id,
             )
+            pipeline.update_repo_job_id = None
             return True
         else:
             logger.debug(
@@ -333,6 +363,57 @@ class JobMonitor:
                 job_status=job_status.name,
             )
             return False
+
+    async def _attempt_update_repo_recovery(self, pipeline: Pipeline) -> bool:
+        if not self.db:
+            return False
+
+        cutoff = datetime.now() - timedelta(hours=48)
+        query = (
+            select(Pipeline)
+            .where(
+                Pipeline.id != pipeline.id,
+                Pipeline.status == PipelineStatus.PUBLISHED,
+                Pipeline.flat_manager_repo == pipeline.flat_manager_repo,
+                Pipeline.published_at > cutoff,
+                Pipeline.published_at > pipeline.created_at,
+                Pipeline.update_repo_job_id.isnot(None),
+            )
+            .order_by(Pipeline.published_at.desc())
+        )
+        result = await self.db.execute(query)
+        peer = result.scalars().first()
+
+        if not peer or not peer.update_repo_job_id:
+            return False
+
+        pipeline.update_repo_job_id = peer.update_repo_job_id
+        pipeline.status = PipelineStatus.PUBLISHED
+        pipeline.published_at = datetime.now()
+        logger.info(
+            "Recovered pipeline via peer update-repo success",
+            pipeline_id=str(pipeline.id),
+            peer_pipeline_id=str(peer.id),
+            peer_update_repo_job_id=peer.update_repo_job_id,
+        )
+
+        await self._notify_flat_manager_job_completed(
+            pipeline, "update-repo", peer.update_repo_job_id, success=True
+        )
+
+        from app.pipelines.build import BuildPipeline
+
+        build_pipeline = BuildPipeline()
+        try:
+            await build_pipeline.handle_publication(pipeline)
+        except Exception as e:
+            logger.error(
+                "Error in post-publication handling during recovery",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
+
+        return True
 
     async def _fetch_missing_job_ids(self, pipeline: Pipeline) -> bool:
         if not pipeline.build_id:

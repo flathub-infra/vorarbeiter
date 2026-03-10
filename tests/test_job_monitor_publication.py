@@ -121,13 +121,12 @@ async def test_process_update_repo_job_success_handles_publication_errors(
 async def test_process_update_repo_job_failed_does_not_call_handle_publication(
     job_monitor, stable_pipeline_publishing
 ):
-    """Test that failed update_repo_job does NOT call BuildPipeline.handle_publication()."""
+    """Test that failed update_repo_job keeps PUBLISHING and clears job ID for recovery."""
     with (
         patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
         patch.object(job_monitor, "_notify_flat_manager_job_completed") as mock_notify,
         patch("app.pipelines.build.BuildPipeline") as mock_build_pipeline_class,
     ):
-        # Mock flat-manager job response as failed
         mock_get_job.return_value = {
             "status": JobStatus.BROKEN,
             "kind": JobKind.UPDATE_REPO,
@@ -138,18 +137,14 @@ async def test_process_update_repo_job_failed_does_not_call_handle_publication(
 
         result = await job_monitor._process_update_repo_job(stable_pipeline_publishing)
 
-        # Verify results
         assert result is True
-        assert stable_pipeline_publishing.status == PipelineStatus.FAILED
+        assert stable_pipeline_publishing.status == PipelineStatus.PUBLISHING
+        assert stable_pipeline_publishing.update_repo_job_id is None
 
-        # Verify BuildPipeline.handle_publication was NOT called
         mock_build_pipeline_class.assert_not_called()
         mock_build_pipeline.handle_publication.assert_not_called()
 
-        # Verify failure notification was sent
-        mock_notify.assert_called_once_with(
-            stable_pipeline_publishing, "update-repo", 99999, success=False
-        )
+        mock_notify.assert_not_called()
 
 
 @pytest.mark.asyncio
