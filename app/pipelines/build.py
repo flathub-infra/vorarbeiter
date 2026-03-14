@@ -115,7 +115,11 @@ async def _validate_and_prepare_callback(
     if not pipeline:
         raise ValueError(f"Pipeline {pipeline_id} not found")
 
-    if pipeline.status in [PipelineStatus.SUCCEEDED, PipelineStatus.PUBLISHED]:
+    if pipeline.status in [
+        PipelineStatus.SUCCEEDED,
+        PipelineStatus.PUBLISHED,
+        PipelineStatus.CANCELLED,
+    ]:
         raise ValueError("Pipeline status already finalized")
 
     status_value = parsed_data.status.lower()
@@ -598,9 +602,10 @@ class BuildPipeline:
             pipeline.log_url = parsed_data.log_url
             updates["log_url"] = pipeline.log_url
 
+            provider_data = dict(pipeline.provider_data or {})
+
             try:
                 run_id = parsed_data.log_url.rstrip("/").split("/")[-1]
-                provider_data = dict(pipeline.provider_data or {})
                 provider_data["run_id"] = run_id
                 pipeline.provider_data = provider_data
             except (IndexError, AttributeError):
@@ -611,6 +616,27 @@ class BuildPipeline:
                 )
 
             await db.commit()
+
+            if pipeline.status == PipelineStatus.CANCELLED:
+                run_id = provider_data.get("run_id")
+                if run_id:
+                    try:
+                        github_actions = GitHubActionsService()
+                        await github_actions.cancel(str(pipeline.id), provider_data)
+                        logger.info(
+                            "Cancelled GitHub Actions run for already-cancelled pipeline",
+                            run_id=run_id,
+                            pipeline_id=str(pipeline_id),
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to cancel GitHub Actions run for cancelled pipeline",
+                            run_id=run_id,
+                            pipeline_id=str(pipeline_id),
+                            error=str(e),
+                        )
+                return pipeline, updates
+
             github_notifier = GitHubNotifier()
             await github_notifier.handle_build_started(pipeline, parsed_data.log_url)
 

@@ -1057,6 +1057,56 @@ def test_pipeline_log_url_callback_success(mock_get_db, sample_pipeline):
     mock_notifier.handle_build_started.assert_called_once()
 
 
+def test_pipeline_log_url_callback_cancelled_pipeline(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.status = PipelineStatus.CANCELLED
+    sample_pipeline.provider_data = {
+        "owner": "flathub-infra",
+        "repo": "vorarbeiter",
+    }
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+        patch("app.pipelines.build.GitHubNotifier") as mock_notifier_class,
+        patch("app.pipelines.build.GitHubActionsService") as mock_actions_class,
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+        mock_notifier = MagicMock()
+        mock_notifier.handle_build_started = AsyncMock()
+        mock_notifier_class.return_value = mock_notifier
+        mock_actions_class.return_value.cancel = AsyncMock(return_value=True)
+
+        data = {"log_url": "https://github.com/flathub-infra/builds/runs/12345"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/log_url", json=data, headers=headers
+        )
+
+    assert response.status_code == 200
+    assert (
+        response.json()["log_url"]
+        == "https://github.com/flathub-infra/builds/runs/12345"
+    )
+    assert (
+        sample_pipeline.log_url == "https://github.com/flathub-infra/builds/runs/12345"
+    )
+    assert sample_pipeline.provider_data == {
+        "owner": "flathub-infra",
+        "repo": "vorarbeiter",
+        "run_id": "12345",
+    }
+    mock_actions_class.return_value.cancel.assert_awaited_once_with(
+        str(pipeline_id), sample_pipeline.provider_data
+    )
+    mock_notifier.handle_build_started.assert_not_called()
+
+
 def test_pipeline_log_url_callback_already_set(mock_get_db, sample_pipeline):
     test_client = TestClient(app)
 
@@ -1155,6 +1205,31 @@ def test_pipeline_status_callback_already_finalized(mock_get_db, sample_pipeline
 
     pipeline_id = sample_pipeline.id
     sample_pipeline.status = PipelineStatus.SUCCEEDED
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"status": "success"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/status", json=data, headers=headers
+        )
+
+    assert response.status_code == 409
+    assert "Pipeline status already finalized" in response.json()["detail"]
+
+
+def test_pipeline_status_callback_rejected_for_cancelled(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.status = PipelineStatus.CANCELLED
 
     mock_get_db_session = create_mock_get_db(mock_get_db)
 
