@@ -1,5 +1,5 @@
 import structlog
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
 import httpx
@@ -27,7 +27,7 @@ class PublishingService:
         logger.info("Starting pipeline publishing process")
 
         result = PublishResult()
-        now = datetime.now()
+        now = datetime.now(tz=timezone.utc)
 
         pipelines = await self._get_publishable_pipelines(db)
         pipeline_groups = self._group_pipelines_for_publishing(pipelines)

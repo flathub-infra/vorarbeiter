@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -637,7 +637,7 @@ async def test_create_job_failure_issue_exception(job_monitor, mock_pipeline):
 @pytest.mark.asyncio
 async def test_update_repo_recovery_succeeds_with_peer(db_session_maker):
     async with db_session_maker() as db:
-        now = datetime.now()
+        now = datetime.now(tz=timezone.utc)
         peer = Pipeline(
             id=uuid.uuid4(),
             app_id="org.other.App",
@@ -686,7 +686,7 @@ async def test_update_repo_recovery_succeeds_with_peer(db_session_maker):
 @pytest.mark.asyncio
 async def test_update_repo_recovery_prefers_most_recent_peer(db_session_maker):
     async with db_session_maker() as db:
-        now = datetime.now()
+        now = datetime.now(tz=timezone.utc)
         older_peer = Pipeline(
             id=uuid.uuid4(),
             app_id="org.older.App",
@@ -753,6 +753,7 @@ async def test_update_repo_recovery_skipped_no_peer(db_session_maker):
             flat_manager_repo="stable",
             update_repo_job_id=None,
             build_id=123,
+            created_at=datetime.now(tz=timezone.utc),
             params={},
         )
         db.add(pipeline)
@@ -768,7 +769,7 @@ async def test_update_repo_recovery_skipped_no_peer(db_session_maker):
 @pytest.mark.asyncio
 async def test_update_repo_recovery_skipped_stale_peer(db_session_maker):
     async with db_session_maker() as db:
-        now = datetime.now()
+        now = datetime.now(tz=timezone.utc)
         peer = Pipeline(
             id=uuid.uuid4(),
             app_id="org.other.App",
@@ -808,7 +809,7 @@ async def test_update_repo_recovery_skipped_different_repo(db_session_maker):
             status=PipelineStatus.PUBLISHED,
             flat_manager_repo="beta",
             update_repo_job_id=88888,
-            published_at=datetime.now() - timedelta(hours=1),
+            published_at=datetime.now(tz=timezone.utc) - timedelta(hours=1),
             params={},
         )
         pipeline = Pipeline(
@@ -818,6 +819,7 @@ async def test_update_repo_recovery_skipped_different_repo(db_session_maker):
             flat_manager_repo="stable",
             update_repo_job_id=None,
             build_id=123,
+            created_at=datetime.now(tz=timezone.utc),
             params={},
         )
         db.add_all([peer, pipeline])
@@ -840,7 +842,7 @@ async def test_update_repo_recovery_expiry(db_session_maker):
             flat_manager_repo="stable",
             update_repo_job_id=None,
             build_id=123,
-            created_at=datetime.now() - timedelta(hours=49),
+            created_at=datetime.now(tz=timezone.utc) - timedelta(hours=49),
             params={},
         )
         db.add(pipeline)

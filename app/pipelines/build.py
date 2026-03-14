@@ -1,6 +1,6 @@
 import secrets
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 import httpx
@@ -400,7 +400,7 @@ class BuildPipeline:
                 raise ValueError(f"Pipeline {pipeline_id} is not in PENDING state")
 
             pipeline.status = PipelineStatus.RUNNING
-            pipeline.started_at = datetime.now()
+            pipeline.started_at = datetime.now(tz=timezone.utc)
 
             params = dict(pipeline.params or {})
             stored_build_type = params.get("build_type")
@@ -633,7 +633,7 @@ class BuildPipeline:
             match status_value:
                 case "success":
                     pipeline.status = PipelineStatus.SUCCEEDED
-                    pipeline.finished_at = datetime.now()
+                    pipeline.finished_at = datetime.now(tz=timezone.utc)
                 case "failure":
                     github_actions = GitHubActionsService()
                     try:
@@ -656,10 +656,10 @@ class BuildPipeline:
                             error=str(e),
                         )
                         pipeline.status = PipelineStatus.FAILED
-                    pipeline.finished_at = datetime.now()
+                    pipeline.finished_at = datetime.now(tz=timezone.utc)
                 case "cancelled":
                     pipeline.status = PipelineStatus.CANCELLED
-                    pipeline.finished_at = datetime.now()
+                    pipeline.finished_at = datetime.now(tz=timezone.utc)
 
             await db.commit()
 
@@ -787,13 +787,13 @@ class BuildPipeline:
             match status_value:
                 case "success":
                     pipeline.status = PipelineStatus.SUCCEEDED
-                    pipeline.finished_at = datetime.now()
+                    pipeline.finished_at = datetime.now(tz=timezone.utc)
                 case "failure":
                     pipeline.status = PipelineStatus.FAILED
-                    pipeline.finished_at = datetime.now()
+                    pipeline.finished_at = datetime.now(tz=timezone.utc)
                 case "cancelled":
                     pipeline.status = PipelineStatus.CANCELLED
-                    pipeline.finished_at = datetime.now()
+                    pipeline.finished_at = datetime.now(tz=timezone.utc)
 
             await db.flush()
 

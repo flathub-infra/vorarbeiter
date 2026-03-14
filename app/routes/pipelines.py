@@ -329,9 +329,9 @@ async def check_pipeline_jobs(
 ):
     async with get_db() as db:
         from sqlalchemy import select, or_
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
-        cutoff_date = datetime.now() - timedelta(hours=24)
+        cutoff_date = datetime.now(tz=timezone.utc) - timedelta(hours=24)
 
         query = select(Pipeline).where(
             or_(
@@ -431,11 +431,11 @@ async def cleanup_stale_pipelines(
     hours: int = 24,
 ):
     async with get_db() as db:
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         from sqlalchemy import select
 
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
 
         query = select(Pipeline).where(
             Pipeline.status == PipelineStatus.RUNNING,
@@ -447,7 +447,7 @@ async def cleanup_stale_pipelines(
         cancelled_ids = []
         for pipeline in stale_pipelines:
             pipeline.status = PipelineStatus.CANCELLED
-            pipeline.finished_at = datetime.now()
+            pipeline.finished_at = datetime.now(tz=timezone.utc)
             cancelled_ids.append(str(pipeline.id))
 
         if stale_pipelines:

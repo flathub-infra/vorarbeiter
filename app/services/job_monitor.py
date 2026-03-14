@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import structlog
 from sqlalchemy import select
@@ -76,10 +76,9 @@ class JobMonitor:
         ):
             if await self._attempt_update_repo_recovery(pipeline):
                 updated = True
-            elif (
-                pipeline.created_at
-                and pipeline.created_at < datetime.now() - timedelta(hours=48)
-            ):
+            elif pipeline.created_at and pipeline.created_at < datetime.now(
+                tz=timezone.utc
+            ) - timedelta(hours=48):
                 pipeline.status = PipelineStatus.FAILED
                 logger.warning(
                     "Recovery window expired, marking pipeline as FAILED",
@@ -324,7 +323,7 @@ class JobMonitor:
 
         if job_status == JobStatus.ENDED:
             pipeline.status = PipelineStatus.PUBLISHED
-            pipeline.published_at = datetime.now()
+            pipeline.published_at = datetime.now(tz=timezone.utc)
             logger.info(
                 "Update-repo job completed, pipeline published",
                 pipeline_id=str(pipeline.id),
@@ -368,7 +367,7 @@ class JobMonitor:
         if not self.db:
             return False
 
-        cutoff = datetime.now() - timedelta(hours=48)
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=48)
         query = (
             select(Pipeline)
             .where(
@@ -389,7 +388,7 @@ class JobMonitor:
 
         pipeline.update_repo_job_id = peer.update_repo_job_id
         pipeline.status = PipelineStatus.PUBLISHED
-        pipeline.published_at = datetime.now()
+        pipeline.published_at = datetime.now(tz=timezone.utc)
         logger.info(
             "Recovered pipeline via peer update-repo success",
             pipeline_id=str(pipeline.id),
