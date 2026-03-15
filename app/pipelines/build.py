@@ -456,6 +456,7 @@ class BuildPipeline:
                 "callback_token": pipeline.callback_token,
                 "build_type": build_type,
                 "spot": "true" if pipeline.params.get("use_spot", True) else "false",
+                "pr_target_branch": pipeline.params.get("pr_target_branch", "master"),
             }
 
             if requires_flat_manager:

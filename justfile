@@ -115,7 +115,27 @@ validate-manifest app_id:
     set -euxo pipefail
     git config --global --add safe.directory "*"
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
-    flatpak-builder-lint --gha-format --exceptions --debug manifest "$manifest"
+
+    case "${REF}" in
+        "refs/heads/beta")
+            exceptions_repo="beta"
+            ;;
+        refs/pull/*)
+            case "${PR_TARGET_BRANCH:-master}" in
+                "beta")
+                    exceptions_repo="beta"
+                    ;;
+                *)
+                    exceptions_repo="stable"
+                    ;;
+            esac
+            ;;
+        *)
+            exceptions_repo="stable"
+            ;;
+    esac
+
+    flatpak-builder-lint --gha-format --exceptions --exceptions-repo "$exceptions_repo" --debug manifest "$manifest"
 
 download-sources app_id:
     #!/usr/bin/env bash
@@ -223,7 +243,26 @@ validate-build:
             ;;
     esac
 
-    lint_args=(--gha-format --exceptions --debug)
+    case "${REF}" in
+        "refs/heads/beta")
+            exceptions_repo="beta"
+            ;;
+        refs/pull/*)
+            case "${PR_TARGET_BRANCH:-master}" in
+                "beta")
+                    exceptions_repo="beta"
+                    ;;
+                *)
+                    exceptions_repo="stable"
+                    ;;
+            esac
+            ;;
+        *)
+            exceptions_repo="stable"
+            ;;
+    esac
+
+    lint_args=(--gha-format --exceptions --debug --exceptions-repo "$exceptions_repo")
 
     if [ "$should_janitor" == "yes" ]; then
         lint_args+=(--janitor-exceptions)

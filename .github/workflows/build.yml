@@ -14,6 +14,10 @@ on:
       git_ref:
         description: 'Git reference'
         required: true
+      pr_target_branch:
+        description: 'Target branch for PR builds'
+        required: false
+        default: 'master'
       flat_manager_repo:
         description: 'Flat-manager repository'
         required: true
@@ -75,6 +79,7 @@ jobs:
           # sync this env var name with linter
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
+          echo "PR_TARGET_BRANCH=${{ inputs.pr_target_branch }}" >> $GITHUB_ENV
 
       - name: Create work directory
         run: |
@@ -209,6 +214,8 @@ jobs:
             -e REPO \
             -e GITHUB_ACTIONS \
             -e TMPDIR=/work/tmp \
+            -e REF \
+            -e PR_TARGET_BRANCH \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-manifest $APP_ID
 
@@ -319,6 +326,7 @@ jobs:
           # sync this env var name with linter
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
+          echo "PR_TARGET_BRANCH=${{ inputs.pr_target_branch }}" >> $GITHUB_ENV
           echo "BUILD_URL=${{ inputs.build_url }}" >> $GITHUB_ENV
           echo "BUILD_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           REPO_TOKEN="$(jq -r '.inputs.flat_manager_token' $GITHUB_EVENT_PATH)"
@@ -579,6 +587,7 @@ jobs:
             -e GITHUB_ACTIONS \
             -e GITHUB_TOKEN \
             -e REF \
+            -e PR_TARGET_BRANCH \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-build
 
