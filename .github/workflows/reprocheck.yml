@@ -31,6 +31,10 @@ on:
         description: 'Use spot instances'
         required: false
         default: 'true'
+      pr_target_branch:
+        description: 'Target branch for PR builds (unused)'
+        required: false
+        default: 'master'
 
 jobs:
   update-log-url:
