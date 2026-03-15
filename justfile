@@ -228,7 +228,7 @@ install-if-extra-data app_id git_ref:
     echo "Extra-data sources detected, testing install..."
 
     flatpak remote-add --user --no-gpg-verify local-test repo
-    flatpak install -y --user local-test {{app_id}}//test
+    flatpak install -y --user local-test {{app_id}}
 
 validate-build:
     #!/usr/bin/env bash
