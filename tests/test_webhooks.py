@@ -2516,3 +2516,157 @@ async def test_create_pipeline_bot_cancel_no_pr_url():
 
     result = await create_pipeline(webhook_event)
     assert result is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_ref, expected_pr_target_branch",
+    [
+        ("master", "master"),
+        ("beta", "beta"),
+        ("branch/feature-x", "branch/feature-x"),
+    ],
+)
+async def test_create_pipeline_pr_stores_target_branch(
+    base_ref, expected_pr_target_branch
+):
+    event_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "sender": {"login": "test-actor"},
+        "action": "opened",
+        "pull_request": {
+            "number": 123,
+            "state": "open",
+            "head": {"ref": "feature-branch", "sha": "abcdef123456"},
+            "base": {"ref": base_ref},
+        },
+    }
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=payload,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="test-repo",
+        params={},
+        webhook_event_id=event_id,
+        status=PipelineStatus.PENDING,
+    )
+
+    mock_pipeline_service = AsyncMock()
+    mock_pipeline_service.create_pipeline.return_value = mock_pipeline
+    mock_pipeline_service.prepare_pipeline_for_start.return_value = mock_pipeline
+    mock_pipeline_service.supersede_conflicting_test_pipelines.return_value = None
+    mock_pipeline_service.should_queue_test_build.return_value = False
+    mock_pipeline_service.start_pipeline.return_value = mock_pipeline
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db)
+
+    with (
+        patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()),
+    ):
+        from app.routes.webhooks import create_pipeline
+
+        await create_pipeline(webhook_event)
+
+        _, kwargs = mock_pipeline_service.create_pipeline.call_args
+        assert kwargs["params"].get("pr_target_branch") == expected_pr_target_branch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_ref, expected_pr_target_branch",
+    [
+        ("master", "master"),
+        ("beta", "beta"),
+    ],
+)
+async def test_create_pipeline_bot_build_stores_target_branch(
+    base_ref, expected_pr_target_branch
+):
+    event_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+
+    comment_payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "sender": {"login": "test-actor"},
+        "action": "created",
+        "comment": {"body": "bot, build", "user": {"login": "test-user"}},
+        "issue": {
+            "number": 42,
+            "body": "",
+            "pull_request": {
+                "url": "https://api.github.com/repos/test-owner/test-repo/pulls/42"
+            },
+            "user": {"login": "test-user"},
+        },
+    }
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=comment_payload,
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="test-repo",
+        params={},
+        webhook_event_id=event_id,
+        status=PipelineStatus.PENDING,
+    )
+
+    mock_pipeline_service = AsyncMock()
+    mock_pipeline_service.create_pipeline.return_value = mock_pipeline
+    mock_pipeline_service.prepare_pipeline_for_start.return_value = mock_pipeline
+    mock_pipeline_service.supersede_conflicting_test_pipelines.return_value = None
+    mock_pipeline_service.should_queue_test_build.return_value = False
+    mock_pipeline_service.start_pipeline.return_value = mock_pipeline
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db)
+
+    pr_data = {
+        "head": {"sha": "abc123"},
+        "state": "open",
+        "base": {"ref": base_ref},
+    }
+
+    with (
+        patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()),
+        patch("httpx.AsyncClient") as mock_http,
+    ):
+        mock_response = MagicMock()
+        mock_response.json = Mock(return_value=pr_data)
+        mock_response.raise_for_status = Mock()
+        mock_http.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        from app.routes.webhooks import create_pipeline
+
+        await create_pipeline(webhook_event)
+
+        _, kwargs = mock_pipeline_service.create_pipeline.call_args
+        assert kwargs["params"].get("pr_target_branch") == expected_pr_target_branch

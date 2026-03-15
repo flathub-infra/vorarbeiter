@@ -846,6 +846,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 "ref": f"refs/pull/{pr_number}/head",
                 "pr_number": str(pr_number) if pr_number is not None else "",
                 "action": str(payload.get("action", "")),
+                "pr_target_branch": pr.get("base", {}).get("ref", "master"),
             }
         )
 
@@ -1010,6 +1011,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 return None
 
             pr_ref = f"refs/pull/{issue_number}/head"
+            pr_target_branch = "master"
 
             github_api_url = f"https://api.github.com/repos/{repo}/pulls/{issue_number}"
             headers = {
@@ -1023,6 +1025,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                     response.raise_for_status()
                     pr_data = response.json()
                     sha = pr_data.get("head", {}).get("sha")
+                    pr_target_branch = pr_data.get("base", {}).get("ref", "master")
 
                     pr_state = pr_data.get("state")
                     if pr_state in ["closed", "merged"]:
@@ -1059,6 +1062,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                     "pr_number": str(issue_number),
                     "ref": pr_ref,
                     "use_spot": False,
+                    "pr_target_branch": pr_target_branch,
                 }
             )
 
