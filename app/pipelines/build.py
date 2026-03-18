@@ -54,6 +54,7 @@ app_build_types = {
     "org.catacombing.kumo": "large",
     "io.qt.qtwebengine.BaseApp": "large",
     "com.collaboraoffice.Office": "large",
+    "org.freedesktop.Sdk.Extension.llvm22": "large",
 }
 
 FAST_BUILD_P90_THRESHOLD_MINUTES = 20.0
