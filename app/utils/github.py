@@ -680,3 +680,152 @@ async def get_linter_warning_messages(
         if a.get("message") and "warning found in linter" in a.get("message", "")
     ]
     return list(set(messages))
+
+
+async def get_pr_files(git_repo: str, pr_number: int) -> list[str]:
+    if "/" not in git_repo:
+        logger.error("Invalid git_repo format. Expected 'owner/repo'.")
+        return []
+
+    url = f"https://api.github.com/repos/{git_repo}/pulls/{pr_number}/files"
+    client = get_github_client()
+    response = await client.request(
+        "get", url, context={"git_repo": git_repo, "pr_number": pr_number}
+    )
+    if response:
+        return [f["filename"] for f in response.json()]
+    logger.warning("Failed to fetch PR files", git_repo=git_repo, pr_number=pr_number)
+    return []
+
+
+async def get_pr_bot_comments(git_repo: str, pr_number: int) -> str:
+    if "/" not in git_repo:
+        logger.error("Invalid git_repo format. Expected 'owner/repo'.")
+        return ""
+
+    url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/comments"
+    client = get_github_client()
+    response = await client.request(
+        "get", url, context={"git_repo": git_repo, "pr_number": pr_number}
+    )
+    if response:
+        return "\n".join(
+            c["body"]
+            for c in response.json()
+            if c.get("user", {}).get("login", "")
+            in ("flathubbot", "github-actions[bot]", "github-actions")
+        )
+    logger.warning(
+        "Failed to fetch PR comments", git_repo=git_repo, pr_number=pr_number
+    )
+    return ""
+
+
+async def update_pr_label(
+    git_repo: str, pr_number: int, label: str, *, add: bool
+) -> bool:
+    if "/" not in git_repo:
+        logger.error("Invalid git_repo format. Expected 'owner/repo'.")
+        return False
+
+    client = get_github_client()
+    if add:
+        url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/labels"
+        response = await client.request(
+            "post",
+            url,
+            json={"labels": [label]},
+            context={"git_repo": git_repo, "pr_number": pr_number},
+        )
+        success = bool(response)
+    else:
+        url = (
+            f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/labels/{label}"
+        )
+        response = await client.request(
+            "delete",
+            url,
+            context={"git_repo": git_repo, "pr_number": pr_number},
+            raise_for_status=False,
+        )
+        success = bool(response) and response.status_code in (200, 204, 404)
+
+    if success:
+        logger.info(
+            "Successfully updated PR label",
+            git_repo=git_repo,
+            pr_number=pr_number,
+            label=label,
+            action="add" if add else "remove",
+        )
+    return success
+
+
+async def get_pr_unresolved_review_thread_count(
+    git_repo: str, pr_number: int
+) -> int | None:
+    if "/" not in git_repo:
+        logger.error("Invalid git_repo format. Expected 'owner/repo'.")
+        return None
+
+    owner, repo = git_repo.split("/", 1)
+
+    transport = RequestsHTTPTransport(
+        url="https://api.github.com/graphql",
+        headers={"Authorization": f"Bearer {settings.github_status_token}"},
+    )
+    client = Client(transport=transport, fetch_schema_from_transport=False)
+
+    query = gql(
+        """
+        query ($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              reviewThreads(first: 100) {
+                nodes {
+                  isResolved
+                }
+              }
+            }
+          }
+        }
+        """
+    )
+
+    try:
+        data = client.execute(
+            query,
+            variable_values={"owner": owner, "repo": repo, "number": pr_number},
+        )
+        nodes = (
+            data.get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+            .get("nodes", [])
+        )
+        count = sum(1 for n in nodes if not n.get("isResolved", True))
+        logger.info(
+            "Fetched unresolved review thread count",
+            git_repo=git_repo,
+            pr_number=pr_number,
+            count=count,
+        )
+        return count
+    except GQL_EXCEPTIONS as err:
+        logger.error(
+            "GraphQL exception fetching review threads",
+            git_repo=git_repo,
+            pr_number=pr_number,
+            error=str(err),
+            exc_info=True,
+        )
+        return None
+    except Exception as e:
+        logger.error(
+            "Unexpected error fetching review threads",
+            git_repo=git_repo,
+            pr_number=pr_number,
+            error=str(e),
+            exc_info=True,
+        )
+        return None
