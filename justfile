@@ -270,11 +270,6 @@ validate-build:
 
     flatpak-builder-lint "${lint_args[@]}" repo repo
 
-generate-deltas:
-    #!/usr/bin/env bash
-    set -euxo pipefail
-    flatpak build-update-repo --generate-static-deltas --static-delta-ignore-ref=*.Debug --static-delta-ignore-ref=*.Sources repo
-
 upload url:
     #!/usr/bin/env bash
     set -euxo pipefail

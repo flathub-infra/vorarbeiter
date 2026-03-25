@@ -591,18 +591,6 @@ jobs:
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-build
 
-      - name: Generate deltas
-        run: |
-          docker run --rm \
-            --security-opt apparmor=unconfined \
-            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
-            --entrypoint="" \
-            -e TMPDIR=/work/tmp \
-            -v "${GITHUB_WORKSPACE}/work:/work" \
-            -w /work \
-            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
-            just -f .flathub.justfile generate-deltas
-
       - name: Upload build
         run: |
           docker run --rm \
