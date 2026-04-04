@@ -2670,3 +2670,67 @@ async def test_create_pipeline_bot_build_stores_target_branch(
 
         _, kwargs = mock_pipeline_service.create_pipeline.call_args
         assert kwargs["params"].get("pr_target_branch") == expected_pr_target_branch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_type,repo,handler,should_call,status_code",
+    [
+        (
+            "pull_request",
+            "flathub/flathub",
+            "app.routes.webhooks.PRCheckService.handle_pr_event",
+            True,
+            202,
+        ),
+        (
+            "pull_request_review",
+            "flathub/flathub",
+            "app.routes.webhooks.PRCheckService.handle_pull_request_review_event",
+            True,
+            202,
+        ),
+        (
+            "pull_request",
+            "abra/cadabra",
+            "app.routes.webhooks.PRCheckService.handle_pr_event",
+            False,
+            202,
+        ),
+    ],
+    ids=[
+        "pr_event_called",
+        "review_event_called",
+        "invalid_repo_not_called",
+    ],
+)
+async def test_webhook_pr_check_service(
+    client, mock_db, event_type, repo, handler, should_call, status_code
+):
+    delivery_id = str(uuid.uuid4())
+    headers = {
+        "X-GitHub-Delivery": delivery_id,
+        "X-GitHub-Event": event_type,
+    }
+
+    payload = {
+        "repository": {"full_name": repo},
+        "sender": {"login": "test-user"},
+        "pull_request": {"number": 123, "base": {"ref": "new-pr"}},
+    }
+
+    mock_get_db = create_mock_get_db(mock_db)
+
+    with (
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(handler, new_callable=AsyncMock) as mock_handler,
+    ):
+        response = client.post("/api/webhooks/github", json=payload, headers=headers)
+
+    assert response.status_code == status_code
+
+    if should_call:
+        mock_handler.assert_awaited_once_with(payload)
+    else:
+        mock_handler.assert_not_called()

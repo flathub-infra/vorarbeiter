@@ -17,6 +17,7 @@ from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types
 from app.services.github_actions import GitHubActionsService
 from app.utils.flat_manager import FlatManagerClient, get_flat_manager_repo
+from app.services.submission_pr_check import PRCheckService
 from app.utils.github import (
     add_issue_comment,
     close_github_issue,
@@ -672,6 +673,7 @@ async def is_submodule_only_pr(
 async def receive_github_webhook(
     request: Request,
     x_github_delivery: str | None = Header(None, description="GitHub delivery GUID"),
+    x_github_event: str | None = Header(None, description="GitHub event type"),
     x_hub_signature_256: str | None = Header(
         None, description="GitHub webhook signature"
     ),
@@ -723,6 +725,31 @@ async def receive_github_webhook(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Missing expected key in GitHub payload: {e}",
         )
+
+    if repo_name == "flathub/flathub":
+        event_type = x_github_event or ""
+
+        if event_type == "pull_request":
+            try:
+                await PRCheckService().handle_pr_event(payload)
+            except Exception as exc:
+                logger.error(
+                    "PR check handler failed",
+                    pr_number=payload.get("pull_request", {}).get("number"),
+                    error=str(exc),
+                )
+            return {"message": "Webhook received", "event_id": str(delivery_id)}
+
+        if event_type == "pull_request_review":
+            try:
+                await PRCheckService().handle_pull_request_review_event(payload)
+            except Exception as exc:
+                logger.error(
+                    "PR review handler failed",
+                    pr_number=payload.get("pull_request", {}).get("number"),
+                    error=str(exc),
+                )
+            return {"message": "Webhook received", "event_id": str(delivery_id)}
 
     ignored_repos = [
         "flathub/flathub",
