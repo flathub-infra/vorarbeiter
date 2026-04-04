@@ -118,9 +118,6 @@ flatpickr(".flatpickr-datetime", {
     time_24hr: true,
     allowInput: true
 });
-document.querySelector('form').addEventListener('change', function() {
-    document.getElementById('builds-tbody').removeAttribute('hx-trigger');
-});
 </script>
 
 <table>
@@ -136,6 +133,7 @@ document.querySelector('form').addEventListener('change', function() {
     </thead>
     <tbody id="builds-tbody"
            hx-get="/api/htmx/builds"
+           hx-include="form"
            hx-trigger="every 30s"
            hx-swap="innerHTML">
         {% include "partials/builds.html" %}
