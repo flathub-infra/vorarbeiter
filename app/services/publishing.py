@@ -1,6 +1,7 @@
+from typing import Any
+
 import structlog
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple
 
 import httpx
 from sqlalchemy import select
@@ -14,9 +15,9 @@ logger = structlog.get_logger(__name__)
 
 class PublishResult:
     def __init__(self) -> None:
-        self.published: List[str] = []
-        self.superseded: List[str] = []
-        self.errors: List[Dict[str, str]] = []
+        self.published: list[str] = []
+        self.superseded: list[str] = []
+        self.errors: list[dict[str, str]] = []
 
 
 class PublishingService:
@@ -48,7 +49,7 @@ class PublishingService:
 
         return result
 
-    async def _get_publishable_pipelines(self, db: AsyncSession) -> List[Pipeline]:
+    async def _get_publishable_pipelines(self, db: AsyncSession) -> list[Pipeline]:
         query = select(Pipeline).where(
             Pipeline.status == PipelineStatus.COMMITTED,
             Pipeline.flat_manager_repo.in_(["stable", "beta"]),
@@ -57,9 +58,9 @@ class PublishingService:
         return list(result.scalars().all())
 
     def _group_pipelines_for_publishing(
-        self, pipelines: List[Pipeline]
-    ) -> Dict[Tuple[str, str], List[Pipeline]]:
-        pipeline_groups: Dict[Tuple[str, str], List[Pipeline]] = {}
+        self, pipelines: list[Pipeline]
+    ) -> dict[tuple[str, str], list[Pipeline]]:
+        pipeline_groups: dict[tuple[str, str], list[Pipeline]] = {}
 
         for pipeline in pipelines:
             if pipeline.flat_manager_repo is None:
@@ -81,7 +82,7 @@ class PublishingService:
         db: AsyncSession,
         app_id: str,
         flat_manager_repo: str,
-        group: List[Pipeline],
+        group: list[Pipeline],
         result: PublishResult,
         now: datetime,
     ) -> None:
@@ -100,7 +101,7 @@ class PublishingService:
         )
 
     async def _handle_superseded_pipelines(
-        self, pipelines: List[Pipeline], result: PublishResult
+        self, pipelines: list[Pipeline], result: PublishResult
     ) -> None:
         for pipeline in pipelines:
             if pipeline.status != PipelineStatus.SUPERSEDED:
@@ -176,7 +177,7 @@ class PublishingService:
         except Exception as e:
             self._handle_build_error(pipeline, e, result)
 
-    async def _get_build_info(self, pipeline: Pipeline) -> Dict | None:
+    async def _get_build_info(self, pipeline: Pipeline) -> dict[str, Any] | None:
         try:
             assert pipeline.build_id is not None
             build_info = await self.flat_manager.get_build_info(pipeline.build_id)
@@ -213,7 +214,7 @@ class PublishingService:
             )
             raise
 
-    def _update_job_ids(self, pipeline: Pipeline, build_data: Dict) -> None:
+    def _update_job_ids(self, pipeline: Pipeline, build_data: dict[str, Any]) -> None:
         commit_job_id = build_data.get("commit_job_id")
         publish_job_id = build_data.get("publish_job_id")
 
@@ -226,7 +227,7 @@ class PublishingService:
     async def _handle_build_state(
         self,
         pipeline: Pipeline,
-        build_data: Dict,
+        build_data: dict[str, Any],
         result: PublishResult,
         now: datetime,
     ) -> None:

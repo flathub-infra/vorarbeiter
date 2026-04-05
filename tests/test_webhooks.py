@@ -897,8 +897,8 @@ async def test_handle_eol_only_push_republish():
     mock_client.republish = AsyncMock(return_value={"id": 12345, "status": "ok"})
 
     with patch(
-        "app.routes.webhooks.FlatManagerClient", return_value=mock_client
-    ) as mock_client_class:
+        "app.routes.webhooks.get_flat_manager_client", return_value=mock_client
+    ) as mock_get_flat_manager_client:
         with patch(
             "app.routes.webhooks.update_commit_status", AsyncMock()
         ) as mock_status:
@@ -906,10 +906,7 @@ async def test_handle_eol_only_push_republish():
                 event, "refs/heads/master", "abcdef123456", eol_data
             )
 
-            mock_client_class.assert_called_once_with(
-                url=settings.flat_manager_url,
-                token=settings.flat_manager_token,
-            )
+            mock_get_flat_manager_client.assert_called_once_with()
             mock_client.republish.assert_awaited_once_with(
                 repo="stable",
                 app_id="test-repo",
@@ -1483,6 +1480,10 @@ async def test_create_pipeline_disable_test_builds_pr(flag_enabled):
     with (
         patch("app.routes.webhooks.settings.ff_disable_test_builds", flag_enabled),
         patch(
+            "app.routes.webhooks.settings.statuspage_url",
+            "https://status.example.test",
+        ),
+        patch(
             "app.routes.webhooks.create_pr_comment",
             new_callable=AsyncMock,
         ) as mock_pr_comment,
@@ -1501,7 +1502,7 @@ async def test_create_pipeline_disable_test_builds_pr(flag_enabled):
             assert call_kwargs["git_repo"] == "test-owner/test-repo"
             assert call_kwargs["pr_number"] == 123
             assert "bot, build" in call_kwargs["comment"]
-            assert "https://status.flathub.org" in call_kwargs["comment"]
+            assert "https://status.example.test" in call_kwargs["comment"]
             mock_pipeline_service.create_pipeline.assert_not_called()
         else:
             assert result == pipeline_id
@@ -1562,6 +1563,10 @@ async def test_create_pipeline_disable_test_builds_bot_build(flag_enabled):
     with (
         patch("app.routes.webhooks.settings.ff_disable_test_builds", flag_enabled),
         patch(
+            "app.routes.webhooks.settings.statuspage_url",
+            "https://status.example.test",
+        ),
+        patch(
             "app.routes.webhooks.create_pr_comment",
             new_callable=AsyncMock,
         ) as mock_pr_comment,
@@ -1588,7 +1593,7 @@ async def test_create_pipeline_disable_test_builds_bot_build(flag_enabled):
             assert call_kwargs["git_repo"] == "test-owner/test-repo"
             assert call_kwargs["pr_number"] == 99
             assert "bot, build" in call_kwargs["comment"]
-            assert "https://status.flathub.org" in call_kwargs["comment"]
+            assert "https://status.example.test" in call_kwargs["comment"]
             mock_pipeline_service.create_pipeline.assert_not_called()
         else:
             assert result == pipeline_id
@@ -2195,7 +2200,7 @@ async def test_handle_eol_only_push_beta_ref():
     mock_client = AsyncMock()
     mock_client.republish = AsyncMock(return_value={"status": "ok"})
 
-    with patch("app.routes.webhooks.FlatManagerClient", return_value=mock_client):
+    with patch("app.routes.webhooks.get_flat_manager_client", return_value=mock_client):
         with patch("app.routes.webhooks.update_commit_status", AsyncMock()):
             await handle_eol_only_push(
                 event, "refs/heads/beta", "abcdef123456", eol_data
@@ -2226,7 +2231,7 @@ async def test_handle_eol_only_push_branch_ref():
     mock_client = AsyncMock()
     mock_client.republish = AsyncMock(return_value={"status": "ok"})
 
-    with patch("app.routes.webhooks.FlatManagerClient", return_value=mock_client):
+    with patch("app.routes.webhooks.get_flat_manager_client", return_value=mock_client):
         with patch("app.routes.webhooks.update_commit_status", AsyncMock()):
             await handle_eol_only_push(
                 event, "refs/heads/branch/foo", "abcdef123456", eol_data
@@ -2257,7 +2262,7 @@ async def test_handle_eol_only_push_non_production_ref():
     mock_client = AsyncMock()
     mock_client.republish = AsyncMock(return_value={"status": "ok"})
 
-    with patch("app.routes.webhooks.FlatManagerClient", return_value=mock_client):
+    with patch("app.routes.webhooks.get_flat_manager_client", return_value=mock_client):
         with patch(
             "app.routes.webhooks.update_commit_status", AsyncMock()
         ) as mock_status:
@@ -2308,7 +2313,7 @@ async def test_republish_http_error():
         )
     )
 
-    with patch("app.routes.webhooks.FlatManagerClient", return_value=mock_client):
+    with patch("app.routes.webhooks.get_flat_manager_client", return_value=mock_client):
         with patch(
             "app.routes.webhooks.update_commit_status", AsyncMock()
         ) as mock_status:
@@ -2419,11 +2424,11 @@ async def test_create_pipeline_bot_cancel_active_pipelines():
         patch(
             "app.routes.webhooks.create_pr_comment", new_callable=AsyncMock
         ) as mock_comment,
-        patch("app.routes.webhooks.FlatManagerClient") as MockFlatManager,
+        patch("app.routes.webhooks.get_flat_manager_client") as mock_get_flat_manager,
         patch("app.routes.webhooks.GitHubActionsService") as MockGHActions,
     ):
         mock_fm = AsyncMock()
-        MockFlatManager.return_value = mock_fm
+        mock_get_flat_manager.return_value = mock_fm
 
         mock_gh_actions = AsyncMock()
         MockGHActions.return_value = mock_gh_actions

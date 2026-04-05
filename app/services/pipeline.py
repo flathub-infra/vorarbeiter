@@ -18,8 +18,6 @@ logger = structlog.get_logger(__name__)
 
 
 class PipelineService:
-    """Service for managing pipeline operations and business logic."""
-
     def __init__(self):
         self.flat_manager_client = get_flat_manager_client()
         self.job_monitor = JobMonitor()
@@ -35,22 +33,6 @@ class PipelineService:
         target_repo: str | None = None,
         limit: int = 10,
     ) -> list[Pipeline]:
-        """
-        List pipelines with filters and update job IDs where necessary.
-
-        Args:
-            db: Database session
-            app_id: Filter by app ID prefix
-            pipeline_type: Filter by pipeline type (build or reprocheck)
-            status: Filter by pipeline status
-            reprocheck_status: Filter by reprocheck result status
-            triggered_by: Filter by trigger type
-            target_repo: Filter by target repository
-            limit: Maximum number of results (1-100)
-
-        Returns:
-            List of pipelines matching the filters
-        """
         from sqlalchemy import String, cast, or_
 
         limit = min(max(1, limit), 100)
@@ -100,7 +82,6 @@ class PipelineService:
         return pipelines
 
     def pipeline_to_summary(self, pipeline: Pipeline) -> PipelineSummary:
-        """Convert a Pipeline model to PipelineSummary schema."""
         params = pipeline.params or {}
         workflow_id = params.get("workflow_id", "build.yml")
         pipeline_type = (
@@ -130,7 +111,6 @@ class PipelineService:
         )
 
     def pipeline_to_response(self, pipeline: Pipeline) -> PipelineResponse:
-        """Convert a Pipeline model to PipelineResponse schema."""
         return PipelineResponse(
             id=str(pipeline.id),
             app_id=pipeline.app_id,
@@ -154,7 +134,6 @@ class PipelineService:
         )
 
     def validate_status(self, status: Any) -> PipelineStatus:
-        """Validate and convert status value."""
         try:
             return PipelineStatus(status)
         except ValueError:
@@ -164,7 +143,6 @@ class PipelineService:
             )
 
     def validate_trigger_filter(self, triggered_by: Any) -> PipelineTrigger:
-        """Validate and convert trigger filter value."""
         try:
             return PipelineTrigger(triggered_by)
         except ValueError:
@@ -176,16 +154,6 @@ class PipelineService:
     async def trigger_manual_pipeline(
         self, app_id: str, params: dict[str, Any]
     ) -> dict[str, Any]:
-        """
-        Trigger a new pipeline manually.
-
-        Args:
-            app_id: Application ID
-            params: Pipeline parameters
-
-        Returns:
-            Dictionary with pipeline creation details
-        """
         from app.pipelines import BuildPipeline
 
         build_pipeline = BuildPipeline()

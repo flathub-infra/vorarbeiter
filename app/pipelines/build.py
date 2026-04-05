@@ -148,19 +148,6 @@ class BuildPipeline:
         github_notifier: GitHubNotifier | None = None,
         db=None,
     ) -> bool:
-        """
-        Fetch and store a job ID from flat-manager build info.
-
-        Args:
-            pipeline: Pipeline to update
-            flat_manager: FlatManagerClient instance
-            job_type: Type of job ("commit" or "publish")
-            github_notifier: Optional GitHubNotifier for status updates
-            db: Optional AsyncSession for immediate commit
-
-        Returns:
-            True if job ID was stored, False otherwise
-        """
         if not pipeline.build_id:
             return False
 

@@ -25,7 +25,6 @@ from app.services.job_monitor import JobMonitor
 logger = structlog.get_logger(__name__)
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
-api_security = HTTPBearer()
 
 
 async def get_verified_build_pipeline(
@@ -86,7 +85,7 @@ async def execute_callback_handler(
 
 
 async def verify_token(
-    credentials: HTTPAuthorizationCredentials = Depends(api_security),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     if credentials.credentials != settings.admin_token:
         raise HTTPException(

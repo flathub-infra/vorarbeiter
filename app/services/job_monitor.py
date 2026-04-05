@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import structlog
@@ -255,8 +256,6 @@ class JobMonitor:
             results = job_response.get("results")
             if results:
                 try:
-                    import json
-
                     results_data = json.loads(results)
                     update_repo_job_id = results_data.get("update-repo-job")
                     if update_repo_job_id:

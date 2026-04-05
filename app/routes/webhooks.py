@@ -16,7 +16,7 @@ from app.models.pipeline import Pipeline, PipelineStatus
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types
 from app.services.github_actions import GitHubActionsService
-from app.utils.flat_manager import FlatManagerClient, get_flat_manager_repo
+from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_repo
 from app.utils.github import (
     add_issue_comment,
     close_github_issue,
@@ -39,6 +39,11 @@ STABLE_BUILD_FAILURE_PATTERN = re.compile(
 JOB_FAILURE_PATTERN = re.compile(
     r"The (\w+) job for `.+?` failed in the (\w+) repository\.\n\n.*?-? ?Commit SHA: ([0-9a-fA-F]+)",
     re.DOTALL,
+)
+DISABLED_TEST_BUILDS_MSG = (
+    "🚧 Test builds are currently disabled. Once the maintenance is over, this build "
+    "can be retried by posting a `bot, build` comment. Please refer to "
+    "{statuspage_url} for updates."
 )
 
 
@@ -587,9 +592,7 @@ async def handle_eol_only_push(
     end_of_life = eol_data.get("end_of_life") if eol_data else None
     end_of_life_rebase = eol_data.get("end_of_life_rebase") if eol_data else None
 
-    flat_manager = FlatManagerClient(
-        url=settings.flat_manager_url, token=settings.flat_manager_token
-    )
+    flat_manager = get_flat_manager_client()
     try:
         republish_result = await flat_manager.republish(
             repo=flat_manager_repo,
@@ -836,7 +839,9 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             await create_pr_comment(
                 git_repo=event.repository,
                 pr_number=pr_number,
-                comment=f"🚧 Test builds are currently disabled. Once the maintenance is over, this build can be retried by posting a `bot, build` comment. Please refer to {settings.statuspage_url} for updates.",
+                comment=DISABLED_TEST_BUILDS_MSG.format(
+                    statuspage_url=settings.statuspage_url
+                ),
             )
             return None
 
@@ -950,10 +955,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
                 await db.commit()
 
-            flat_manager = FlatManagerClient(
-                url=settings.flat_manager_url,
-                token=settings.flat_manager_token,
-            )
+            flat_manager = get_flat_manager_client()
 
             for build_id, pipeline_id in pipelines_to_purge:
                 try:
@@ -1006,7 +1008,9 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 await create_pr_comment(
                     git_repo=repo,
                     pr_number=issue_number,
-                    comment=f"🚧 Test builds are currently disabled. Once the maintenance is over, this build can be retried by posting a `bot, build` comment. Please refer to {settings.statuspage_url} for updates.",
+                    comment=DISABLED_TEST_BUILDS_MSG.format(
+                        statuspage_url=settings.statuspage_url
+                    ),
                 )
                 return None
 

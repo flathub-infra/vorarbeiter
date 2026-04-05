@@ -1,5 +1,3 @@
-from typing import Optional
-
 import structlog
 
 from app.config import settings
@@ -17,14 +15,14 @@ logger = structlog.get_logger(__name__)
 
 
 class GitHubNotifier:
-    def __init__(self, flat_manager_client: Optional[FlatManagerClient] = None):
+    def __init__(self, flat_manager_client: FlatManagerClient | None = None):
         self.flat_manager = flat_manager_client
 
     async def notify_build_status(
         self,
         pipeline: Pipeline,
         status: str,
-        log_url: Optional[str] = None,
+        log_url: str | None = None,
     ) -> None:
         app_id = pipeline.app_id
         sha = pipeline.params.get("sha")
@@ -319,7 +317,7 @@ class GitHubNotifier:
         pipeline: Pipeline,
         job_type: str,
         job_id: int,
-        job_response: Optional[dict] = None,
+        job_response: dict | None = None,
     ) -> None:
         if pipeline.flat_manager_repo not in ["stable", "beta"]:
             return
@@ -406,7 +404,7 @@ class GitHubNotifier:
         self,
         pipeline: Pipeline,
         status: str,
-        flat_manager_client: Optional[FlatManagerClient] = None,
+        flat_manager_client: FlatManagerClient | None = None,
     ) -> None:
         if flat_manager_client:
             self.flat_manager = flat_manager_client
@@ -435,7 +433,7 @@ class GitHubNotifier:
     async def handle_build_committed(
         self,
         pipeline: Pipeline,
-        flat_manager_client: Optional[FlatManagerClient] = None,
+        flat_manager_client: FlatManagerClient | None = None,
     ) -> None:
         if flat_manager_client:
             self.flat_manager = flat_manager_client

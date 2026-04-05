@@ -86,12 +86,6 @@ class ReprocheckNotificationService:
             await self._handle_success(db, app_id, git_repo, sha, log_url)
 
     def _is_failure(self, status_code: str) -> bool:
-        """Check if the status code indicates a failure.
-
-        status_code == "0" means reproducible (success)
-        status_code == "42" means not reproducible
-        Any other non-zero means failed to build
-        """
         return status_code != "0"
 
     def _get_failure_description(self, status_code: str) -> str:
