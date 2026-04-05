@@ -33,15 +33,19 @@ class LogUrlCallbackValidator:
         return CallbackData(log_url=data.get("log_url"))
 
 
+def _validate_status_callback(data: dict[str, Any]) -> None:
+    if "status" not in data:
+        raise ValueError("status is required")
+
+    try:
+        PipelineStatusCallback(**data)
+    except ValidationError as e:
+        raise ValueError(f"Invalid status callback: {e}")
+
+
 class StatusCallbackValidator:
     def validate_and_parse(self, data: dict[str, Any]) -> "CallbackData":
-        if "status" not in data:
-            raise ValueError("status is required")
-
-        try:
-            PipelineStatusCallback(**data)
-        except ValidationError as e:
-            raise ValueError(f"Invalid status callback: {e}")
+        _validate_status_callback(data)
 
         from app.pipelines import CallbackData
 
@@ -50,13 +54,7 @@ class StatusCallbackValidator:
 
 class ReprocheckCallbackValidator:
     def validate_and_parse(self, data: dict[str, Any]) -> "CallbackData":
-        if "status" not in data:
-            raise ValueError("status is required")
-
-        try:
-            PipelineStatusCallback(**data)
-        except ValidationError as e:
-            raise ValueError(f"Invalid status callback: {e}")
+        _validate_status_callback(data)
 
         from app.pipelines import CallbackData
 

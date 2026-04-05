@@ -131,6 +131,48 @@ async def _validate_and_prepare_callback(
     return pipeline, parsed_data, status_value
 
 
+async def cancel_pipeline(
+    pipeline_id: uuid.UUID,
+    build_id: int | None,
+    provider_data: dict[str, Any] | None,
+    flat_manager: FlatManagerClient,
+    github_actions: GitHubActionsService | None = None,
+) -> None:
+    if build_id:
+        try:
+            await flat_manager.purge(build_id)
+            logger.info(
+                "Purged build for cancelled pipeline",
+                build_id=build_id,
+                pipeline_id=str(pipeline_id),
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to purge build for cancelled pipeline",
+                build_id=build_id,
+                pipeline_id=str(pipeline_id),
+                error=str(e),
+            )
+
+    provider_data_dict = provider_data or {}
+    run_id = provider_data_dict.get("run_id")
+    if run_id and github_actions:
+        try:
+            await github_actions.cancel(str(pipeline_id), provider_data_dict)
+            logger.info(
+                "Cancelled GitHub Actions run for cancelled pipeline",
+                run_id=run_id,
+                pipeline_id=str(pipeline_id),
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to cancel GitHub Actions run",
+                run_id=run_id,
+                pipeline_id=str(pipeline_id),
+                error=str(e),
+            )
+
+
 class BuildPipeline:
     def __init__(self):
         self.provider = github_actions_service
@@ -343,42 +385,13 @@ class BuildPipeline:
                 app_id=pipeline.app_id,
                 flat_manager_repo=flat_manager_repo,
             )
-
-            if old_pipeline.build_id:
-                try:
-                    await self.flat_manager.purge(old_pipeline.build_id)
-                    logger.info(
-                        "Purged build for superseded pipeline",
-                        build_id=old_pipeline.build_id,
-                        pipeline_id=str(old_pipeline.id),
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "Failed to purge build for superseded pipeline",
-                        build_id=old_pipeline.build_id,
-                        pipeline_id=str(old_pipeline.id),
-                        error=str(e),
-                    )
-
-            run_id = (old_pipeline.provider_data or {}).get("run_id")
-            if run_id:
-                try:
-                    github_actions = GitHubActionsService()
-                    await github_actions.cancel(
-                        str(old_pipeline.id), old_pipeline.provider_data
-                    )
-                    logger.info(
-                        "Cancelled GitHub Actions run for superseded pipeline",
-                        run_id=run_id,
-                        pipeline_id=str(old_pipeline.id),
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "Failed to cancel GitHub Actions run",
-                        run_id=run_id,
-                        pipeline_id=str(old_pipeline.id),
-                        error=str(e),
-                    )
+            await cancel_pipeline(
+                old_pipeline.id,
+                old_pipeline.build_id,
+                old_pipeline.provider_data,
+                self.flat_manager,
+                github_actions=GitHubActionsService(),
+            )
 
     async def start_pipeline(
         self,

@@ -14,7 +14,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.pipeline import Pipeline, PipelineStatus
 from app.models.webhook_event import WebhookEvent, WebhookSource
-from app.pipelines.build import BuildPipeline, app_build_types
+from app.pipelines.build import BuildPipeline, app_build_types, cancel_pipeline
 from app.services.github_actions import GitHubActionsService
 from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_repo
 from app.utils.github import (
@@ -913,6 +913,9 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 return None
 
             pr_ref = f"refs/pull/{issue_number}/head"
+            pipelines_to_cancel: list[
+                tuple[uuid.UUID, int | None, dict[str, Any] | None]
+            ] = []
 
             async with get_db() as db:
                 query = (
@@ -937,47 +940,33 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                     )
                     return None
 
-                pipelines_to_purge = []
-                pipelines_to_cancel = []
-
                 for pipeline in active_pipelines:
                     pipeline.status = PipelineStatus.CANCELLED
                     pipeline.finished_at = datetime.now(timezone.utc)
 
-                    if pipeline.build_id:
-                        pipelines_to_purge.append((pipeline.build_id, str(pipeline.id)))
-
-                    run_id = (pipeline.provider_data or {}).get("run_id")
-                    if run_id:
-                        pipelines_to_cancel.append(
-                            (str(pipeline.id), pipeline.provider_data)
-                        )
+                pipelines_to_cancel = [
+                    (
+                        pipeline.id,
+                        pipeline.build_id,
+                        dict(pipeline.provider_data)
+                        if pipeline.provider_data
+                        else None,
+                    )
+                    for pipeline in active_pipelines
+                ]
 
                 await db.commit()
 
             flat_manager = get_flat_manager_client()
-
-            for build_id, pipeline_id in pipelines_to_purge:
-                try:
-                    await flat_manager.purge(build_id)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to purge build for cancelled pipeline",
-                        build_id=build_id,
-                        pipeline_id=pipeline_id,
-                        error=str(e),
-                    )
-
-            for pipeline_id, provider_data in pipelines_to_cancel:
-                try:
-                    github_actions = GitHubActionsService()
-                    await github_actions.cancel(pipeline_id, provider_data)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to cancel GitHub Actions run",
-                        pipeline_id=pipeline_id,
-                        error=str(e),
-                    )
+            github_actions = GitHubActionsService()
+            for pipeline_id, build_id, provider_data in pipelines_to_cancel:
+                await cancel_pipeline(
+                    pipeline_id,
+                    build_id,
+                    provider_data,
+                    flat_manager,
+                    github_actions=github_actions,
+                )
 
             count = len(active_pipelines)
             await create_pr_comment(
