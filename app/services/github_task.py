@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.github_task import GitHubTask, GitHubTaskStatus
@@ -142,21 +143,14 @@ class GitHubTaskService:
     async def cleanup_old_tasks(self, db: AsyncSession, days: int = 7) -> int:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-        stmt = (
-            select(GitHubTask)
-            .where(
-                GitHubTask.status.in_(
-                    [GitHubTaskStatus.COMPLETED, GitHubTaskStatus.FAILED]
-                )
-            )
-            .where(GitHubTask.completed_at < cutoff)
+        stmt = delete(GitHubTask).where(
+            GitHubTask.status.in_(
+                [GitHubTaskStatus.COMPLETED, GitHubTaskStatus.FAILED]
+            ),
+            GitHubTask.completed_at < cutoff,
         )
-        result = await db.execute(stmt)
-        tasks = result.scalars().all()
-
-        count = len(tasks)
-        for task in tasks:
-            await db.delete(task)
+        result = cast(CursorResult[Any], await db.execute(stmt))
+        count = result.rowcount
 
         if count > 0:
             logger.info(

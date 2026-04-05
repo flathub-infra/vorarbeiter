@@ -1,3 +1,5 @@
+import asyncio
+
 import structlog
 
 from app.config import settings
@@ -188,8 +190,10 @@ class GitHubNotifier:
             build_job_arches: list[str] = []
 
             if run_id is not None:
-                linter_warnings = await get_linter_warning_messages(run_id)
-                build_job_arches = await get_build_job_arches(run_id)
+                linter_warnings, build_job_arches = await asyncio.gather(
+                    get_linter_warning_messages(run_id),
+                    get_build_job_arches(run_id),
+                )
 
             arch_info_comment = ""
             if build_job_arches:

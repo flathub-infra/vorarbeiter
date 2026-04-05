@@ -597,6 +597,26 @@ async def test_rate_limit_detection(mock_settings):
     assert client._is_rate_limit_error(normal_403_response) is False
 
 
+def test_get_github_client_for_token_reuses_status_client(mock_settings):
+    from app.utils.github import get_github_client, get_github_client_for_token
+
+    assert get_github_client_for_token("test-token") is get_github_client()
+
+
+def test_get_github_client_for_token_creates_custom_client(mock_settings):
+    from app.utils.github import (
+        GitHubAPIClient,
+        get_github_client,
+        get_github_client_for_token,
+    )
+
+    client = get_github_client_for_token("other-token")
+
+    assert isinstance(client, GitHubAPIClient)
+    assert client is not get_github_client()
+    assert client.headers["Authorization"] == "token other-token"
+
+
 @pytest.mark.asyncio
 async def test_rate_limit_wait_time_from_retry_after(mock_settings):
     from app.utils.github import GitHubAPIClient

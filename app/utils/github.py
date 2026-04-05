@@ -103,14 +103,16 @@ class GitHubAPIClient:
         **kwargs,
     ) -> GitHubAPIResult:
         context = context or {}
-        kwargs.setdefault("timeout", self.DEFAULT_TIMEOUT)
+        request_kwargs = dict(kwargs)
+        request_kwargs.setdefault("timeout", self.DEFAULT_TIMEOUT)
         retries = max_retries if max_retries is not None else self.DEFAULT_MAX_RETRIES
+        headers = {**self.headers, **request_kwargs.pop("headers", {})}
 
         async with httpx.AsyncClient() as client:
             for attempt in range(retries + 1):
                 try:
                     response = await getattr(client, method)(
-                        url, headers=self.headers, **kwargs
+                        url, headers=headers, **request_kwargs
                     )
 
                     if self._is_rate_limit_error(response):
@@ -203,6 +205,12 @@ def get_github_actions_client() -> GitHubAPIClient:
     if _github_actions_client is None:
         _github_actions_client = GitHubAPIClient(settings.github_token)
     return _github_actions_client
+
+
+def get_github_client_for_token(token: str | None = None) -> GitHubAPIClient:
+    if not token or token == settings.github_status_token:
+        return get_github_client()
+    return GitHubAPIClient(token)
 
 
 async def update_commit_status(

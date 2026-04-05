@@ -573,8 +573,9 @@ async def test_fetch_flathub_json_success():
         "https://api.github.com/repos/test-owner/test-repo/contents/flathub.json?ref=abc123",
         headers={
             "Accept": "application/vnd.github.raw+json",
-            "Authorization": "Bearer test-token",
+            "Authorization": "token test-token",
         },
+        timeout=10.0,
     )
 
 
@@ -1083,12 +1084,21 @@ async def test_create_pipeline_comment():
     mock_db.get.return_value = mock_pipeline
 
     mock_get_db = create_mock_get_db(mock_db)
+    mock_pr_response = MagicMock()
+    mock_pr_response.json.return_value = {
+        "head": {"sha": "fedcba654321"},
+        "base": {"ref": "master"},
+        "state": "open",
+    }
+    mock_github_client = AsyncMock()
+    mock_github_client.request.return_value = mock_pr_response
 
     with (
         patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
         patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
         patch("app.routes.webhooks.get_db", mock_get_db),
         patch("app.pipelines.build.get_db", mock_get_db),
+        patch("app.routes.webhooks.get_github_client", return_value=mock_github_client),
     ):
         from app.routes.webhooks import create_pipeline
 

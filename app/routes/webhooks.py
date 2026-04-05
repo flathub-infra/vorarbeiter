@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import re
@@ -21,10 +22,11 @@ from app.utils.github import (
     add_issue_comment,
     close_github_issue,
     create_pr_comment,
-    update_commit_status,
-    is_issue_edited,
-    get_workflow_run_title,
     get_github_client,
+    get_github_client_for_token,
+    get_workflow_run_title,
+    is_issue_edited,
+    update_commit_status,
 )
 
 logger = structlog.get_logger(__name__)
@@ -349,21 +351,26 @@ async def fetch_flathub_json(
     github_token: str | None = None,
 ) -> dict[str, Any] | None:
     url = f"https://api.github.com/repos/{repo}/contents/flathub.json?ref={ref}"
-    headers = {"Accept": "application/vnd.github.raw+json"}
-    if github_token:
-        headers["Authorization"] = f"Bearer {github_token}"
+    client = get_github_client_for_token(github_token)
 
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code == 404:
-                return {}
-            r.raise_for_status()
-            data = r.json()
-            if not isinstance(data, dict):
-                logger.warning("flathub.json is not a JSON object", repo=repo, ref=ref)
-                return {}
-            return data
+        response = await client.request(
+            "get",
+            url,
+            headers={"Accept": "application/vnd.github.raw+json"},
+            context={"repo": repo, "ref": ref},
+            raise_for_status=False,
+        )
+        if response is None:
+            return None
+        if response.status_code == 404:
+            return {}
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            logger.warning("flathub.json is not a JSON object", repo=repo, ref=ref)
+            return {}
+        return data
     except json.JSONDecodeError as err:
         logger.warning(
             "Failed to decode flathub.json", error=str(err), repo=repo, ref=ref
@@ -375,6 +382,38 @@ async def fetch_flathub_json(
             error=str(err),
             repo=repo,
             ref=ref,
+        )
+        return None
+
+
+async def get_pr_files(
+    repo: str, number: int, github_token: str | None = None
+) -> list[dict] | None:
+    client = get_github_client_for_token(github_token)
+
+    try:
+        response = await client.request(
+            "get",
+            f"https://api.github.com/repos/{repo}/pulls/{number}/files",
+            context={"repo": repo, "pr_number": number},
+        )
+        if response is None:
+            return None
+        files = response.json()
+        if not isinstance(files, list):
+            logger.warning(
+                "PR files response is not a list",
+                repo=repo,
+                pr_number=number,
+            )
+            return None
+        return files
+    except (httpx.HTTPError, ValueError) as err:
+        logger.error(
+            "Error fetching PR file details from GitHub",
+            error=str(err),
+            repo=repo,
+            pr_number=number,
         )
         return None
 
@@ -416,8 +455,10 @@ async def check_eol_only_change(
     head_ref: str,
     github_token: str | None = None,
 ) -> tuple[bool, dict[str, str] | None]:
-    base_json = await fetch_flathub_json(repo, base_ref, github_token)
-    head_json = await fetch_flathub_json(repo, head_ref, github_token)
+    base_json, head_json = await asyncio.gather(
+        fetch_flathub_json(repo, base_ref, github_token),
+        fetch_flathub_json(repo, head_ref, github_token),
+    )
     if base_json is None or head_json is None:
         return False, None
 
@@ -437,23 +478,8 @@ async def is_eol_only_pr(
     if not (repo and number and base_ref and head_ref):
         return False, None
 
-    url = f"https://api.github.com/repos/{repo}/pulls/{number}/files"
-    headers = {}
-    if github_token:
-        headers["Authorization"] = f"Bearer {github_token}"
-
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, headers=headers)
-            r.raise_for_status()
-            files = r.json()
-    except (httpx.HTTPError, ValueError) as err:
-        logger.error(
-            "Error fetching PR file details from GitHub",
-            error=str(err),
-            repo=repo,
-            pr_number=number,
-        )
+    files = await get_pr_files(repo, number, github_token)
+    if files is None:
         return False, None
 
     if not files or len(files) != 1:
@@ -480,16 +506,17 @@ async def is_eol_only_push(
     if before == zero_sha or after == zero_sha:
         return False, None
 
-    url = f"https://api.github.com/repos/{repo}/compare/{before}...{after}"
-    headers = {}
-    if github_token:
-        headers["Authorization"] = f"Bearer {github_token}"
+    client = get_github_client_for_token(github_token)
 
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, headers=headers)
-            r.raise_for_status()
-            comparison = r.json()
+        response = await client.request(
+            "get",
+            f"https://api.github.com/repos/{repo}/compare/{before}...{after}",
+            context={"repo": repo, "before": before, "after": after},
+        )
+        if response is None:
+            return False, None
+        comparison = response.json()
     except (httpx.HTTPError, ValueError) as err:
         logger.error(
             "Error fetching compare details from GitHub", error=str(err), repo=repo
@@ -1005,35 +1032,34 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
             pr_ref = f"refs/pull/{issue_number}/head"
             pr_target_branch = "master"
-
-            github_api_url = f"https://api.github.com/repos/{repo}/pulls/{issue_number}"
-            headers = {
-                "Accept": "application/vnd.github.v3+json",
-                "Authorization": f"token {settings.github_status_token}",
-            }
+            github_client = get_github_client()
 
             try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(github_api_url, headers=headers)
-                    response.raise_for_status()
-                    pr_data = response.json()
-                    sha = pr_data.get("head", {}).get("sha")
-                    pr_target_branch = pr_data.get("base", {}).get("ref", "master")
+                response = await github_client.request(
+                    "get",
+                    f"https://api.github.com/repos/{repo}/pulls/{issue_number}",
+                    context={"repo": repo, "pr_number": issue_number},
+                )
+                if response is None:
+                    return None
+                pr_data = response.json()
+                sha = pr_data.get("head", {}).get("sha")
+                pr_target_branch = pr_data.get("base", {}).get("ref", "master")
 
-                    pr_state = pr_data.get("state")
-                    if pr_state in ["closed", "merged"]:
-                        logger.info(
-                            "PR is closed/merged, ignoring 'bot, build' command",
-                            pr_number=issue_number,
-                            repo=repo,
-                            pr_state=pr_state,
-                        )
-                        await create_pr_comment(
-                            git_repo=repo,
-                            pr_number=issue_number,
-                            comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
-                        )
-                        return None
+                pr_state = pr_data.get("state")
+                if pr_state in ["closed", "merged"]:
+                    logger.info(
+                        "PR is closed/merged, ignoring 'bot, build' command",
+                        pr_number=issue_number,
+                        repo=repo,
+                        pr_state=pr_state,
+                    )
+                    await create_pr_comment(
+                        git_repo=repo,
+                        pr_number=issue_number,
+                        comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
+                    )
+                    return None
             except httpx.RequestError as e:
                 logger.error(
                     "Error fetching PR details from GitHub",
