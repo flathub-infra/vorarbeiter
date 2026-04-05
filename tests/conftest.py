@@ -13,6 +13,7 @@ from app.main import app
 from app.config import settings
 from app.database import engine as app_engine
 from app.models import Base
+import app.utils.flat_manager as flat_manager_module
 import app.utils.github as github_module
 
 
@@ -30,9 +31,11 @@ def override_settings():
 def reset_github_clients():
     github_module._github_client = None
     github_module._github_actions_client = None
+    flat_manager_module._client = None
     yield
     github_module._github_client = None
     github_module._github_actions_client = None
+    flat_manager_module._client = None
 
 
 @pytest.fixture
@@ -123,6 +126,7 @@ class MockHttpxClient:
     def patch(self, target: str = "httpx.AsyncClient"):
         """Patch httpx.AsyncClient with this mock."""
         with patch(target) as mock_class:
+            mock_class.return_value = self._client
             mock_class.return_value.__aenter__.return_value = self._client
             yield self
 

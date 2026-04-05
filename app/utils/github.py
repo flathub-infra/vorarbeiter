@@ -106,9 +106,9 @@ class GitHubAPIClient:
         kwargs.setdefault("timeout", self.DEFAULT_TIMEOUT)
         retries = max_retries if max_retries is not None else self.DEFAULT_MAX_RETRIES
 
-        for attempt in range(retries + 1):
-            try:
-                async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient() as client:
+            for attempt in range(retries + 1):
+                try:
                     response = await getattr(client, method)(
                         url, headers=self.headers, **kwargs
                     )
@@ -131,56 +131,56 @@ class GitHubAPIClient:
                     if raise_for_status:
                         response.raise_for_status()
                     return GitHubAPIResult(response=response)
-            except httpx.RequestError as e:
-                if attempt < retries:
-                    delay = min(2**attempt, 2)
-                    logger.warning(
-                        "Request error, retrying",
-                        url=url,
-                        error=str(e),
-                        attempt=attempt + 1,
-                        max_retries=retries,
-                        delay_seconds=delay,
-                        **context,
+                except httpx.RequestError as e:
+                    if attempt < retries:
+                        delay = min(2**attempt, 2)
+                        logger.warning(
+                            "Request error, retrying",
+                            url=url,
+                            error=str(e),
+                            attempt=attempt + 1,
+                            max_retries=retries,
+                            delay_seconds=delay,
+                            **context,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    logger.error("Request error", url=url, error=str(e), **context)
+                    return GitHubAPIResult(
+                        response=None,
+                        should_queue=True,
+                        error_type="network_error",
                     )
-                    await asyncio.sleep(delay)
-                    continue
-                logger.error("Request error", url=url, error=str(e), **context)
-                return GitHubAPIResult(
-                    response=None,
-                    should_queue=True,
-                    error_type="network_error",
-                )
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code >= 500 and attempt < retries:
-                    delay = min(2**attempt, 2)
-                    logger.warning(
-                        "Server error, retrying",
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code >= 500 and attempt < retries:
+                        delay = min(2**attempt, 2)
+                        logger.warning(
+                            "Server error, retrying",
+                            url=url,
+                            status_code=e.response.status_code,
+                            attempt=attempt + 1,
+                            max_retries=retries,
+                            delay_seconds=delay,
+                            **context,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    logger.error(
+                        "HTTP error",
                         url=url,
                         status_code=e.response.status_code,
-                        attempt=attempt + 1,
-                        max_retries=retries,
-                        delay_seconds=delay,
+                        response_text=e.response.text,
                         **context,
                     )
-                    await asyncio.sleep(delay)
-                    continue
-                logger.error(
-                    "HTTP error",
-                    url=url,
-                    status_code=e.response.status_code,
-                    response_text=e.response.text,
-                    **context,
-                )
-                should_queue = e.response.status_code >= 500
-                return GitHubAPIResult(
-                    response=None,
-                    should_queue=should_queue,
-                    error_type="server_error" if should_queue else "client_error",
-                )
-            except Exception as e:
-                logger.error("Unexpected error", url=url, error=str(e), **context)
-                return GitHubAPIResult(response=None, should_queue=False)
+                    should_queue = e.response.status_code >= 500
+                    return GitHubAPIResult(
+                        response=None,
+                        should_queue=should_queue,
+                        error_type="server_error" if should_queue else "client_error",
+                    )
+                except Exception as e:
+                    logger.error("Unexpected error", url=url, error=str(e), **context)
+                    return GitHubAPIResult(response=None, should_queue=False)
 
         return GitHubAPIResult(
             response=None, should_queue=True, error_type="max_retries"
@@ -514,10 +514,23 @@ async def is_issue_edited(git_repo: str, issue_number: int) -> bool | None:
     )
 
     try:
-        data = client.execute(
+        data = await asyncio.to_thread(
+            client.execute,
             gql_check_issue_edited,
-            variable_values={"owner": owner, "name": name, "number": issue_number},
+            variable_values={
+                "owner": owner,
+                "name": name,
+                "number": issue_number,
+            },
         )
+        if not isinstance(data, dict):
+            logger.error(
+                "Unexpected GraphQL response type while checking issue edit status",
+                git_repo=git_repo,
+                issue_number=issue_number,
+                response_type=type(data).__name__,
+            )
+            return None
 
         issue_data = data.get("repository", {}).get("issue")
         if not issue_data:

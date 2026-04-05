@@ -76,6 +76,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
     mock_pipeline.id = pipeline_id
     mock_pipeline.status = PipelineStatus.PENDING
     mock_pipeline.app_id = "org.flathub.Test"
+    mock_pipeline.flat_manager_repo = None
     mock_pipeline.params = {"repo": "test", "branch": "main"}
 
     async def mock_get(model_class, model_id):
@@ -95,16 +96,17 @@ async def test_start_pipeline(build_pipeline, mock_db):
     mock_httpx_response.json.return_value = {"id": 12345, "token": "test-token"}
 
     mock_httpx_client = AsyncMock()
-    mock_httpx_client.__aenter__.return_value.post.return_value = mock_httpx_response
+    mock_httpx_client.request = AsyncMock(return_value=mock_httpx_response)
 
     with patch("app.pipelines.build.get_db", mock_get_db):
         with patch("httpx.AsyncClient", return_value=mock_httpx_client):
             with patch("app.pipelines.build.get_app_p90_build_time", return_value=None):
+                build_pipeline.flat_manager.client = mock_httpx_client
                 result = await build_pipeline.start_pipeline(pipeline_id)
 
     assert result.status == PipelineStatus.RUNNING
     assert build_pipeline.provider.dispatch.called
-    assert mock_httpx_client.__aenter__.return_value.post.call_count == 2
+    assert mock_httpx_client.request.call_count == 2
 
     dispatch_call_args = build_pipeline.provider.dispatch.call_args[0]
     job_data = dispatch_call_args[2]
@@ -162,9 +164,9 @@ async def test_start_pipeline_branch_mapping(
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"id": 12345, "token": "test-token"}
 
-    mock_httpx_instance = MagicMock()
-    mock_httpx_instance.post = AsyncMock(return_value=mock_response)
-    mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+    mock_httpx_instance = AsyncMock()
+    mock_httpx_instance.request = AsyncMock(return_value=mock_response)
+    mock_httpx_client.return_value = mock_httpx_instance
 
     build_pipeline = BuildPipeline()
     build_pipeline.provider = mock_github_provider
@@ -175,15 +177,17 @@ async def test_start_pipeline_branch_mapping(
     assert mock_pipeline.status == PipelineStatus.RUNNING
     assert mock_pipeline.started_at is not None
 
-    assert mock_httpx_instance.post.call_count == 2
-    first_call_args = mock_httpx_instance.post.call_args_list[0]
-    post_url = first_call_args[0][0]
+    assert mock_httpx_instance.request.call_count == 2
+    first_call_args = mock_httpx_instance.request.call_args_list[0]
+    assert first_call_args[0][0] == "POST"
+    post_url = first_call_args[0][1]
     post_data = first_call_args[1]["json"]
     assert "build" in post_url
     assert post_data["repo"] == expected_flat_manager_repo
 
-    second_call_args = mock_httpx_instance.post.call_args_list[1]
-    token_url = second_call_args[0][0]
+    second_call_args = mock_httpx_instance.request.call_args_list[1]
+    assert second_call_args[0][0] == "POST"
+    token_url = second_call_args[0][1]
     token_data = second_call_args[1]["json"]
     assert "token_subset" in token_url
     assert token_data["name"] == "upload"
@@ -567,12 +571,12 @@ async def test_start_pipeline_stores_default_build_type():
     mock_db_session = AsyncMock(spec=AsyncSession)
     mock_db_session.get.return_value = mock_pipeline
 
-    mock_httpx_instance = MagicMock()
-    mock_httpx_instance.post = AsyncMock()
+    mock_httpx_instance = AsyncMock()
+    mock_httpx_instance.request = AsyncMock()
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"id": 12345, "token": "test-token"}
-    mock_httpx_instance.post.return_value = mock_response
+    mock_httpx_instance.request.return_value = mock_response
 
     mock_github_provider = AsyncMock(spec=GitHubActionsService)
     mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
@@ -582,9 +586,7 @@ async def test_start_pipeline_stores_default_build_type():
             with patch("app.pipelines.build.get_app_p90_build_time") as mock_p90:
                 mock_p90.return_value = None
                 mock_get_db.return_value.__aenter__.return_value = mock_db_session
-                mock_httpx_client.return_value.__aenter__.return_value = (
-                    mock_httpx_instance
-                )
+                mock_httpx_client.return_value = mock_httpx_instance
 
                 build_pipeline = BuildPipeline()
                 build_pipeline.provider = mock_github_provider
@@ -611,12 +613,12 @@ async def test_start_pipeline_stores_hardcoded_build_type():
     mock_db_session = AsyncMock(spec=AsyncSession)
     mock_db_session.get.return_value = mock_pipeline
 
-    mock_httpx_instance = MagicMock()
-    mock_httpx_instance.post = AsyncMock()
+    mock_httpx_instance = AsyncMock()
+    mock_httpx_instance.request = AsyncMock()
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"id": 12345, "token": "test-token"}
-    mock_httpx_instance.post.return_value = mock_response
+    mock_httpx_instance.request.return_value = mock_response
 
     mock_github_provider = AsyncMock(spec=GitHubActionsService)
     mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
@@ -624,7 +626,7 @@ async def test_start_pipeline_stores_hardcoded_build_type():
     with patch("app.pipelines.build.get_db") as mock_get_db:
         with patch("httpx.AsyncClient") as mock_httpx_client:
             mock_get_db.return_value.__aenter__.return_value = mock_db_session
-            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+            mock_httpx_client.return_value = mock_httpx_instance
 
             build_pipeline = BuildPipeline()
             build_pipeline.provider = mock_github_provider
@@ -650,12 +652,12 @@ async def test_start_pipeline_stores_parameter_build_type():
     mock_db_session = AsyncMock(spec=AsyncSession)
     mock_db_session.get.return_value = mock_pipeline
 
-    mock_httpx_instance = MagicMock()
-    mock_httpx_instance.post = AsyncMock()
+    mock_httpx_instance = AsyncMock()
+    mock_httpx_instance.request = AsyncMock()
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"id": 12345, "token": "test-token"}
-    mock_httpx_instance.post.return_value = mock_response
+    mock_httpx_instance.request.return_value = mock_response
 
     mock_github_provider = AsyncMock(spec=GitHubActionsService)
     mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
@@ -665,9 +667,7 @@ async def test_start_pipeline_stores_parameter_build_type():
             with patch("app.pipelines.build.get_app_p90_build_time") as mock_p90:
                 mock_p90.return_value = None
                 mock_get_db.return_value.__aenter__.return_value = mock_db_session
-                mock_httpx_client.return_value.__aenter__.return_value = (
-                    mock_httpx_instance
-                )
+                mock_httpx_client.return_value = mock_httpx_instance
 
                 build_pipeline = BuildPipeline()
                 build_pipeline.provider = mock_github_provider
@@ -694,12 +694,12 @@ async def test_start_pipeline_reuses_stored_metadata():
     mock_db_session = AsyncMock(spec=AsyncSession)
     mock_db_session.get.return_value = mock_pipeline
 
-    mock_httpx_instance = MagicMock()
-    mock_httpx_instance.post = AsyncMock()
+    mock_httpx_instance = AsyncMock()
+    mock_httpx_instance.request = AsyncMock()
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"id": 12345, "token": "test-token"}
-    mock_httpx_instance.post.return_value = mock_response
+    mock_httpx_instance.request.return_value = mock_response
 
     mock_github_provider = AsyncMock(spec=GitHubActionsService)
     mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
@@ -711,7 +711,7 @@ async def test_start_pipeline_reuses_stored_metadata():
         patch("app.pipelines.build.get_flat_manager_repo") as mock_repo_lookup,
     ):
         mock_get_db.return_value.__aenter__.return_value = mock_db_session
-        mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+        mock_httpx_client.return_value = mock_httpx_instance
 
         build_pipeline = BuildPipeline()
         build_pipeline.provider = mock_github_provider
@@ -759,13 +759,13 @@ async def test_start_pipeline_p90_routing(
     mock_db_session.get.return_value = mock_pipeline
     mock_get_db.return_value.__aenter__.return_value = mock_db_session
 
-    mock_httpx_instance = MagicMock()
-    mock_httpx_instance.post = AsyncMock()
+    mock_httpx_instance = AsyncMock()
+    mock_httpx_instance.request = AsyncMock()
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"id": 12345, "token": "test-token"}
-    mock_httpx_instance.post.return_value = mock_response
-    mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+    mock_httpx_instance.request.return_value = mock_response
+    mock_httpx_client.return_value = mock_httpx_instance
 
     mock_github_provider = AsyncMock(spec=GitHubActionsService)
     mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
