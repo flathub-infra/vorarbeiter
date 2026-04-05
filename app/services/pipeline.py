@@ -12,6 +12,11 @@ from app.schemas.pipelines import (
     ReprocheckStatus,
 )
 from app.services.job_monitor import JobMonitor
+from app.services.reprocheck_notification import (
+    REPROCHECK_BUILD_FAILED,
+    REPROCHECK_REPRODUCIBLE,
+    REPROCHECK_UNREPRODUCIBLE,
+)
 from app.utils.flat_manager import get_flat_manager_client
 
 logger = structlog.get_logger(__name__)
@@ -59,9 +64,9 @@ class PipelineService:
 
         if reprocheck_status:
             status_code_map = {
-                ReprocheckStatus.REPRODUCIBLE: "0",
-                ReprocheckStatus.FAILURE: "1",
-                ReprocheckStatus.UNREPRODUCIBLE: "42",
+                ReprocheckStatus.REPRODUCIBLE: REPROCHECK_REPRODUCIBLE,
+                ReprocheckStatus.FAILURE: REPROCHECK_BUILD_FAILED,
+                ReprocheckStatus.UNREPRODUCIBLE: REPROCHECK_UNREPRODUCIBLE,
             }
             status_code = status_code_map[reprocheck_status]
             stmt = stmt.where(

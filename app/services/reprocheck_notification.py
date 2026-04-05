@@ -16,6 +16,10 @@ from app.utils.github import (
 
 logger = structlog.get_logger(__name__)
 
+REPROCHECK_REPRODUCIBLE = "0"
+REPROCHECK_BUILD_FAILED = "1"
+REPROCHECK_UNREPRODUCIBLE = "42"
+
 
 class ReprocheckNotificationService:
     async def handle_reprocheck_result(
@@ -86,10 +90,10 @@ class ReprocheckNotificationService:
             await self._handle_success(db, app_id, git_repo, sha, log_url)
 
     def _is_failure(self, status_code: str) -> bool:
-        return status_code != "0"
+        return status_code != REPROCHECK_REPRODUCIBLE
 
     def _get_failure_description(self, status_code: str) -> str:
-        if status_code == "42":
+        if status_code == REPROCHECK_UNREPRODUCIBLE:
             return "not reproducible"
         return "failed to build"
 

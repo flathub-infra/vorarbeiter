@@ -12,6 +12,11 @@ from sqlalchemy.orm import aliased
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
+from app.services.reprocheck_notification import (
+    REPROCHECK_BUILD_FAILED,
+    REPROCHECK_REPRODUCIBLE,
+    REPROCHECK_UNREPRODUCIBLE,
+)
 from app.status_banner import get_status_banner
 
 dashboard_router = APIRouter(tags=["dashboard"])
@@ -309,20 +314,28 @@ async def get_reproducibility_data(
             )
 
             if status_filter:
-                if status_filter == "reproducible" and status_code != "0":
+                if (
+                    status_filter == "reproducible"
+                    and status_code != REPROCHECK_REPRODUCIBLE
+                ):
                     continue
-                elif status_filter == "unreproducible" and status_code != "42":
+                elif (
+                    status_filter == "unreproducible"
+                    and status_code != REPROCHECK_UNREPRODUCIBLE
+                ):
                     continue
-                elif status_filter == "failed" and status_code != "1":
+                elif (
+                    status_filter == "failed" and status_code != REPROCHECK_BUILD_FAILED
+                ):
                     continue
                 elif status_filter == "none" and status_code is not None:
                     continue
 
-            if status_code == "0":
+            if status_code == REPROCHECK_REPRODUCIBLE:
                 reproducible.append(entry)
-            elif status_code == "42":
+            elif status_code == REPROCHECK_UNREPRODUCIBLE:
                 unreproducible.append(entry)
-            elif status_code == "1":
+            elif status_code == REPROCHECK_BUILD_FAILED:
                 failed_to_rebuild.append(entry)
             else:
                 unknown.append(entry)

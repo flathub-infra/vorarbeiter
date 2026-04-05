@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
-from app.utils.flat_manager import get_flat_manager_client
+from app.utils.flat_manager import PublishedState, RepoState, get_flat_manager_client
 
 logger = structlog.get_logger(__name__)
 
@@ -231,10 +231,10 @@ class PublishingService:
         result: PublishResult,
         now: datetime,
     ) -> None:
-        published_state = build_data["published_state"]
-        repo_state = build_data["repo_state"]
+        published_state = PublishedState(build_data["published_state"])
+        repo_state = RepoState(build_data["repo_state"])
 
-        if published_state == 2:  # PublishedState::Published
+        if published_state == PublishedState.PUBLISHED:
             if pipeline.status != PipelineStatus.PUBLISHED:
                 logger.info(
                     "Pipeline already marked as published in flat-manager",
@@ -247,7 +247,7 @@ class PublishingService:
                 result.published.append(str(pipeline.id))
             return
 
-        if published_state == 1:  # PublishedState::Publishing
+        if published_state == PublishedState.PUBLISHING:
             logger.info(
                 "Pipeline is already being published, skipping",
                 pipeline_id=str(pipeline.id),
@@ -255,9 +255,9 @@ class PublishingService:
             )
             return
 
-        if repo_state == 3:  # RepoState::Failed
+        if repo_state == RepoState.FAILED:
             logger.warning(
-                "Pipeline failed flat-manager validation (repo_state 3)",
+                "Pipeline failed flat-manager validation",
                 pipeline_id=str(pipeline.id),
                 build_id=pipeline.build_id,
             )
@@ -266,12 +266,16 @@ class PublishingService:
             result.errors.append(
                 {
                     "pipeline_id": str(pipeline.id),
-                    "error": "Build failed in flat-manager: repo_state 3",
+                    "error": "Build failed in flat-manager: repo_state FAILED",
                 }
             )
             return
 
-        if repo_state in [0, 1, 6]:  # Uploading, Committing, Validating
+        if repo_state in [
+            RepoState.UPLOADING,
+            RepoState.COMMITTING,
+            RepoState.VALIDATING,
+        ]:
             logger.info(
                 "Pipeline is still processing in flat-manager, skipping for this run",
                 pipeline_id=str(pipeline.id),
@@ -280,7 +284,7 @@ class PublishingService:
             )
             return
 
-        if repo_state == 2:  # RepoState::Ready
+        if repo_state == RepoState.READY:
             await self._try_publish_build(pipeline, result, now)
             return
 

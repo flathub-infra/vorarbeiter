@@ -295,7 +295,7 @@ async def test_handle_build_state_failed(publishing_service):
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at == now
     assert len(result.errors) == 1
-    assert "repo_state 3" in result.errors[0]["error"]
+    assert "repo_state FAILED" in result.errors[0]["error"]
 
 
 @pytest.mark.asyncio

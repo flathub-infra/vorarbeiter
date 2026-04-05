@@ -35,6 +35,22 @@ class JobKind(IntEnum):
     PRUNE = 5
 
 
+class PublishedState(IntEnum):
+    UNPUBLISHED = 0
+    PUBLISHING = 1
+    PUBLISHED = 2
+
+
+class RepoState(IntEnum):
+    UPLOADING = 0
+    COMMITTING = 1
+    READY = 2
+    FAILED = 3
+    PURGING = 4
+    PURGED = 5
+    VALIDATING = 6
+
+
 class BuildResponse(TypedDict):
     id: int
     status: str

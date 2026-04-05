@@ -387,7 +387,7 @@ async def test_publish_pipelines_still_processing(db_session_maker, client):
 
 @pytest.mark.asyncio
 async def test_publish_pipelines_failed_validation(db_session_maker, client):
-    """Test that pipelines are marked FAILED if Flat-Manager repo_state is 3."""
+    """Test that pipelines are marked FAILED if Flat-Manager repo_state is FAILED."""
     session_maker = db_session_maker
     now = datetime.now()
     pipeline = Pipeline(
@@ -432,7 +432,7 @@ async def test_publish_pipelines_failed_validation(db_session_maker, client):
         assert len(result.superseded) == 0
         assert len(result.errors) == 1
         assert result.errors[0]["pipeline_id"] == str(pipeline.id)
-        assert "repo_state 3" in result.errors[0]["error"]
+        assert "repo_state FAILED" in result.errors[0]["error"]
 
         # Verify the pipeline status is now FAILED
         async with session_maker() as session:
