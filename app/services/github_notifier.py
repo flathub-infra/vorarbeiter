@@ -8,9 +8,9 @@ from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
     create_github_issue,
     create_pr_comment,
-    update_commit_status,
-    get_linter_warning_messages,
     get_build_job_arches,
+    get_linter_warning_messages,
+    update_commit_status,
 )
 
 logger = structlog.get_logger(__name__)
@@ -234,10 +234,10 @@ class GitHubNotifier:
             elif status == "commit_failure":
                 status = "failure"
                 comment = (
-                    f"❌ Test build failed. "
-                    f"{f'The [commit job]({settings.flat_manager_url}/status/{pipeline.commit_job_id}) failed.' if pipeline.commit_job_id else 'The commit job failed.'} "
+                    f"❌ {f'The [commit job]({settings.flat_manager_url}/status/{pipeline.commit_job_id}) failed.' if pipeline.commit_job_id else 'The commit job failed.'} "
                     f"This may indicate [an infrastructure issue](https://status.flathub.org).\n\n"
-                    f"{footnote}"
+                    f"{footnote}\n\n"
+                    "cc @barthalion"
                 )
 
             if comment:
