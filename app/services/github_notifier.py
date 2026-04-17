@@ -404,6 +404,72 @@ class GitHubNotifier:
                 error=str(e),
             )
 
+    async def create_validation_failure_issue(
+        self, pipeline: Pipeline, repo_state_reason: str | None
+    ) -> None:
+        if pipeline.flat_manager_repo != "stable":
+            return
+
+        git_repo = pipeline.params.get("repo")
+        if not git_repo:
+            logger.error(
+                "Missing git_repo in params. Cannot create issue for validation failure",
+                pipeline_id=str(pipeline.id),
+            )
+            return
+
+        try:
+            app_id = pipeline.app_id
+            sha = pipeline.params.get("sha")
+            repo = pipeline.flat_manager_repo.capitalize()
+            validation_reason = (
+                repo_state_reason or "Build failed validation in flat-manager."
+            )
+
+            title = f"{repo} publish validation failed for {app_id}"
+
+            body = (
+                f"The build for `{app_id}` failed validation during publication in the "
+                f"{pipeline.flat_manager_repo} repository.\n\n"
+            )
+            body += "**Build Information:**\n"
+            body += f"- Commit SHA: {sha}\n"
+
+            if pipeline.build_id:
+                body += f"- Build ID: {pipeline.build_id}\n"
+
+            if pipeline.log_url:
+                body += f"- Build log: {pipeline.log_url}\n"
+
+            body += "\n**Validation Failure:**\n```\n"
+            body += f"{validation_reason}\n```\n"
+            body += "\ncc @flathub/build-moderation"
+            body += (
+                "\n\nThis issue is being opened for tracking by Flathub admins and may indicate "
+                "an [infrastructure problem](https://status.flathub.org). Please do not close or modify this until "
+                "an admin has responded.\n"
+            )
+
+            result = await create_github_issue(
+                git_repo=git_repo,
+                title=title,
+                body=body,
+            )
+
+            if result:
+                issue_url, _ = result
+                logger.info(
+                    "Successfully created GitHub issue for validation failure",
+                    pipeline_id=str(pipeline.id),
+                    issue_url=issue_url,
+                )
+        except Exception as e:
+            logger.error(
+                "Failed to create GitHub issue for validation failure",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
+
     async def handle_build_completion(
         self,
         pipeline: Pipeline,

@@ -404,10 +404,23 @@ async def test_publish_pipelines_failed_validation(db_session_maker, client):
         session.add(pipeline)
         await session.commit()
 
-    with patch.object(publishing_service, "flat_manager") as mock_client:
+    with (
+        patch.object(publishing_service, "flat_manager") as mock_client,
+        patch.object(
+            publishing_service,
+            "_create_validation_failure_issue",
+            new_callable=AsyncMock,
+        ) as mock_issue,
+    ):
         # Mock get_build_info to return "Failed" repo_state
         mock_client.get_build_info = AsyncMock(
-            return_value={"build": {"repo_state": 3, "published_state": 0}}
+            return_value={
+                "build": {
+                    "repo_state": 3,
+                    "published_state": 0,
+                    "repo_state_reason": "1 out of 1 checks failed (flathub-hooks)",
+                }
+            }
         )
         mock_client.publish = AsyncMock()  # Publish should NOT be called
         mock_client.purge = AsyncMock()
@@ -433,6 +446,11 @@ async def test_publish_pipelines_failed_validation(db_session_maker, client):
         assert len(result.errors) == 1
         assert result.errors[0]["pipeline_id"] == str(pipeline.id)
         assert "repo_state FAILED" in result.errors[0]["error"]
+        mock_issue.assert_awaited_once()
+        await_args = mock_issue.await_args
+        assert await_args is not None
+        assert await_args.args[0].id == pipeline.id
+        assert await_args.args[1] == "1 out of 1 checks failed (flathub-hooks)"
 
         # Verify the pipeline status is now FAILED
         async with session_maker() as session:

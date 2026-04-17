@@ -24,6 +24,24 @@ class PublishingService:
     def __init__(self) -> None:
         self.flat_manager = get_flat_manager_client()
 
+    async def _create_validation_failure_issue(
+        self, pipeline: Pipeline, repo_state_reason: str | None
+    ) -> None:
+        try:
+            from app.services.github_notifier import GitHubNotifier
+
+            github_notifier = GitHubNotifier()
+            await github_notifier.create_validation_failure_issue(
+                pipeline, repo_state_reason
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to create GitHub issue for validation failure",
+                pipeline_id=str(pipeline.id),
+                build_id=pipeline.build_id,
+                error=str(e),
+            )
+
     async def publish_pipelines(self, db: AsyncSession) -> PublishResult:
         logger.info("Starting pipeline publishing process")
 
@@ -256,13 +274,16 @@ class PublishingService:
             return
 
         if repo_state == RepoState.FAILED:
+            repo_state_reason = build_data.get("repo_state_reason")
             logger.warning(
                 "Pipeline failed flat-manager validation",
                 pipeline_id=str(pipeline.id),
                 build_id=pipeline.build_id,
+                repo_state_reason=repo_state_reason,
             )
             pipeline.status = PipelineStatus.FAILED
             pipeline.finished_at = now
+            await self._create_validation_failure_issue(pipeline, repo_state_reason)
             result.errors.append(
                 {
                     "pipeline_id": str(pipeline.id),

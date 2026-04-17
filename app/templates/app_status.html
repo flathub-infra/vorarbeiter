@@ -103,6 +103,16 @@
         <tr>
             <td>
                 {% set target = pipeline.flat_manager_repo or 'stable' %}
+                {% set failed_target_url = none %}
+                {% if pipeline.update_repo_job_id %}
+                {% set failed_target_url = flat_manager_url ~ '/status/' ~ pipeline.update_repo_job_id %}
+                {% elif pipeline.publish_job_id %}
+                {% set failed_target_url = flat_manager_url ~ '/status/' ~ pipeline.publish_job_id %}
+                {% elif pipeline.commit_job_id %}
+                {% set failed_target_url = flat_manager_url ~ '/status/' ~ pipeline.commit_job_id %}
+                {% elif pipeline.log_url %}
+                {% set failed_target_url = pipeline.log_url %}
+                {% endif %}
                 {% if pipeline.status.value in ['committed', 'publishing'] %}
                 {% set badge_class = 'badge-' ~ pipeline.status.value ~ '-' ~ target %}
                 {% elif pipeline.status.value == 'succeeded' %}
@@ -116,6 +126,8 @@
                 <a href="{{ flat_manager_url }}/status/{{ pipeline.commit_job_id }}" target="_blank" class="badge {{ badge_class }}">{{ pipeline.status.value }}</a>
                 {% elif pipeline.status.value == 'publishing' and pipeline.update_repo_job_id %}
                 <a href="{{ flat_manager_url }}/status/{{ pipeline.update_repo_job_id }}" target="_blank" class="badge {{ badge_class }}">{{ pipeline.status.value }}</a>
+                {% elif pipeline.status.value == 'failed' and failed_target_url %}
+                <a href="{{ failed_target_url }}" target="_blank" class="badge {{ badge_class }}">{{ pipeline.status.value }}</a>
                 {% else %}
                 <span class="badge {{ badge_class }}">{{ pipeline.status.value }}</span>
                 {% endif %}
