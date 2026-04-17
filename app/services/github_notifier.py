@@ -316,39 +316,30 @@ class GitHubNotifier:
                 error=str(e),
             )
 
-    async def create_stable_job_failure_issue(
+    async def _create_tracking_issue(
         self,
         pipeline: Pipeline,
-        job_type: str,
-        job_id: int,
-        job_response: dict | None = None,
+        title: str,
+        summary: str,
+        extra_sections: str,
+        *,
+        missing_repo_log_message: str,
+        failure_log_message: str,
+        log_context: dict[str, str | int] | None = None,
     ) -> None:
-        if pipeline.flat_manager_repo not in ["stable", "beta"]:
-            return
-
         git_repo = pipeline.params.get("repo")
         if not git_repo:
             logger.error(
-                "Missing git_repo in params. Cannot create issue for failed job",
+                missing_repo_log_message,
                 pipeline_id=str(pipeline.id),
-                job_type=job_type,
+                **(log_context or {}),
             )
             return
 
         try:
-            app_id = pipeline.app_id
             sha = pipeline.params.get("sha")
-            repo = pipeline.flat_manager_repo.capitalize()
 
-            job_type_display = {
-                "commit": "commit",
-                "publish": "publish",
-                "update-repo": "repository update",
-            }.get(job_type, job_type)
-
-            title = f"{repo} {job_type_display} job failed for {app_id}"
-
-            body = f"The {job_type} job for `{app_id}` failed in the {pipeline.flat_manager_repo} repository.\n\n"
+            body = f"{summary}\n\n"
             body += "**Build Information:**\n"
             body += f"- Commit SHA: {sha}\n"
 
@@ -358,24 +349,10 @@ class GitHubNotifier:
             if pipeline.log_url:
                 body += f"- Build log: {pipeline.log_url}\n"
 
-            body += "\n**Job Details:**\n"
-            body += f"- Job ID: {job_id}\n"
-            body += f"- Job status: {settings.flat_manager_url}/status/{job_id}\n"
-
-            if job_response and job_response.get("log"):
-                log_content = job_response["log"]
-                log_lines = log_content.strip().split("\n")
-
-                if len(log_lines) > 25:
-                    relevant_lines = log_lines[-25:]
-                    body += "\n**Error Details:**\n```\n"
-                    body += "...\n" + "\n".join(relevant_lines) + "\n```\n"
-                else:
-                    body += "\n**Error Details:**\n```\n"
-                    body += log_content + "\n```\n"
+            if extra_sections:
+                body += f"\n{extra_sections}"
 
             body += "\ncc @flathub/build-moderation"
-
             body += (
                 "\n\nThis issue is being opened for tracking by Flathub admins and may indicate "
                 "an [infrastructure problem](https://status.flathub.org). Please do not close or modify this until "
@@ -397,12 +374,64 @@ class GitHubNotifier:
                 )
         except Exception as e:
             logger.error(
-                "Failed to create GitHub issue for failed job",
+                failure_log_message,
                 pipeline_id=str(pipeline.id),
-                job_type=job_type,
-                job_id=job_id,
                 error=str(e),
+                **(log_context or {}),
             )
+
+    async def create_stable_job_failure_issue(
+        self,
+        pipeline: Pipeline,
+        job_type: str,
+        job_id: int,
+        job_response: dict | None = None,
+    ) -> None:
+        if pipeline.flat_manager_repo not in ["stable", "beta"]:
+            return
+
+        app_id = pipeline.app_id
+        repo = pipeline.flat_manager_repo.capitalize()
+
+        job_type_display = {
+            "commit": "commit",
+            "publish": "publish",
+            "update-repo": "repository update",
+        }.get(job_type, job_type)
+
+        title = f"{repo} {job_type_display} job failed for {app_id}"
+        summary = (
+            f"The {job_type} job for `{app_id}` failed in the "
+            f"{pipeline.flat_manager_repo} repository."
+        )
+
+        extra_sections = (
+            "**Job Details:**\n"
+            f"- Job ID: {job_id}\n"
+            f"- Job status: {settings.flat_manager_url}/status/{job_id}\n"
+        )
+
+        if job_response and job_response.get("log"):
+            log_content = job_response["log"]
+            log_lines = log_content.strip().split("\n")
+
+            if len(log_lines) > 25:
+                relevant_lines = log_lines[-25:]
+                extra_sections += "\n**Error Details:**\n```\n"
+                extra_sections += "...\n" + "\n".join(relevant_lines) + "\n```\n"
+            else:
+                extra_sections += "\n**Error Details:**\n```\n"
+                extra_sections += log_content + "\n```\n"
+
+        await self._create_tracking_issue(
+            pipeline,
+            title,
+            summary,
+            extra_sections,
+            missing_repo_log_message="Missing git_repo in params. Cannot create issue for failed job",
+            failure_log_message="Failed to create GitHub issue for failed job",
+            log_context={"job_type": job_type, "job_id": job_id},
+        )
 
     async def create_validation_failure_issue(
         self, pipeline: Pipeline, repo_state_reason: str | None
@@ -410,65 +439,27 @@ class GitHubNotifier:
         if pipeline.flat_manager_repo != "stable":
             return
 
-        git_repo = pipeline.params.get("repo")
-        if not git_repo:
-            logger.error(
-                "Missing git_repo in params. Cannot create issue for validation failure",
-                pipeline_id=str(pipeline.id),
-            )
-            return
+        app_id = pipeline.app_id
+        repo = pipeline.flat_manager_repo.capitalize()
+        validation_reason = (
+            repo_state_reason or "Build failed validation in flat-manager."
+        )
 
-        try:
-            app_id = pipeline.app_id
-            sha = pipeline.params.get("sha")
-            repo = pipeline.flat_manager_repo.capitalize()
-            validation_reason = (
-                repo_state_reason or "Build failed validation in flat-manager."
-            )
+        title = f"{repo} publish validation failed for {app_id}"
+        summary = (
+            f"The build for `{app_id}` failed validation during publication in the "
+            f"{pipeline.flat_manager_repo} repository."
+        )
+        extra_sections = f"**Validation Failure:**\n```\n{validation_reason}\n```\n"
 
-            title = f"{repo} publish validation failed for {app_id}"
-
-            body = (
-                f"The build for `{app_id}` failed validation during publication in the "
-                f"{pipeline.flat_manager_repo} repository.\n\n"
-            )
-            body += "**Build Information:**\n"
-            body += f"- Commit SHA: {sha}\n"
-
-            if pipeline.build_id:
-                body += f"- Build ID: {pipeline.build_id}\n"
-
-            if pipeline.log_url:
-                body += f"- Build log: {pipeline.log_url}\n"
-
-            body += "\n**Validation Failure:**\n```\n"
-            body += f"{validation_reason}\n```\n"
-            body += "\ncc @flathub/build-moderation"
-            body += (
-                "\n\nThis issue is being opened for tracking by Flathub admins and may indicate "
-                "an [infrastructure problem](https://status.flathub.org). Please do not close or modify this until "
-                "an admin has responded.\n"
-            )
-
-            result = await create_github_issue(
-                git_repo=git_repo,
-                title=title,
-                body=body,
-            )
-
-            if result:
-                issue_url, _ = result
-                logger.info(
-                    "Successfully created GitHub issue for validation failure",
-                    pipeline_id=str(pipeline.id),
-                    issue_url=issue_url,
-                )
-        except Exception as e:
-            logger.error(
-                "Failed to create GitHub issue for validation failure",
-                pipeline_id=str(pipeline.id),
-                error=str(e),
-            )
+        await self._create_tracking_issue(
+            pipeline,
+            title,
+            summary,
+            extra_sections,
+            missing_repo_log_message="Missing git_repo in params. Cannot create issue for validation failure",
+            failure_log_message="Failed to create GitHub issue for validation failure",
+        )
 
     async def handle_build_completion(
         self,
