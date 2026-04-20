@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import httpx
@@ -1042,7 +1043,7 @@ async def test_create_pipeline_comment():
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
 
-    comment_payload = dict(SAMPLE_COMMENT_PAYLOAD)
+    comment_payload: dict[str, Any] = dict(SAMPLE_COMMENT_PAYLOAD)
     comment_payload["issue"] = {
         "number": 42,
         "pull_request": {
@@ -1402,7 +1403,7 @@ async def test_receive_webhook_creates_pipeline(client, mock_db):
 )
 async def test_create_pipeline_admin_ping(flag_enabled, should_post):
     event_id = uuid.uuid4()
-    comment_payload = dict(SAMPLE_COMMENT_PAYLOAD)
+    comment_payload: dict[str, Any] = dict(SAMPLE_COMMENT_PAYLOAD)
     comment_payload["issue"] = {
         "number": 99,
         "pull_request": {
@@ -1526,7 +1527,7 @@ async def test_create_pipeline_disable_test_builds_pr(flag_enabled):
 )
 async def test_create_pipeline_disable_test_builds_bot_build(flag_enabled):
     event_id = uuid.uuid4()
-    comment_payload = dict(SAMPLE_COMMENT_PAYLOAD)
+    comment_payload: dict[str, Any] = dict(SAMPLE_COMMENT_PAYLOAD)
     comment_payload["issue"] = {
         "number": 99,
         "body": "",

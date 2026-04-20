@@ -40,14 +40,14 @@ origins = [
     "https://flathub.org",
 ]
 app.add_middleware(
-    CORSMiddleware,  # ty: ignore[invalid-argument-type]
+    CORSMiddleware,
     allow_origins=origins,
     allow_origin_regex="http://localhost(:.*)?",
     allow_credentials=True,
     allow_headers=["*"],
 )
 
-app.add_middleware(LoggingMiddleware)  # ty: ignore[invalid-argument-type]
+app.add_middleware(LoggingMiddleware)
 
 app.include_router(dashboard_router)
 app.include_router(diffoscope_router)

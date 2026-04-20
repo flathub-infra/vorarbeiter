@@ -71,9 +71,9 @@ def format_duration(started_at: datetime | None, finished_at: datetime | None) -
         return f"{hours}h {minutes}m"
 
 
-templates.env.globals["format_time"] = format_time
-templates.env.globals["format_duration"] = format_duration
-templates.env.globals["flat_manager_url"] = settings.flat_manager_url
+templates.env.globals["format_time"] = format_time  # ty: ignore[invalid-assignment]
+templates.env.globals["format_duration"] = format_duration  # ty: ignore[invalid-assignment]
+templates.env.globals["flat_manager_url"] = settings.flat_manager_url  # ty: ignore[invalid-assignment]
 
 
 def group_pipelines(
