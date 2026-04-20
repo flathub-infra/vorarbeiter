@@ -210,7 +210,7 @@ class PublishingService:
             ):
                 raise ValueError("Missing state information in flat-manager response")
 
-            return build_data
+            return build_info
 
         except httpx.RequestError as e:
             logger.error(
@@ -248,10 +248,12 @@ class PublishingService:
     async def _handle_build_state(
         self,
         pipeline: Pipeline,
-        build_data: dict[str, Any],
+        build_info: dict[str, Any],
         result: PublishResult,
         now: datetime,
     ) -> None:
+        build_data = build_info.get("build", {})
+        checks = build_info.get("checks", [])
         published_state = PublishedState(build_data["published_state"])
         repo_state = RepoState(build_data["repo_state"])
 
@@ -278,7 +280,6 @@ class PublishingService:
 
         if repo_state == RepoState.FAILED:
             repo_state_reason = build_data.get("repo_state_reason")
-            checks = build_data.get("checks")
             logger.warning(
                 "Pipeline failed flat-manager validation",
                 pipeline_id=str(pipeline.id),

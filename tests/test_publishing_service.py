@@ -215,9 +215,9 @@ async def test_get_build_info_success(publishing_service):
         }
 
         result = await publishing_service._get_build_info(pipeline)
-
-        assert result["repo_state"] == 2
-        assert result["published_state"] == 0
+        build = result["build"]
+        assert build["repo_state"] == 2
+        assert build["published_state"] == 0
         mock_get.assert_called_once_with(123)
 
 
@@ -266,11 +266,14 @@ async def test_handle_build_state_already_published(publishing_service):
         build_id=123,
         params={},
     )
-    build_data = {"published_state": 2, "repo_state": 2}
+    build_info = {
+        "build": {"published_state": 2, "repo_state": 2},
+        "checks": [],
+    }
     result = PublishResult()
     now = datetime.now()
 
-    await publishing_service._handle_build_state(pipeline, build_data, result, now)
+    await publishing_service._handle_build_state(pipeline, build_info, result, now)
 
     assert pipeline.status == PipelineStatus.PUBLISHED
     assert pipeline.published_at == now
@@ -297,10 +300,12 @@ async def test_handle_build_state_failed(publishing_service):
             "results": "{}",
         }
     ]
-    build_data = {
-        "published_state": 0,
-        "repo_state": 3,
-        "repo_state_reason": "1 out of 1 checks failed (flathub-hooks)",
+    build_info = {
+        "build": {
+            "published_state": 0,
+            "repo_state": 3,
+            "repo_state_reason": "1 out of 1 checks failed (flathub-hooks)",
+        },
         "checks": checks,
     }
     result = PublishResult()
@@ -309,7 +314,7 @@ async def test_handle_build_state_failed(publishing_service):
     with patch.object(
         publishing_service, "_create_validation_failure_issue", new_callable=AsyncMock
     ) as mock_issue:
-        await publishing_service._handle_build_state(pipeline, build_data, result, now)
+        await publishing_service._handle_build_state(pipeline, build_info, result, now)
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at == now
@@ -351,11 +356,14 @@ async def test_handle_build_state_uploading(publishing_service):
         build_id=123,
         params={},
     )
-    build_data = {"published_state": 0, "repo_state": 0}
+    build_info = {
+        "build": {"published_state": 0, "repo_state": 0},
+        "checks": [],
+    }
     result = PublishResult()
 
     await publishing_service._handle_build_state(
-        pipeline, build_data, result, datetime.now()
+        pipeline, build_info, result, datetime.now()
     )
 
     # Should skip processing since repo_state is 0 (Uploading)
@@ -371,12 +379,15 @@ async def test_handle_build_state_ready(publishing_service):
         build_id=123,
         params={},
     )
-    build_data = {"published_state": 0, "repo_state": 2}
+    build_info = {
+        "build": {"published_state": 0, "repo_state": 2},
+        "checks": [],
+    }
     result = PublishResult()
     now = datetime.now()
 
     with patch.object(publishing_service.flat_manager, "publish") as mock_publish:
-        await publishing_service._handle_build_state(pipeline, build_data, result, now)
+        await publishing_service._handle_build_state(pipeline, build_info, result, now)
 
         mock_publish.assert_called_once_with(123)
         assert pipeline.status == PipelineStatus.COMMITTED  # Should remain COMMITTED
@@ -393,11 +404,14 @@ async def test_handle_build_state_processing(publishing_service):
     )
 
     for repo_state in [0, 1, 6]:
-        build_data = {"published_state": 0, "repo_state": repo_state}
+        build_info = {
+            "build": {"published_state": 0, "repo_state": repo_state},
+            "checks": [],
+        }
         result = PublishResult()
 
         await publishing_service._handle_build_state(
-            pipeline, build_data, result, datetime.now()
+            pipeline, build_info, result, datetime.now()
         )
 
         assert len(result.published) == 0
