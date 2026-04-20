@@ -35,6 +35,18 @@ def mock_pipeline():
     )
 
 
+@pytest.fixture
+def flathub_hooks_check():
+    return {
+        "check_name": "flathub-hooks",
+        "build_id": 275210,
+        "job_id": 527126,
+        "status": 3,
+        "status_reason": "One or more validations failed.",
+        "results": '{"diagnostics":[{"refstring":"app/example.app/x86_64/stable","is_warning":false,"category":"flatpak_builder_lint","data":{"stdout":{"errors":["appid-url-not-reachable"],"info":["appid-url-not-reachable: Tried https://example.com"],"message":"See docs"},"stderr":""}}]}',
+    }
+
+
 @pytest.mark.asyncio
 async def test_notify_build_status_success(github_notifier, mock_pipeline):
     with patch("app.services.github_notifier.update_commit_status") as mock_update:
@@ -852,7 +864,9 @@ async def test_create_stable_job_failure_issue_exception(
 
 
 @pytest.mark.asyncio
-async def test_create_validation_failure_issue_stable(github_notifier, mock_pipeline):
+async def test_create_validation_failure_issue_stable(
+    github_notifier, mock_pipeline, flathub_hooks_check
+):
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
         mock_issue.return_value = (
             "https://github.com/flathub/org.test.App/issues/1",
@@ -860,7 +874,9 @@ async def test_create_validation_failure_issue_stable(github_notifier, mock_pipe
         )
 
         await github_notifier.create_validation_failure_issue(
-            mock_pipeline, "1 out of 1 checks failed (flathub-hooks)"
+            mock_pipeline,
+            "1 out of 1 checks failed (flathub-hooks)",
+            [flathub_hooks_check],
         )
 
         expected_body = (
@@ -871,7 +887,9 @@ async def test_create_validation_failure_issue_stable(github_notifier, mock_pipe
             "- Build ID: 123\n"
             "- Build log: https://example.com/logs/123\n\n"
             "**Validation Failure:**\n```\n"
-            "1 out of 1 checks failed (flathub-hooks)\n```\n\n"
+            "1 out of 1 checks failed (flathub-hooks)\n\n"
+            "One or more validations failed.\n\n"
+            f"{flathub_hooks_check['results']}\n```\n\n"
             "cc @flathub/build-moderation\n\n"
             "This issue is being opened for tracking by Flathub admins and may indicate "
             "an [infrastructure problem](https://status.flathub.org). Please do not close or modify this until "
@@ -893,7 +911,7 @@ async def test_create_validation_failure_issue_beta_skipped(
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
         await github_notifier.create_validation_failure_issue(
-            mock_pipeline, "Validation failed"
+            mock_pipeline, "Validation failed", None
         )
 
         mock_issue.assert_not_called()
@@ -907,7 +925,7 @@ async def test_create_validation_failure_issue_test_repo_skipped(
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
         await github_notifier.create_validation_failure_issue(
-            mock_pipeline, "Validation failed"
+            mock_pipeline, "Validation failed", None
         )
 
         mock_issue.assert_not_called()
@@ -921,7 +939,7 @@ async def test_create_validation_failure_issue_missing_git_repo(
 
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
         await github_notifier.create_validation_failure_issue(
-            mock_pipeline, "Validation failed"
+            mock_pipeline, "Validation failed", None
         )
 
         mock_issue.assert_not_called()
@@ -937,7 +955,7 @@ async def test_create_validation_failure_issue_missing_reason(
             3,
         )
 
-        await github_notifier.create_validation_failure_issue(mock_pipeline, None)
+        await github_notifier.create_validation_failure_issue(mock_pipeline, None, None)
 
         mock_issue.assert_called_once()
         body = mock_issue.call_args.kwargs["body"]
@@ -946,11 +964,11 @@ async def test_create_validation_failure_issue_missing_reason(
 
 @pytest.mark.asyncio
 async def test_create_validation_failure_issue_exception(
-    github_notifier, mock_pipeline
+    github_notifier, mock_pipeline, flathub_hooks_check
 ):
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
         mock_issue.side_effect = Exception("API Error")
 
         await github_notifier.create_validation_failure_issue(
-            mock_pipeline, "Validation failed"
+            mock_pipeline, "Validation failed", [flathub_hooks_check]
         )

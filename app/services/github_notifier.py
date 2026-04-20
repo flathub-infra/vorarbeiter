@@ -12,6 +12,7 @@ from app.utils.github import (
     get_linter_warning_messages,
     update_commit_status,
 )
+from typing import Any
 
 logger = structlog.get_logger(__name__)
 
@@ -434,15 +435,34 @@ class GitHubNotifier:
         )
 
     async def create_validation_failure_issue(
-        self, pipeline: Pipeline, repo_state_reason: str | None
+        self,
+        pipeline: Pipeline,
+        repo_state_reason: str | None,
+        checks: list[dict[str, Any]] | None,
     ) -> None:
         if pipeline.flat_manager_repo != "stable":
             return
 
+        checks_json = next(
+            (c for c in (checks or []) if c.get("check_name") == "flathub-hooks"),
+            None,
+        )
+
         app_id = pipeline.app_id
         repo = pipeline.flat_manager_repo.capitalize()
+
         validation_reason = (
-            repo_state_reason or "Build failed validation in flat-manager."
+            "\n\n".join(
+                filter(
+                    None,
+                    [
+                        repo_state_reason,
+                        checks_json.get("status_reason") if checks_json else None,
+                        checks_json.get("results") if checks_json else None,
+                    ],
+                )
+            )
+            or "Build failed validation in flat-manager."
         )
 
         title = f"{repo} publish validation failed for {app_id}"

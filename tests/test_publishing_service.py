@@ -287,10 +287,21 @@ async def test_handle_build_state_failed(publishing_service):
         flat_manager_repo="stable",
         params={},
     )
+    checks = [
+        {
+            "check_name": "flathub-hooks",
+            "build_id": 275210,
+            "job_id": 527126,
+            "status": 3,
+            "status_reason": "One or more validations failed.",
+            "results": "{}",
+        }
+    ]
     build_data = {
         "published_state": 0,
         "repo_state": 3,
         "repo_state_reason": "1 out of 1 checks failed (flathub-hooks)",
+        "checks": checks,
     }
     result = PublishResult()
     now = datetime.now()
@@ -305,7 +316,7 @@ async def test_handle_build_state_failed(publishing_service):
     assert len(result.errors) == 1
     assert "repo_state FAILED" in result.errors[0]["error"]
     mock_issue.assert_awaited_once_with(
-        pipeline, "1 out of 1 checks failed (flathub-hooks)"
+        pipeline, "1 out of 1 checks failed (flathub-hooks)", checks
     )
 
 
@@ -328,7 +339,7 @@ async def test_create_validation_failure_issue_swallowed(publishing_service):
         mock_notifier_class.return_value = mock_notifier
 
         await publishing_service._create_validation_failure_issue(
-            pipeline, "validation failed"
+            pipeline, "validation failed", None
         )
 
 
