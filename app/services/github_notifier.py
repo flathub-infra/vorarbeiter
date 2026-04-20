@@ -448,6 +448,18 @@ class GitHubNotifier:
             None,
         )
 
+        # Sync string with backend/app/moderation.py -> submit_review()
+        if (
+            checks_json
+            and checks_json.get("status_reason")
+            == "The review was rejected by a moderator."
+        ):
+            logger.info(
+                "Skipped creating validation failure issue on review rejection",
+                checks=checks_json,
+            )
+            return
+
         app_id = pipeline.app_id
         repo = pipeline.flat_manager_repo.capitalize()
 

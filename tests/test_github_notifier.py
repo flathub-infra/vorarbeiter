@@ -972,3 +972,18 @@ async def test_create_validation_failure_issue_exception(
         await github_notifier.create_validation_failure_issue(
             mock_pipeline, "Validation failed", [flathub_hooks_check]
         )
+
+
+@pytest.mark.asyncio
+async def test_create_validation_failure_issue_review_rejected_skipped(
+    github_notifier, mock_pipeline, flathub_hooks_check
+):
+    flathub_hooks_check["status_reason"] = "The review was rejected by a moderator."
+    flathub_hooks_check["results"] = '{"diagnostics":[]}'
+    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
+        await github_notifier.create_validation_failure_issue(
+            mock_pipeline,
+            "1 out of 1 checks failed (flathub-hooks)",
+            [flathub_hooks_check],
+        )
+        mock_issue.assert_not_called()
