@@ -695,9 +695,16 @@ async def get_linter_warning_messages(
     if annotations is None:
         return messages
 
+    seen: set[str] = set()
+
     messages = [
-        a.get("message", "")
+        msg
         for a in annotations
-        if a.get("message") and "warning found in linter" in a.get("message", "")
+        if (msg := a.get("message"))
+        and "warning found in linter" in msg
+        and (parts := msg.split("'"))
+        and len(parts) >= 3
+        and (warning_id := parts[1]) not in seen
+        and not seen.add(warning_id)
     ]
     return list(set(messages))

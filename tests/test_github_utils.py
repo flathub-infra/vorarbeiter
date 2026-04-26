@@ -10,6 +10,7 @@ from app.utils.github import (
     create_github_issue,
     create_pr_comment,
     update_commit_status,
+    get_linter_warning_messages,
 )
 
 
@@ -690,3 +691,27 @@ async def test_rate_limit_returns_result_with_retry_after(mock_settings):
         assert result.should_queue is True
         assert result.error_type == "rate_limit"
         assert result.retry_after == 120.0
+
+
+@pytest.mark.asyncio
+async def test_linter_warning_messages_deduplicates():
+    annotations = [
+        {"message": "'foo-bar-baz' warning found in linter repo check. Details: foo"},
+        {
+            "message": "'foo-bar-baz' warning found in linter manifest check. Details: bar"
+        },
+        {"message": "'baz-foo-moo' warning found in linter manifest check."},
+    ]
+
+    with patch(
+        "app.utils.github.get_check_run_annotations",
+        return_value=annotations,
+    ):
+        result = await get_linter_warning_messages(run_id=123)
+
+    assert len(result) == 2
+
+    foo_bar_baz_msgs = [m for m in result if "foo-bar-baz" in m]
+    assert len(foo_bar_baz_msgs) == 1
+
+    assert any("baz-foo-moo" in m for m in result)
