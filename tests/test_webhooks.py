@@ -149,6 +149,19 @@ SAMPLE_BOT_CANCEL_PAYLOAD = {
     },
 }
 
+SAMPLE_FLATHUB_MERGE_PAYLOAD = {
+    "repository": {"full_name": "flathub/flathub"},
+    "sender": {"login": "test-reviewer"},
+    "action": "created",
+    "comment": {"body": "/merge head=" + ("a" * 40)},
+    "issue": {
+        "number": 42,
+        "pull_request": {
+            "url": "https://api.github.com/repos/flathub/flathub/pulls/42"
+        },
+    },
+}
+
 
 @pytest.fixture
 def client():
@@ -339,6 +352,84 @@ def test_webhook_with_invalid_signature(client: TestClient):
     finally:
         # Restore the original setting
         settings.github_webhook_secret = original_secret
+
+
+def test_receive_github_webhook_dispatches_merge_for_created_pr_comment(
+    client: TestClient,
+):
+    delivery_id = str(uuid.uuid4())
+    headers = {"X-GitHub-Delivery": delivery_id}
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.services.merge_service.handle_merge_command",
+            new_callable=Mock,
+        ) as mock_handle_merge,
+        patch("app.routes.webhooks.asyncio.create_task") as mock_create_task,
+    ):
+        response = client.post(
+            "/api/webhooks/github",
+            json=SAMPLE_FLATHUB_MERGE_PAYLOAD,
+            headers=headers,
+        )
+
+    assert response.status_code == 202
+    assert response.json()["message"] == "Merge command received and processing."
+    mock_handle_merge.assert_called_once_with(SAMPLE_FLATHUB_MERGE_PAYLOAD)
+    mock_create_task.assert_called_once()
+
+
+def test_receive_github_webhook_ignores_edited_merge_comment(client: TestClient):
+    delivery_id = str(uuid.uuid4())
+    headers = {"X-GitHub-Delivery": delivery_id}
+    payload = dict(SAMPLE_FLATHUB_MERGE_PAYLOAD)
+    payload["action"] = "edited"
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.services.merge_service.handle_merge_command",
+            new_callable=Mock,
+        ) as mock_handle_merge,
+        patch("app.routes.webhooks.asyncio.create_task") as mock_create_task,
+        patch(
+            "app.routes.webhooks.get_db",
+            create_mock_get_db(AsyncMock(spec=AsyncSession)),
+        ),
+    ):
+        response = client.post("/api/webhooks/github", json=payload, headers=headers)
+
+    assert response.status_code == 202
+    assert response.json()["message"] == "Webhook received"
+    mock_handle_merge.assert_not_called()
+    mock_create_task.assert_not_called()
+
+
+def test_receive_github_webhook_ignores_merge_comment_on_issue(client: TestClient):
+    delivery_id = str(uuid.uuid4())
+    headers = {"X-GitHub-Delivery": delivery_id}
+    payload = dict(SAMPLE_FLATHUB_MERGE_PAYLOAD)
+    payload["issue"] = {"number": 42}
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.services.merge_service.handle_merge_command",
+            new_callable=Mock,
+        ) as mock_handle_merge,
+        patch("app.routes.webhooks.asyncio.create_task") as mock_create_task,
+        patch(
+            "app.routes.webhooks.get_db",
+            create_mock_get_db(AsyncMock(spec=AsyncSession)),
+        ),
+    ):
+        response = client.post("/api/webhooks/github", json=payload, headers=headers)
+
+    assert response.status_code == 202
+    assert response.json()["message"] == "Webhook received"
+    mock_handle_merge.assert_not_called()
+    mock_create_task.assert_not_called()
 
 
 def test_should_store_event_admin_ping():

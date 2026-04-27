@@ -766,6 +766,19 @@ async def receive_github_webhook(
     ]
     is_push_event = "commits" in payload and payload.get("ref", "")
 
+    if (
+        repo_name == "flathub/flathub"
+        and payload.get("action") == "created"
+        and payload.get("issue", {}).get("pull_request")
+        and "comment" in payload
+    ):
+        raw_comment = payload.get("comment", {}).get("body") or ""
+        if raw_comment.startswith("/merge"):
+            from app.services import merge_service
+
+            asyncio.create_task(merge_service.handle_merge_command(payload))
+            return {"message": "Merge command received and processing."}
+
     if repo_name in ignored_repos and (is_pr_event or is_push_event):
         return {"message": "Webhook received but ignored due to repository filter."}
 

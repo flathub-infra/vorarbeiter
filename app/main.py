@@ -11,6 +11,7 @@ from app.middleware import LoggingMiddleware
 from app.routes import (
     dashboard_router,
     diffoscope_router,
+    merge_router,
     pipelines_router,
     webhooks_router,
 )
@@ -51,5 +52,6 @@ app.add_middleware(LoggingMiddleware)
 
 app.include_router(dashboard_router)
 app.include_router(diffoscope_router)
+app.include_router(merge_router)
 app.include_router(pipelines_router)
 app.include_router(webhooks_router)
