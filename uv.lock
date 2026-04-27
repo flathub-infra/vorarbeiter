@@ -403,6 +403,15 @@ wheels = [
 ]
 
 [[package]]
+name = "json5"
+version = "0.14.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/4b/6f8906aaf67d501e259b0adab4d312945bb7211e8b8d4dcc77c92320edaa/json5-0.14.0.tar.gz", hash = "sha256:b3f492fad9f6cdbced8b7d40b28b9b1c9701c5f561bef0d33b81c2ff433fefcb", size = 52656, upload_time = "2026-03-27T22:50:48.108Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/42/cf027b4ac873b076189d935b135397675dac80cb29acb13e1ab86ad6c631/json5-0.14.0-py3-none-any.whl", hash = "sha256:56cf861bab076b1178eb8c92e1311d273a9b9acea2ccc82c276abf839ebaef3a", size = 36271, upload_time = "2026-03-27T22:50:47.073Z" },
+]
+
+[[package]]
 name = "mako"
 version = "1.3.11"
 source = { registry = "https://pypi.org/simple" }
@@ -1128,10 +1137,12 @@ dependencies = [
     { name = "gql", extra = ["requests"] },
     { name = "granian" },
     { name = "jinja2" },
+    { name = "json5" },
     { name = "psycopg" },
     { name = "psycopg-binary" },
     { name = "psycopg-pool" },
     { name = "pydantic-settings" },
+    { name = "pyyaml" },
     { name = "sentry-sdk" },
     { name = "sqlalchemy" },
     { name = "structlog" },
@@ -1157,10 +1168,12 @@ requires-dist = [
     { name = "gql", extras = ["requests"], specifier = ">=4.0.0,<5" },
     { name = "granian", specifier = ">=1.0.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
+    { name = "json5", specifier = ">=0.14.0" },
     { name = "psycopg", specifier = ">=3.1.20" },
     { name = "psycopg-binary", specifier = ">=3.1.20" },
     { name = "psycopg-pool", specifier = ">=3.2.1" },
     { name = "pydantic-settings", specifier = ">=2.8.1" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sentry-sdk", specifier = ">=2.25.1" },
     { name = "sqlalchemy", specifier = ">=2.0.40" },
     { name = "structlog", specifier = ">=24.1.0" },
