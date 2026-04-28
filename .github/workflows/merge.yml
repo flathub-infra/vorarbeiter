@@ -1,0 +1,82 @@
+name: Merge submission
+run-name: merge PR to flathub/${{ inputs.appid }}@${{ inputs.target_branch }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      fork_url:
+        description: 'Clone URL of contributor fork'
+        required: true
+      expected_sha:
+        description: '40-char commit SHA to push'
+        required: true
+      appid:
+        description: 'Flatpak app ID (becomes flathub/<appid>)'
+        required: true
+      target_branch:
+        description: 'Target branch on flathub/<appid> (master, beta, branch/*)'
+        required: true
+        default: 'master'
+      flathubbot_token:
+        description: 'flathubbot token (push to flathub/<appid>)'
+        required: true
+      callback_url:
+        description: 'Vorarbeiter callback URL'
+        required: true
+      callback_token:
+        description: 'Bearer token for callback auth'
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: merge-${{ inputs.appid }}
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch commit from fork
+        env:
+          FORK_URL: ${{ inputs.fork_url }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          git init -q repo
+          cd repo
+          git fetch --depth 1 "$FORK_URL" "$EXPECTED_SHA"
+          fetched_sha=$(git rev-parse FETCH_HEAD)
+          [ "$fetched_sha" = "$EXPECTED_SHA" ] || exit 1
+
+      - name: Push to flathub/${{ inputs.appid }}
+        env:
+          APPID: ${{ inputs.appid }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          FLATHUBBOT_TOKEN="$(jq -r '.inputs.flathubbot_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$FLATHUBBOT_TOKEN"
+          git -c http.extraheader="Authorization: Bearer $FLATHUBBOT_TOKEN" \
+              push "https://github.com/flathub/$APPID.git" \
+              "FETCH_HEAD:refs/heads/$TARGET_BRANCH"
+
+      - name: Report status to vorarbeiter
+        if: always()
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
+          status=failure
+          [ "$JOB_STATUS" = "success" ] && status=success
+          curl -fsS -X POST \
+            --retry 5 --retry-all-errors --retry-delay 5 --max-time 30 \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
+            -d "{\"status\":\"$status\"}" \
+            "$CALLBACK_URL"

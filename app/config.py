@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://postgres:postgres@db:5432/test_db"
     database_replica_url: str | None = None
     debug: bool = False
+    flathubbot_token: str = "test_flathubbot_token"
     github_token: str = "test_github_token"
     github_status_token: str = "test_github_status_token"
     github_webhook_secret: str = "test_webhook_secret"

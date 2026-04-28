@@ -18,6 +18,8 @@ dependencies = [
     "granian>=2.7.4",
     "gql[requests]>=4.0.0,<5",
     "jinja2>=3.1.0",
+    "pyyaml>=6.0.3",
+    "pygobject>=3.56.2",
 ]
 
 [dependency-groups]
