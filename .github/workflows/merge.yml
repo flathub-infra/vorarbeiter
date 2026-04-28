@@ -75,6 +75,7 @@ jobs:
           status=failure
           [ "$JOB_STATUS" = "success" ] && status=success
           curl -fsS -X POST \
+            --retry 5 --retry-all-errors --retry-delay 5 --max-time 30 \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "{\"status\":\"$status\"}" \

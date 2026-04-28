@@ -391,40 +391,62 @@ class MergeService:
 
         logger.info("Finalizing merge", merge_id=str(merge_id), appid=appid)
 
-        if not await self._remove_collaborator(appid, "flathubbot"):
-            errors.append("Failed to remove flathubbot from collaborators")
+        try:
+            if not await self._remove_collaborator(appid, "flathubbot"):
+                errors.append("Failed to remove flathubbot from collaborators")
 
-        if not await self._set_all_branch_protections(appid, PROTECTED_BRANCH_PATTERNS):
-            errors.append("Failed to set one or more branch protections")
+            if not await self._set_all_branch_protections(
+                appid, PROTECTED_BRANCH_PATTERNS
+            ):
+                errors.append("Failed to set one or more branch protections")
 
-        if not await self._add_collaborators(appid, ctx.collaborators):
-            errors.append("Failed to add one or more collaborators")
+            if not await self._add_collaborators(appid, ctx.collaborators):
+                errors.append("Failed to add one or more collaborators")
 
-        sha_ok, protected = await self._verify_branch_state(
-            appid, ctx.target_branch, ctx.pr_head_sha
-        )
-        if not sha_ok:
-            errors.append("Remote HEAD SHA verification failed")
-        if not protected:
-            errors.append("Branch protection verification failed")
-
-        if not await self._set_labels(pr_number):
-            errors.append("Failed to set labels")
-
-        if not await self._clear_pr_metadata(pr_number):
-            errors.append("Failed to clear PR assignees/reviewers")
-
-        if errors:
-            await self._post_comment(
-                pr_number,
-                "⚠️ Merge finalization completed with errors. The push "
-                "succeeded but some post-merge steps require manual "
-                "intervention:\n\n" + "\n".join(f"- {e}" for e in errors),
+            sha_ok, protected = await self._verify_branch_state(
+                appid, ctx.target_branch, ctx.pr_head_sha
             )
-        else:
-            repo_url = ctx.repo_html_url or f"https://github.com/flathub/{appid}"
-            if not await self._close_and_lock_pr(pr_number, repo_url):
-                errors.append("Failed to close/lock PR")
+            if not sha_ok:
+                errors.append("Remote HEAD SHA verification failed")
+            if not protected:
+                errors.append("Branch protection verification failed")
+
+            if not await self._set_labels(pr_number):
+                errors.append("Failed to set labels")
+
+            if not await self._clear_pr_metadata(pr_number):
+                errors.append("Failed to clear PR assignees/reviewers")
+
+            if errors:
+                await self._post_comment(
+                    pr_number,
+                    "⚠️ Merge finalization completed with errors. The push "
+                    "succeeded but some post-merge steps require manual "
+                    "intervention:\n\n" + "\n".join(f"- {e}" for e in errors),
+                )
+            else:
+                repo_url = ctx.repo_html_url or f"https://github.com/flathub/{appid}"
+                if not await self._close_and_lock_pr(pr_number, repo_url):
+                    errors.append("Failed to close/lock PR")
+        except Exception as err:
+            logger.exception(
+                "Unexpected error during merge finalization",
+                merge_id=str(merge_id),
+                appid=appid,
+            )
+            errors.append(f"Unexpected error: {err}")
+            try:
+                await self._post_comment(
+                    pr_number,
+                    "⚠️ Merge finalization aborted by an unexpected error. "
+                    "The push succeeded but post-merge steps require manual "
+                    f"intervention: `{err}`",
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to post finalization error comment",
+                    merge_id=str(merge_id),
+                )
 
         error_msg = "; ".join(errors) if errors else None
         if error_msg:
@@ -605,7 +627,11 @@ class MergeService:
         if not isinstance(repo_data, dict):
             logger.error("Unexpected GraphQL response type", appid=appid)
             return False
-        repo_id = repo_data["repository"]["id"]
+        repository = repo_data.get("repository")
+        if not isinstance(repository, dict) or not repository.get("id"):
+            logger.error("GraphQL repository not found or inaccessible", appid=appid)
+            return False
+        repo_id = repository["id"]
 
         success = True
         for pattern in patterns:
