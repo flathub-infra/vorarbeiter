@@ -1,16 +1,34 @@
 import base64
+import json
 import os
+import re
 from typing import Any
 
-import json5
+import gi
 import structlog
 import yaml
 
-from app.utils.github import GitHubAPIClient
+gi.require_version("Json", "1.0")
+from gi.repository import GLib, Json  # noqa: E402  # ty: ignore[unresolved-import]
+
+from app.utils.github import GitHubAPIClient  # noqa: E402
 
 logger = structlog.get_logger(__name__)
 
 MANIFEST_EXTENSIONS = (".yml", ".yaml", ".json")
+
+# json-glib's non-strict mode handles /* */ block comments and single-quoted
+# strings, but not // line comments or trailing commas — strip those first.
+_JSON_LINE_COMMENT_PATTERN = re.compile(r'("(?:\\.|[^"\\])*")|//[^\n]*')
+_JSON_TRAILING_COMMA_PATTERN = re.compile(r",(\s*[}\]])")
+
+
+def _preprocess_json(content: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        return match.group(1) if match.group(1) is not None else ""
+
+    stripped = _JSON_LINE_COMMENT_PATTERN.sub(replace, content)
+    return _JSON_TRAILING_COMMA_PATTERN.sub(r"\1", stripped)
 
 
 def _parse_manifest(filename: str, content: str) -> dict[str, Any]:
@@ -23,15 +41,29 @@ def _parse_manifest(filename: str, content: str) -> dict[str, Any]:
                 "Failed to parse YAML manifest", filename=filename, error=str(err)
             )
             return {}
-    else:
-        try:
-            result = json5.loads(content)
-            return result if isinstance(result, dict) else {}
-        except ValueError as err:
-            logger.error(
-                "Failed to parse JSON manifest", filename=filename, error=str(err)
-            )
-            return {}
+
+    parser = Json.Parser()
+    try:
+        parser.load_from_data(_preprocess_json(content), -1)
+    except GLib.Error as err:
+        logger.error(
+            "Failed to parse JSON manifest", filename=filename, error=err.message
+        )
+        return {}
+
+    root = parser.get_root()
+    if root is None:
+        return {}
+
+    try:
+        result = json.loads(Json.to_string(root, False))
+    except ValueError as err:
+        logger.error(
+            "Failed to convert JSON manifest", filename=filename, error=str(err)
+        )
+        return {}
+
+    return result if isinstance(result, dict) else {}
 
 
 def _get_appid_from_manifest(manifest: dict[str, Any]) -> str | None:

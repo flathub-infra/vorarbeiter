@@ -2,13 +2,15 @@ import asyncio
 import json
 import secrets
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
@@ -99,6 +101,17 @@ GQL_ADD_BRANCH_PROTECTION = gql(
 )
 
 
+@dataclass(frozen=True)
+class _FinalizeContext:
+    merge_id: uuid.UUID
+    pr_number: int
+    app_id: str
+    target_branch: str
+    pr_head_sha: str
+    collaborators: list[str]
+    repo_html_url: str | None
+
+
 class MergeCallbackError(ValueError):
     pass
 
@@ -184,6 +197,15 @@ class MergeService:
             await self._post_comment(pr_number, "❌ Cannot merge: PR is not open.")
             return
 
+        blocking_labels = [label for label in pr_details["labels"] if "block" in label]
+        if blocking_labels:
+            await self._post_comment(
+                pr_number,
+                "❌ Cannot merge: PR has blocking labels: "
+                + ", ".join(f"`{label}`" for label in blocking_labels),
+            )
+            return
+
         current_sha = pr_details["head_sha"]
         if current_sha != command.pr_head_sha:
             await self._post_comment(
@@ -252,7 +274,7 @@ class MergeService:
         except IntegrityError:
             await self._post_comment(
                 pr_number,
-                "❌ A merge operation is already in progress for this PR.",
+                "❌ A merge operation is already in progress for this PR or app ID.",
             )
             return
 
@@ -294,6 +316,10 @@ class MergeService:
     async def handle_callback(
         self, merge_id: uuid.UUID, callback_token: str, status: str
     ) -> None:
+        target_status = (
+            MergeStatus.FINALIZING if status == "success" else MergeStatus.FAILED
+        )
+
         async with get_db() as db:
             merge_request = await db.get(MergeRequest, merge_id)
             if not merge_request:
@@ -314,27 +340,54 @@ class MergeService:
                     f"Merge request is in state {merge_request.status.value}"
                 )
 
+            ctx = _FinalizeContext(
+                merge_id=merge_request.id,
+                pr_number=merge_request.pr_number,
+                app_id=merge_request.app_id,
+                target_branch=merge_request.target_branch,
+                pr_head_sha=merge_request.pr_head_sha,
+                collaborators=list(merge_request.collaborators),
+                repo_html_url=merge_request.repo_html_url,
+            )
+
+            update_values: dict[str, Any] = {"status": target_status}
+            if target_status == MergeStatus.FAILED:
+                update_values["error"] = MERGE_ERROR_GIT_PUSH_FAILED
+                update_values["completed_at"] = datetime.now(timezone.utc)
+
+            result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(MergeRequest)
+                    .where(MergeRequest.id == merge_id)
+                    .where(MergeRequest.status == MergeStatus.PUSHING)
+                    .values(**update_values)
+                ),
+            )
+            if result.rowcount != 1:
+                logger.warning(
+                    "Lost race transitioning merge request status",
+                    merge_id=str(merge_id),
+                    target_status=target_status.value,
+                )
+                raise MergeCallbackConflictError(
+                    "Merge request status changed concurrently"
+                )
+
         if status != "success":
-            await self._mark_failed(merge_id, MERGE_ERROR_GIT_PUSH_FAILED)
             await self._post_comment(
-                merge_request.pr_number,
+                ctx.pr_number,
                 "❌ Merge failed: git push workflow reported failure.",
             )
             return
 
-        await self._finalize(merge_request)
+        await self._finalize(ctx)
 
-    async def _finalize(self, merge_request: MergeRequest) -> None:
-        merge_id = merge_request.id
-        appid = merge_request.app_id
-        pr_number = merge_request.pr_number
+    async def _finalize(self, ctx: _FinalizeContext) -> None:
+        merge_id = ctx.merge_id
+        appid = ctx.app_id
+        pr_number = ctx.pr_number
         errors: list[str] = []
-
-        async with get_db() as db:
-            mr = await db.get(MergeRequest, merge_id)
-            if mr:
-                mr.status = MergeStatus.FINALIZING
-                await db.commit()
 
         logger.info("Finalizing merge", merge_id=str(merge_id), appid=appid)
 
@@ -344,11 +397,11 @@ class MergeService:
         if not await self._set_all_branch_protections(appid, PROTECTED_BRANCH_PATTERNS):
             errors.append("Failed to set one or more branch protections")
 
-        if not await self._add_collaborators(appid, merge_request.collaborators):
+        if not await self._add_collaborators(appid, ctx.collaborators):
             errors.append("Failed to add one or more collaborators")
 
         sha_ok, protected = await self._verify_branch_state(
-            appid, merge_request.target_branch, merge_request.pr_head_sha
+            appid, ctx.target_branch, ctx.pr_head_sha
         )
         if not sha_ok:
             errors.append("Remote HEAD SHA verification failed")
@@ -358,9 +411,20 @@ class MergeService:
         if not await self._set_labels(pr_number):
             errors.append("Failed to set labels")
 
-        repo_url = merge_request.repo_html_url or f"https://github.com/flathub/{appid}"
-        if not await self._close_and_lock_pr(pr_number, repo_url):
-            errors.append("Failed to close/lock PR")
+        if not await self._clear_pr_metadata(pr_number):
+            errors.append("Failed to clear PR assignees/reviewers")
+
+        if errors:
+            await self._post_comment(
+                pr_number,
+                "⚠️ Merge finalization completed with errors. The push "
+                "succeeded but some post-merge steps require manual "
+                "intervention:\n\n" + "\n".join(f"- {e}" for e in errors),
+            )
+        else:
+            repo_url = ctx.repo_html_url or f"https://github.com/flathub/{appid}"
+            if not await self._close_and_lock_pr(pr_number, repo_url):
+                errors.append("Failed to close/lock PR")
 
         error_msg = "; ".join(errors) if errors else None
         if error_msg:
@@ -385,12 +449,17 @@ class MergeService:
         for team in ("admins", "reviewers"):
             response = await client.request(
                 "get",
-                f"https://api.github.com/orgs/flathub/teams/{team}/members/{username}",
+                f"https://api.github.com/orgs/flathub/teams/{team}/memberships/{username}",
                 context={"team": team, "username": username},
                 raise_for_status=False,
             )
-            if response and response.status_code == 204:
-                return True
+            if response and response.status_code == 200:
+                try:
+                    state = response.json().get("state")
+                except ValueError:
+                    state = None
+                if state == "active":
+                    return True
         return False
 
     async def _get_pr_details(self, pr_number: int) -> dict[str, Any] | None:
@@ -414,6 +483,7 @@ class MergeService:
             "fork_branch": head.get("ref"),
             "fork_clone_url": head_repo.get("clone_url"),
             "author": data.get("user", {}).get("login"),
+            "labels": [label["name"] for label in data.get("labels") or []],
         }
 
     async def _check_repo_exists(self, appid: str) -> bool:
@@ -465,30 +535,19 @@ class MergeService:
         response = await client.request(
             "post",
             "https://api.github.com/orgs/flathub/repos",
-            content=json.dumps({"name": appid}),
-            context={"appid": appid},
-        )
-        if not response:
-            return None
-
-        repo_data = response.json()
-        html_url = repo_data.get("html_url")
-
-        edit_response = await client.request(
-            "patch",
-            f"https://api.github.com/repos/flathub/{appid}",
             content=json.dumps(
                 {
+                    "name": appid,
                     "homepage": f"https://flathub.org/apps/details/{appid}",
                     "delete_branch_on_merge": True,
                 }
             ),
             context={"appid": appid},
         )
-        if not edit_response:
-            logger.warning("Failed to edit repo settings", appid=appid)
+        if not response:
+            return None
 
-        return html_url
+        return response.json().get("html_url")
 
     async def _dispatch_merge_workflow(self, merge_request: MergeRequest) -> None:
         client = self._get_client()
@@ -520,6 +579,13 @@ class MergeService:
     async def _set_all_branch_protections(
         self, appid: str, patterns: tuple[str, ...]
     ) -> bool:
+        return await asyncio.to_thread(
+            self._set_all_branch_protections_sync, appid, patterns
+        )
+
+    def _set_all_branch_protections_sync(
+        self, appid: str, patterns: tuple[str, ...]
+    ) -> bool:
         transport = RequestsHTTPTransport(
             url="https://api.github.com/graphql",
             headers={"Authorization": f"Bearer {settings.flathubbot_token}"},
@@ -527,33 +593,7 @@ class MergeService:
         client = Client(transport=transport, fetch_schema_from_transport=False)
 
         try:
-            repo_data = await asyncio.to_thread(
-                client.execute,
-                GQL_GET_REPO_ID,
-                variable_values={"repo": appid},
-            )
-            if not isinstance(repo_data, dict):
-                logger.error("Unexpected GraphQL response type", appid=appid)
-                return False
-            repo_id = repo_data["repository"]["id"]
-
-            success = True
-            for pattern in patterns:
-                try:
-                    await asyncio.to_thread(
-                        client.execute,
-                        GQL_ADD_BRANCH_PROTECTION,
-                        variable_values={"repositoryID": repo_id, "pattern": pattern},
-                    )
-                except GQL_EXCEPTIONS as err:
-                    logger.error(
-                        "Failed to set branch protection",
-                        appid=appid,
-                        pattern=pattern,
-                        error=str(err),
-                    )
-                    success = False
-            return success
+            repo_data = client.execute(GQL_GET_REPO_ID, variable_values={"repo": appid})
         except GQL_EXCEPTIONS as err:
             logger.error(
                 "Failed to fetch repo ID for branch protection",
@@ -561,6 +601,28 @@ class MergeService:
                 error=str(err),
             )
             return False
+
+        if not isinstance(repo_data, dict):
+            logger.error("Unexpected GraphQL response type", appid=appid)
+            return False
+        repo_id = repo_data["repository"]["id"]
+
+        success = True
+        for pattern in patterns:
+            try:
+                client.execute(
+                    GQL_ADD_BRANCH_PROTECTION,
+                    variable_values={"repositoryID": repo_id, "pattern": pattern},
+                )
+            except GQL_EXCEPTIONS as err:
+                logger.error(
+                    "Failed to set branch protection",
+                    appid=appid,
+                    pattern=pattern,
+                    error=str(err),
+                )
+                success = False
+        return success
 
     async def _add_collaborators(self, appid: str, collaborators: list[str]) -> bool:
         client = self._get_client()
@@ -615,7 +677,7 @@ class MergeService:
             context={"appid": appid, "username": username},
             raise_for_status=False,
         )
-        return response is not None and response.status_code in (204, 404)
+        return response is not None and response.status_code == 204
 
     async def _verify_branch_state(
         self, appid: str, branch: str, expected_sha: str
@@ -676,6 +738,63 @@ class MergeService:
             )
             return set_response is not None and set_response.status_code == 200
 
+    async def _clear_pr_metadata(self, pr_number: int) -> bool:
+        client = self._get_client()
+        pr_response = await client.request(
+            "get",
+            f"https://api.github.com/repos/{FLATHUB_REPO}/pulls/{pr_number}",
+            context={"pr_number": pr_number},
+            raise_for_status=False,
+        )
+        if not pr_response or pr_response.status_code != 200:
+            logger.error("Failed to fetch PR for metadata cleanup", pr_number=pr_number)
+            return False
+
+        pr_data = pr_response.json()
+        assignees = [a["login"] for a in pr_data.get("assignees") or []]
+        user_reviewers = [r["login"] for r in pr_data.get("requested_reviewers") or []]
+        team_reviewers = [t["slug"] for t in pr_data.get("requested_teams") or []]
+
+        success = True
+
+        if assignees:
+            logger.info("Removing assignees", pr_number=pr_number, assignees=assignees)
+            response = await client.request(
+                "delete",
+                f"https://api.github.com/repos/{FLATHUB_REPO}/issues/{pr_number}/assignees",
+                content=json.dumps({"assignees": assignees}),
+                context={"pr_number": pr_number},
+                raise_for_status=False,
+            )
+            if not response or response.status_code != 200:
+                logger.error("Failed to remove assignees", pr_number=pr_number)
+                success = False
+
+        if user_reviewers or team_reviewers:
+            logger.info(
+                "Removing review requests",
+                pr_number=pr_number,
+                users=user_reviewers,
+                teams=team_reviewers,
+            )
+            response = await client.request(
+                "delete",
+                f"https://api.github.com/repos/{FLATHUB_REPO}/pulls/{pr_number}/requested_reviewers",
+                content=json.dumps(
+                    {
+                        "reviewers": user_reviewers,
+                        "team_reviewers": team_reviewers,
+                    }
+                ),
+                context={"pr_number": pr_number},
+                raise_for_status=False,
+            )
+            if not response or response.status_code != 200:
+                logger.error("Failed to remove review requests", pr_number=pr_number)
+                success = False
+
+        return success
+
     async def _close_and_lock_pr(self, pr_number: int, repo_url: str) -> bool:
         client = self._get_client()
         comment = CLOSE_COMMENT_TEMPLATE.format(repo_url=repo_url)
@@ -702,15 +821,28 @@ class MergeService:
             logger.error("Failed to close PR", pr_number=pr_number)
             return False
 
-        lock_response = await client.request(
-            "put",
-            f"https://api.github.com/repos/{FLATHUB_REPO}/issues/{pr_number}/lock",
-            content=json.dumps({"lock_reason": "resolved"}),
+        issue_response = await client.request(
+            "get",
+            f"https://api.github.com/repos/{FLATHUB_REPO}/issues/{pr_number}",
             context={"pr_number": pr_number},
             raise_for_status=False,
         )
-        if not lock_response or lock_response.status_code not in (204, 200):
-            logger.warning("Failed to lock PR", pr_number=pr_number)
+        already_locked = (
+            issue_response is not None
+            and issue_response.status_code == 200
+            and issue_response.json().get("locked") is True
+        )
+
+        if not already_locked:
+            lock_response = await client.request(
+                "put",
+                f"https://api.github.com/repos/{FLATHUB_REPO}/issues/{pr_number}/lock",
+                content=json.dumps({"lock_reason": "resolved"}),
+                context={"pr_number": pr_number},
+                raise_for_status=False,
+            )
+            if not lock_response or lock_response.status_code != 204:
+                logger.warning("Failed to lock PR", pr_number=pr_number)
 
         return True
 

@@ -16,6 +16,7 @@ from app.services.merge import (
     MergeInvalidTokenError,
     MergeNotFoundError,
     MergeService,
+    _FinalizeContext,
 )
 from app.utils.manifest import _get_appid_from_manifest, _parse_manifest
 
@@ -32,6 +33,20 @@ def create_realistic_get_db(db_session_maker):
                 raise
 
     return mock_get_db
+
+
+def _pr_details(**overrides):
+    base = {
+        "state": "open",
+        "head_sha": "a" * 40,
+        "fork_repo": "user/repo",
+        "fork_branch": "main",
+        "fork_clone_url": "https://github.com/user/repo.git",
+        "author": "author1",
+        "labels": [],
+    }
+    base.update(overrides)
+    return base
 
 
 class TestParseMergeCommand:
@@ -108,6 +123,39 @@ class TestManifestParsing:
     def test_parse_invalid_yaml(self):
         result = _parse_manifest("test.yml", ":\n  :\n    - :\n      bad: [")
         assert result == {}
+
+    def test_parse_json_with_block_comments(self):
+        content = '{\n  /* block comment\n     spanning lines */\n  "app-id": "org.example.App"\n}'
+        result = _parse_manifest("org.example.App.json", content)
+        assert result["app-id"] == "org.example.App"
+
+    def test_parse_json_preserves_comment_chars_in_strings(self):
+        content = '{"app-id": "org.example.App", "url": "https://example.com//path"}'
+        result = _parse_manifest("org.example.App.json", content)
+        assert result["app-id"] == "org.example.App"
+        assert result["url"] == "https://example.com//path"
+
+    def test_parse_json_with_trailing_comma(self):
+        content = '{\n  "app-id": "org.example.App",\n}'
+        result = _parse_manifest("org.example.App.json", content)
+        assert result["app-id"] == "org.example.App"
+
+    def test_parse_json_with_single_quoted_strings(self):
+        content = "{ 'app-id': 'org.example.App' }"
+        result = _parse_manifest("org.example.App.json", content)
+        assert result["app-id"] == "org.example.App"
+
+    def test_parse_json_returns_empty_for_list(self):
+        content = '[{"name": "cargo-sources"}]'
+        result = _parse_manifest("cargo-sources.json", content)
+        assert result == {}
+        assert _get_appid_from_manifest(result) is None
+
+    def test_parse_yaml_returns_empty_for_list(self):
+        content = "- foo\n- bar\n"
+        result = _parse_manifest("test.yml", content)
+        assert result == {}
+        assert _get_appid_from_manifest(result) is None
 
     def test_get_appid_app_id_key(self):
         assert (
@@ -230,7 +278,8 @@ class TestMergeServiceAuthorization:
         service = MergeService()
 
         admin_response = MagicMock()
-        admin_response.status_code = 204
+        admin_response.status_code = 200
+        admin_response.json.return_value = {"state": "active", "role": "member"}
 
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=admin_response)
@@ -238,6 +287,9 @@ class TestMergeServiceAuthorization:
         with patch.object(service, "_get_client", return_value=mock_client):
             result = await service._is_authorized("admin_user")
             assert result is True
+
+        url = mock_client.request.call_args.args[1]
+        assert "/memberships/" in url
 
     @pytest.mark.asyncio
     async def test_authorized_reviewer(self):
@@ -247,7 +299,8 @@ class TestMergeServiceAuthorization:
         not_admin.status_code = 404
 
         reviewer_response = MagicMock()
-        reviewer_response.status_code = 204
+        reviewer_response.status_code = 200
+        reviewer_response.json.return_value = {"state": "active", "role": "member"}
 
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(side_effect=[not_admin, reviewer_response])
@@ -268,6 +321,21 @@ class TestMergeServiceAuthorization:
 
         with patch.object(service, "_get_client", return_value=mock_client):
             result = await service._is_authorized("random_user")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_pending_membership_not_authorized(self):
+        service = MergeService()
+
+        pending_response = MagicMock()
+        pending_response.status_code = 200
+        pending_response.json.return_value = {"state": "pending", "role": "member"}
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=pending_response)
+
+        with patch.object(service, "_get_client", return_value=mock_client):
+            result = await service._is_authorized("invited_user")
             assert result is False
 
 
@@ -393,6 +461,69 @@ class TestMergeServiceCollaborators:
             assert any("teams/custom-team" in url for url in urls)
 
 
+class TestMergeServiceCloseAndLock:
+    @pytest.mark.asyncio
+    async def test_skips_lock_when_already_locked(self):
+        service = MergeService()
+
+        comment_response = MagicMock()
+        comment_response.status_code = 201
+        close_response = MagicMock()
+        close_response.status_code = 200
+        issue_response = MagicMock()
+        issue_response.status_code = 200
+        issue_response.json.return_value = {"locked": True}
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(
+            side_effect=[comment_response, close_response, issue_response]
+        )
+
+        with patch.object(service, "_get_client", return_value=mock_client):
+            result = await service._close_and_lock_pr(
+                123, "https://github.com/flathub/org.example.App"
+            )
+
+        assert result is True
+        methods = [call.args[0] for call in mock_client.request.call_args_list]
+        urls = [call.args[1] for call in mock_client.request.call_args_list]
+        assert "put" not in methods
+        assert not any(url.endswith("/lock") for url in urls)
+
+    @pytest.mark.asyncio
+    async def test_locks_when_not_locked(self):
+        service = MergeService()
+
+        comment_response = MagicMock()
+        comment_response.status_code = 201
+        close_response = MagicMock()
+        close_response.status_code = 200
+        issue_response = MagicMock()
+        issue_response.status_code = 200
+        issue_response.json.return_value = {"locked": False}
+        lock_response = MagicMock()
+        lock_response.status_code = 204
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(
+            side_effect=[
+                comment_response,
+                close_response,
+                issue_response,
+                lock_response,
+            ]
+        )
+
+        with patch.object(service, "_get_client", return_value=mock_client):
+            result = await service._close_and_lock_pr(
+                123, "https://github.com/flathub/org.example.App"
+            )
+
+        assert result is True
+        urls = [call.args[1] for call in mock_client.request.call_args_list]
+        assert any(url.endswith("/lock") for url in urls)
+
+
 class TestMergeServiceProcess:
     @pytest.mark.asyncio
     async def test_process_persists_row_before_repo_creation(self, db_session_maker):
@@ -415,16 +546,7 @@ class TestMergeServiceProcess:
             patch.object(
                 service,
                 "_get_pr_details",
-                new=AsyncMock(
-                    return_value={
-                        "state": "open",
-                        "head_sha": "a" * 40,
-                        "fork_repo": "user/repo",
-                        "fork_branch": "main",
-                        "fork_clone_url": "https://github.com/user/repo.git",
-                        "author": "author1",
-                    }
-                ),
+                new=AsyncMock(return_value=_pr_details()),
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
@@ -469,16 +591,7 @@ class TestMergeServiceProcess:
             patch.object(
                 service,
                 "_get_pr_details",
-                new=AsyncMock(
-                    return_value={
-                        "state": "open",
-                        "head_sha": "a" * 40,
-                        "fork_repo": "user/repo",
-                        "fork_branch": "main",
-                        "fork_clone_url": "https://github.com/user/repo.git",
-                        "author": "author1",
-                    }
-                ),
+                new=AsyncMock(return_value=_pr_details()),
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
@@ -523,16 +636,7 @@ class TestMergeServiceProcess:
             patch.object(
                 service,
                 "_get_pr_details",
-                new=AsyncMock(
-                    return_value={
-                        "state": "open",
-                        "head_sha": "a" * 40,
-                        "fork_repo": "user/repo",
-                        "fork_branch": "main",
-                        "fork_clone_url": "https://github.com/user/repo.git",
-                        "author": "author1",
-                    }
-                ),
+                new=AsyncMock(return_value=_pr_details()),
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
@@ -580,16 +684,7 @@ class TestMergeServiceProcess:
             patch.object(
                 service,
                 "_get_pr_details",
-                new=AsyncMock(
-                    return_value={
-                        "state": "open",
-                        "head_sha": "a" * 40,
-                        "fork_repo": "user/repo",
-                        "fork_branch": "main",
-                        "fork_clone_url": "https://github.com/user/repo.git",
-                        "author": "author1",
-                    }
-                ),
+                new=AsyncMock(return_value=_pr_details()),
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
@@ -674,16 +769,7 @@ class TestMergeServiceProcess:
             patch.object(
                 service,
                 "_get_pr_details",
-                new=AsyncMock(
-                    return_value={
-                        "state": "open",
-                        "head_sha": "a" * 40,
-                        "fork_repo": "user/repo",
-                        "fork_branch": "main",
-                        "fork_clone_url": "https://github.com/user/repo.git",
-                        "author": "author1",
-                    }
-                ),
+                new=AsyncMock(return_value=_pr_details()),
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
@@ -732,16 +818,7 @@ class TestMergeServiceProcess:
             patch.object(
                 service,
                 "_get_pr_details",
-                new=AsyncMock(
-                    return_value={
-                        "state": "open",
-                        "head_sha": "a" * 40,
-                        "fork_repo": "user/repo",
-                        "fork_branch": "main",
-                        "fork_clone_url": "https://github.com/user/repo.git",
-                        "author": "author1",
-                    }
-                ),
+                new=AsyncMock(return_value=_pr_details()),
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
@@ -767,6 +844,38 @@ class TestMergeServiceProcess:
             "❌ A merge operation is already in progress for this PR.",
         )
         mock_repo_exists.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_process_rejects_pr_with_blocking_label(self, db_session_maker):
+        service = MergeService()
+
+        with (
+            patch.object(service, "_is_authorized", new=AsyncMock(return_value=True)),
+            patch.object(
+                service,
+                "_get_pr_details",
+                new=AsyncMock(
+                    return_value=_pr_details(
+                        labels=["needs-review", "blocked-by-rebase"]
+                    )
+                ),
+            ),
+            patch(
+                "app.services.merge.detect_appid_from_github", new=AsyncMock()
+            ) as mock_detect,
+            patch.object(service, "_post_comment", new=AsyncMock()) as mock_comment,
+        ):
+            await service._process_merge(
+                comment_body=f"/merge head={'a' * 40}",
+                pr_number=123,
+                comment_author="reviewer",
+            )
+
+        mock_detect.assert_not_called()
+        mock_comment.assert_called_once_with(
+            123,
+            "❌ Cannot merge: PR has blocking labels: `blocked-by-rebase`",
+        )
 
     @pytest.mark.asyncio
     async def test_has_active_merge_request_accepts_legacy_creating_state(
@@ -815,6 +924,137 @@ class TestMergeServiceProcess:
             assert await service._has_active_merge_request(123) is False
 
         assert mock_get_db_factory.call_args.kwargs == {}
+
+
+class TestMergeServiceFinalize:
+    @staticmethod
+    def _make_ctx(merge_id):
+        return _FinalizeContext(
+            merge_id=merge_id,
+            pr_number=123,
+            app_id="org.example.App",
+            target_branch="master",
+            pr_head_sha="a" * 40,
+            collaborators=["author1"],
+            repo_html_url="https://github.com/flathub/org.example.App",
+        )
+
+    @staticmethod
+    async def _seed(db_session_maker, merge_id):
+        async with db_session_maker() as session:
+            session.add(
+                MergeRequest(
+                    id=merge_id,
+                    pr_number=123,
+                    app_id="org.example.App",
+                    target_branch="master",
+                    pr_head_sha="a" * 40,
+                    collaborators=["author1"],
+                    status=MergeStatus.FINALIZING,
+                    callback_token="t",
+                    comment_author="reviewer",
+                    fork_url="https://github.com/user/repo.git",
+                    fork_branch="main",
+                    repo_html_url="https://github.com/flathub/org.example.App",
+                )
+            )
+            await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_finalize_closes_and_locks_pr_when_no_errors(self, db_session_maker):
+        service = MergeService()
+        merge_id = uuid.uuid4()
+        await self._seed(db_session_maker, merge_id)
+        mock_get_db = create_realistic_get_db(db_session_maker)
+
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda: mock_get_db()),
+            patch.object(
+                service, "_remove_collaborator", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                service,
+                "_set_all_branch_protections",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                service, "_add_collaborators", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                service,
+                "_verify_branch_state",
+                new=AsyncMock(return_value=(True, True)),
+            ),
+            patch.object(service, "_set_labels", new=AsyncMock(return_value=True)),
+            patch.object(
+                service, "_clear_pr_metadata", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                service, "_close_and_lock_pr", new=AsyncMock(return_value=True)
+            ) as mock_close,
+            patch.object(service, "_post_comment", new=AsyncMock()) as mock_comment,
+        ):
+            await service._finalize(self._make_ctx(merge_id))
+
+        mock_close.assert_called_once_with(
+            123, "https://github.com/flathub/org.example.App"
+        )
+        mock_comment.assert_not_called()
+
+        async with db_session_maker() as session:
+            mr = await session.get(MergeRequest, merge_id)
+            assert mr is not None
+            assert mr.status == MergeStatus.COMPLETED
+            assert mr.error is None
+
+    @pytest.mark.asyncio
+    async def test_finalize_skips_close_and_lock_when_errors(self, db_session_maker):
+        service = MergeService()
+        merge_id = uuid.uuid4()
+        await self._seed(db_session_maker, merge_id)
+        mock_get_db = create_realistic_get_db(db_session_maker)
+
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda: mock_get_db()),
+            patch.object(
+                service, "_remove_collaborator", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                service,
+                "_set_all_branch_protections",
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                service, "_add_collaborators", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                service,
+                "_verify_branch_state",
+                new=AsyncMock(return_value=(True, True)),
+            ),
+            patch.object(service, "_set_labels", new=AsyncMock(return_value=True)),
+            patch.object(
+                service, "_clear_pr_metadata", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                service, "_close_and_lock_pr", new=AsyncMock(return_value=True)
+            ) as mock_close,
+            patch.object(service, "_post_comment", new=AsyncMock()) as mock_comment,
+        ):
+            await service._finalize(self._make_ctx(merge_id))
+
+        mock_close.assert_not_called()
+        mock_comment.assert_called_once()
+        body = mock_comment.call_args.args[1]
+        assert body.startswith("⚠️ Merge finalization completed with errors")
+        assert "branch protections" in body
+
+        async with db_session_maker() as session:
+            mr = await session.get(MergeRequest, merge_id)
+            assert mr is not None
+            assert mr.status == MergeStatus.COMPLETED
+            assert mr.error is not None
+            assert "branch protections" in mr.error
 
 
 class TestMergeCallback:

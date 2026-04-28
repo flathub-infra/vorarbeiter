@@ -37,6 +37,14 @@ class MergeRequest(Base):
                 "status IN ('creating', 'pushing', 'finalizing')"
             ),
         ),
+        sqlalchemy.Index(
+            "uq_merge_request_active_app_id",
+            "app_id",
+            unique=True,
+            sqlite_where=sqlalchemy.text(
+                "status IN ('creating', 'pushing', 'finalizing')"
+            ),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

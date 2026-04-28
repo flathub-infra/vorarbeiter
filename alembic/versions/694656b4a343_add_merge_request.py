@@ -68,6 +68,13 @@ def upgrade() -> None:
         op.f("ix_merge_request_app_id"), "merge_request", ["app_id"], unique=False
     )
     op.create_index(
+        "uq_merge_request_active_app_id",
+        "merge_request",
+        ["app_id"],
+        unique=True,
+        postgresql_where=sa.text("status IN ('creating', 'pushing', 'finalizing')"),
+    )
+    op.create_index(
         op.f("ix_merge_request_status"), "merge_request", ["status"], unique=False
     )
     op.create_index(
@@ -81,6 +88,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(op.f("ix_merge_request_created_at"), table_name="merge_request")
     op.drop_index(op.f("ix_merge_request_status"), table_name="merge_request")
+    op.drop_index("uq_merge_request_active_app_id", table_name="merge_request")
     op.drop_index(op.f("ix_merge_request_app_id"), table_name="merge_request")
     op.drop_index("uq_merge_request_active_pr_number", table_name="merge_request")
     op.drop_index(op.f("ix_merge_request_pr_number"), table_name="merge_request")
