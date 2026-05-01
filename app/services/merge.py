@@ -2,7 +2,7 @@ import asyncio
 import json
 import secrets
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -102,6 +102,14 @@ GQL_ADD_BRANCH_PROTECTION = gql(
 
 
 @dataclass(frozen=True)
+class _PrMetadata:
+    labels: list[str]
+    assignees: list[str]
+    user_reviewers: list[str]
+    team_reviewers: list[str]
+
+
+@dataclass(frozen=True)
 class _FinalizeContext:
     merge_id: uuid.UUID
     pr_number: int
@@ -110,6 +118,7 @@ class _FinalizeContext:
     pr_head_sha: str
     collaborators: list[str]
     repo_html_url: str | None
+    pr_metadata: _PrMetadata | None = None
 
 
 class MergeCallbackError(ValueError):
@@ -381,7 +390,25 @@ class MergeService:
             )
             return
 
-        await self._finalize(ctx)
+        pr_metadata = None
+        try:
+            pr_details = await self._get_pr_details(ctx.pr_number)
+        except Exception:
+            logger.exception(
+                "Failed to fetch PR metadata for finalization",
+                merge_id=str(ctx.merge_id),
+                pr_number=ctx.pr_number,
+            )
+        else:
+            if pr_details:
+                pr_metadata = _PrMetadata(
+                    labels=list(pr_details.get("labels") or []),
+                    assignees=list(pr_details.get("assignees") or []),
+                    user_reviewers=list(pr_details.get("user_reviewers") or []),
+                    team_reviewers=list(pr_details.get("team_reviewers") or []),
+                )
+
+        await self._finalize(replace(ctx, pr_metadata=pr_metadata))
 
     async def _finalize(self, ctx: _FinalizeContext) -> None:
         merge_id = ctx.merge_id
@@ -411,11 +438,14 @@ class MergeService:
             if not protected:
                 errors.append("Branch protection verification failed")
 
-            if not await self._set_labels(pr_number):
-                errors.append("Failed to set labels")
+            if ctx.pr_metadata is None:
+                errors.append("Failed to fetch PR details")
+            else:
+                if not await self._set_labels(pr_number, ctx.pr_metadata.labels):
+                    errors.append("Failed to set labels")
 
-            if not await self._clear_pr_metadata(pr_number):
-                errors.append("Failed to clear PR assignees/reviewers")
+                if not await self._clear_pr_metadata(pr_number, ctx.pr_metadata):
+                    errors.append("Failed to clear PR assignees/reviewers")
 
             if errors:
                 await self._post_comment(
@@ -461,7 +491,7 @@ class MergeService:
         async with get_db() as db:
             mr = await db.get(MergeRequest, merge_id)
             if mr:
-                mr.status = MergeStatus.COMPLETED
+                mr.status = MergeStatus.FAILED if error_msg else MergeStatus.COMPLETED
                 mr.error = error_msg
                 mr.completed_at = datetime.now(timezone.utc)
                 await db.commit()
@@ -506,6 +536,11 @@ class MergeService:
             "fork_clone_url": head_repo.get("clone_url"),
             "author": data.get("user", {}).get("login"),
             "labels": [label["name"] for label in data.get("labels") or []],
+            "assignees": [a["login"] for a in data.get("assignees") or []],
+            "user_reviewers": [
+                r["login"] for r in data.get("requested_reviewers") or []
+            ],
+            "team_reviewers": [t["slug"] for t in data.get("requested_teams") or []],
         }
 
     async def _check_repo_exists(self, appid: str) -> bool:
@@ -731,19 +766,8 @@ class MergeService:
             )
         return sha_ok, data.get("protected", False) is True
 
-    async def _set_labels(self, pr_number: int) -> bool:
+    async def _set_labels(self, pr_number: int, current_labels: list[str]) -> bool:
         client = self._get_client()
-
-        response = await client.request(
-            "get",
-            f"https://api.github.com/repos/{FLATHUB_REPO}/issues/{pr_number}/labels",
-            context={"pr_number": pr_number},
-            raise_for_status=False,
-        )
-
-        current_labels: list[str] = []
-        if response and response.status_code == 200:
-            current_labels = [label["name"] for label in response.json()]
 
         if "migrate-app-id" in current_labels:
             add_response = await client.request(
@@ -764,22 +788,13 @@ class MergeService:
             )
             return set_response is not None and set_response.status_code == 200
 
-    async def _clear_pr_metadata(self, pr_number: int) -> bool:
+    async def _clear_pr_metadata(
+        self, pr_number: int, pr_metadata: _PrMetadata
+    ) -> bool:
         client = self._get_client()
-        pr_response = await client.request(
-            "get",
-            f"https://api.github.com/repos/{FLATHUB_REPO}/pulls/{pr_number}",
-            context={"pr_number": pr_number},
-            raise_for_status=False,
-        )
-        if not pr_response or pr_response.status_code != 200:
-            logger.error("Failed to fetch PR for metadata cleanup", pr_number=pr_number)
-            return False
-
-        pr_data = pr_response.json()
-        assignees = [a["login"] for a in pr_data.get("assignees") or []]
-        user_reviewers = [r["login"] for r in pr_data.get("requested_reviewers") or []]
-        team_reviewers = [t["slug"] for t in pr_data.get("requested_teams") or []]
+        assignees = pr_metadata.assignees
+        user_reviewers = pr_metadata.user_reviewers
+        team_reviewers = pr_metadata.team_reviewers
 
         success = True
 

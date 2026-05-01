@@ -17,6 +17,7 @@ from app.services.merge import (
     MergeNotFoundError,
     MergeService,
     _FinalizeContext,
+    _PrMetadata,
 )
 from app.utils.manifest import _get_appid_from_manifest, _parse_manifest
 
@@ -44,6 +45,9 @@ def _pr_details(**overrides):
         "fork_clone_url": "https://github.com/user/repo.git",
         "author": "author1",
         "labels": [],
+        "assignees": [],
+        "user_reviewers": [],
+        "team_reviewers": [],
     }
     base.update(overrides)
     return base
@@ -111,10 +115,13 @@ class TestManifestParsing:
         result = _parse_manifest("org.example.App.yml", content)
         assert result["app-id"] == "org.example.App"
 
-    def test_parse_json_with_comments(self):
-        content = '{\n  // This is a comment\n  "app-id": "org.example.App"\n}'
+    def test_parse_json_with_line_comment_returns_empty(self):
+        content = """{
+  // This is a comment
+  "app-id": "org.example.App"
+}"""
         result = _parse_manifest("org.example.App.json", content)
-        assert result["app-id"] == "org.example.App"
+        assert result == {}
 
     def test_parse_invalid_json(self):
         result = _parse_manifest("test.json", "not json at all {{{")
@@ -135,10 +142,12 @@ class TestManifestParsing:
         assert result["app-id"] == "org.example.App"
         assert result["url"] == "https://example.com//path"
 
-    def test_parse_json_with_trailing_comma(self):
-        content = '{\n  "app-id": "org.example.App",\n}'
+    def test_parse_json_with_trailing_comma_returns_empty(self):
+        content = """{
+  "app-id": "org.example.App",
+}"""
         result = _parse_manifest("org.example.App.json", content)
-        assert result["app-id"] == "org.example.App"
+        assert result == {}
 
     def test_parse_json_with_single_quoted_strings(self):
         content = "{ 'app-id': 'org.example.App' }"
@@ -459,6 +468,50 @@ class TestMergeServiceCollaborators:
             calls = mock_client.request.call_args_list
             urls = [call.args[1] for call in calls]
             assert any("teams/custom-team" in url for url in urls)
+
+
+class TestMergeServiceLabelsAndMetadata:
+    @pytest.mark.asyncio
+    async def test_set_labels_uses_provided_labels(self):
+        service = MergeService()
+
+        response = MagicMock()
+        response.status_code = 200
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=response)
+
+        with patch.object(service, "_get_client", return_value=mock_client):
+            result = await service._set_labels(123, ["migrate-app-id"])
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        assert mock_client.request.call_args.args[0] == "post"
+        assert mock_client.request.call_args.args[1].endswith("/issues/123/labels")
+
+    @pytest.mark.asyncio
+    async def test_clear_pr_metadata_uses_provided_metadata(self):
+        service = MergeService()
+
+        response = MagicMock()
+        response.status_code = 200
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=response)
+        metadata = _PrMetadata(
+            labels=[],
+            assignees=["assignee"],
+            user_reviewers=["reviewer"],
+            team_reviewers=["team"],
+        )
+
+        with patch.object(service, "_get_client", return_value=mock_client):
+            result = await service._clear_pr_metadata(123, metadata)
+
+        assert result is True
+        methods = [call.args[0] for call in mock_client.request.call_args_list]
+        urls = [call.args[1] for call in mock_client.request.call_args_list]
+        assert methods == ["delete", "delete"]
+        assert any(url.endswith("/issues/123/assignees") for url in urls)
+        assert any(url.endswith("/pulls/123/requested_reviewers") for url in urls)
 
 
 class TestMergeServiceCloseAndLock:
@@ -937,6 +990,12 @@ class TestMergeServiceFinalize:
             pr_head_sha="a" * 40,
             collaborators=["author1"],
             repo_html_url="https://github.com/flathub/org.example.App",
+            pr_metadata=_PrMetadata(
+                labels=[],
+                assignees=[],
+                user_reviewers=[],
+                team_reviewers=[],
+            ),
         )
 
     @staticmethod
@@ -1052,7 +1111,7 @@ class TestMergeServiceFinalize:
         async with db_session_maker() as session:
             mr = await session.get(MergeRequest, merge_id)
             assert mr is not None
-            assert mr.status == MergeStatus.COMPLETED
+            assert mr.status == MergeStatus.FAILED
             assert mr.error is not None
             assert "branch protections" in mr.error
 
@@ -1085,6 +1144,18 @@ class TestMergeCallback:
         with (
             patch("app.services.merge.get_db") as mock_get_db_factory,
             patch.object(service, "_finalize", new_callable=AsyncMock) as mock_finalize,
+            patch.object(
+                service,
+                "_get_pr_details",
+                new=AsyncMock(
+                    return_value=_pr_details(
+                        labels=["migrate-app-id"],
+                        assignees=["assignee"],
+                        user_reviewers=["reviewer"],
+                        team_reviewers=["team"],
+                    )
+                ),
+            ),
         ):
             from tests.conftest import create_mock_get_db
 
@@ -1106,6 +1177,13 @@ class TestMergeCallback:
 
             await service.handle_callback(merge_id, token, "success")
             mock_finalize.assert_called_once()
+            ctx = mock_finalize.call_args.args[0]
+            assert ctx.pr_metadata == _PrMetadata(
+                labels=["migrate-app-id"],
+                assignees=["assignee"],
+                user_reviewers=["reviewer"],
+                team_reviewers=["team"],
+            )
 
     @pytest.mark.asyncio
     async def test_callback_invalid_token(self, db_session_maker):
