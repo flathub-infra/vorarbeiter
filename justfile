@@ -135,7 +135,7 @@ validate-manifest app_id:
             ;;
     esac
 
-    flatpak-builder-lint --gha-format --exceptions --exceptions-repo "$exceptions_repo" --debug manifest "$manifest"
+    flatpak-builder-lint --gha-format --exceptions --exceptions-repo "$exceptions_repo" manifest "$manifest"
 
 download-sources app_id:
     #!/usr/bin/env bash
@@ -262,7 +262,7 @@ validate-build:
             ;;
     esac
 
-    lint_args=(--gha-format --exceptions --debug --exceptions-repo "$exceptions_repo")
+    lint_args=(--gha-format --exceptions --exceptions-repo "$exceptions_repo")
 
     if [ "$should_janitor" == "yes" ]; then
         lint_args+=(--janitor-exceptions)
