@@ -85,6 +85,7 @@ jobs:
         run: |
           mkdir -p ${GITHUB_WORKSPACE}/work
           mkdir -p ${GITHUB_WORKSPACE}/work/tmp
+          mkdir -p ${GITHUB_WORKSPACE}/work/.local/state
           chmod -R 777 ${GITHUB_WORKSPACE}/work
 
       - name: Download justfile and seccomp profile
@@ -214,6 +215,7 @@ jobs:
             -e REPO \
             -e GITHUB_ACTIONS \
             -e TMPDIR=/work/tmp \
+            -e XDG_STATE_HOME=/work/.local/state \
             -e REF \
             -e PR_TARGET_BRANCH \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
@@ -238,6 +240,14 @@ jobs:
               curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $CALLBACK_TOKEN" -d "$JSON_DATA" "${{ inputs.callback_url }}/metadata"
             fi
           fi
+
+      - name: Dump linter log
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          LOG_FILE="${GITHUB_WORKSPACE}/work/.local/state/flatpak_builder_lint/linter.log"
+          cat "$LOG_FILE" || true
 
   setup-matrix:
     runs-on: ubuntu-latest
@@ -336,6 +346,7 @@ jobs:
       - name: Create work directory
         run: |
           mkdir -p ${GITHUB_WORKSPACE}/work/tmp
+          mkdir -p ${GITHUB_WORKSPACE}/work/.local/state
           mkdir -p ${GITHUB_WORKSPACE}/flatpak
           chmod -R 777 ${GITHUB_WORKSPACE}/work
 
@@ -581,6 +592,7 @@ jobs:
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --entrypoint="" \
             -e TMPDIR=/work/tmp \
+            -e XDG_STATE_HOME=/work/.local/state \
             -v "${GITHUB_WORKSPACE}/work:/work" \
             -w /work \
             -e REPO \
@@ -638,6 +650,14 @@ jobs:
         run: |
           timeout 5 df -hHl || true
           timeout 30 du -sh "${GITHUB_WORKSPACE}/work/repo" || true
+
+      - name: Dump linter log
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          LOG_FILE="${GITHUB_WORKSPACE}/work/.local/state/flatpak_builder_lint/linter.log"
+          cat "$LOG_FILE" || true
 
       - name: Report build cost
         if: ${{ inputs.build_type != 'default' && always() }}
