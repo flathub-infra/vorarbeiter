@@ -2,7 +2,6 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi import status as http_status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,13 +15,10 @@ from app.schemas.pipelines import (
     PipelineSummary,
     PipelineTriggerRequest,
     PipelineType,
-    PublishSummary,
     ReprocheckStatus,
 )
-from app.services import pipeline_service, publishing_service
-from app.services.job_monitor import JobMonitor
+from app.services import pipeline_service
 
-logger = structlog.get_logger(__name__)
 pipelines_router = APIRouter(prefix="/api", tags=["pipelines"])
 security = HTTPBearer()
 
@@ -176,7 +172,7 @@ async def list_pipelines(
 
 
 @pipelines_router.get(
-    "/pipelines/{pipeline_id}",
+    "/pipelines/{pipeline_id:uuid}",
     response_model=PipelineResponse,
     status_code=http_status.HTTP_200_OK,
 )
@@ -195,7 +191,7 @@ async def get_pipeline(
 
 
 @pipelines_router.post(
-    "/pipelines/{pipeline_id}/callback/metadata",
+    "/pipelines/{pipeline_id:uuid}/callback/metadata",
     status_code=http_status.HTTP_200_OK,
 )
 async def pipeline_metadata_callback(
@@ -211,7 +207,7 @@ async def pipeline_metadata_callback(
 
 
 @pipelines_router.post(
-    "/pipelines/{pipeline_id}/callback/log_url",
+    "/pipelines/{pipeline_id:uuid}/callback/log_url",
     status_code=http_status.HTTP_200_OK,
 )
 async def pipeline_log_url_callback(
@@ -228,7 +224,7 @@ async def pipeline_log_url_callback(
 
 
 @pipelines_router.post(
-    "/pipelines/{pipeline_id}/callback/status",
+    "/pipelines/{pipeline_id:uuid}/callback/status",
     status_code=http_status.HTTP_200_OK,
 )
 async def pipeline_status_callback(
@@ -245,7 +241,7 @@ async def pipeline_status_callback(
 
 
 @pipelines_router.post(
-    "/pipelines/{pipeline_id}/callback/reprocheck",
+    "/pipelines/{pipeline_id:uuid}/callback/reprocheck",
     status_code=http_status.HTTP_200_OK,
 )
 async def pipeline_reprocheck_callback(
@@ -262,7 +258,7 @@ async def pipeline_reprocheck_callback(
 
 
 @pipelines_router.post(
-    "/pipelines/{pipeline_id}/callback/cost",
+    "/pipelines/{pipeline_id:uuid}/callback/cost",
     status_code=http_status.HTTP_200_OK,
 )
 async def pipeline_cost_callback(
@@ -278,7 +274,7 @@ async def pipeline_cost_callback(
 
 
 @pipelines_router.get(
-    "/pipelines/{pipeline_id}/log_url",
+    "/pipelines/{pipeline_id:uuid}/log_url",
 )
 async def redirect_to_log_url(
     pipeline_id: uuid.UUID,
@@ -300,162 +296,3 @@ async def redirect_to_log_url(
         response.status_code = http_status.HTTP_307_TEMPORARY_REDIRECT
         response.headers["Location"] = pipeline.log_url
         return {}
-
-
-@pipelines_router.post(
-    "/pipelines/publish",
-    response_model=PublishSummary,
-    status_code=http_status.HTTP_200_OK,
-)
-async def publish_pipelines(
-    token: str = Depends(verify_token),
-):
-    async with get_db() as db:
-        result = await publishing_service.publish_pipelines(db)
-        return PublishSummary(
-            published=result.published,
-            superseded=result.superseded,
-            errors=result.errors,
-        )
-
-
-@pipelines_router.post(
-    "/pipelines/check-jobs",
-    status_code=http_status.HTTP_200_OK,
-)
-async def check_pipeline_jobs(
-    token: str = Depends(verify_token),
-):
-    async with get_db() as db:
-        from sqlalchemy import select, or_
-        from datetime import datetime, timedelta, timezone
-
-        cutoff_date = datetime.now(tz=timezone.utc) - timedelta(hours=24)
-
-        query = select(Pipeline).where(
-            or_(
-                (Pipeline.created_at > cutoff_date)
-                & or_(
-                    (Pipeline.status == PipelineStatus.SUCCEEDED)
-                    & Pipeline.commit_job_id.isnot(None),
-                    (Pipeline.status == PipelineStatus.COMMITTED)
-                    & Pipeline.publish_job_id.isnot(None),
-                    (Pipeline.status == PipelineStatus.PUBLISHING)
-                    & Pipeline.update_repo_job_id.isnot(None),
-                    (Pipeline.status == PipelineStatus.SUCCEEDED)
-                    & Pipeline.build_id.isnot(None)
-                    & Pipeline.commit_job_id.is_(None),
-                    (Pipeline.status == PipelineStatus.COMMITTED)
-                    & Pipeline.build_id.isnot(None)
-                    & Pipeline.publish_job_id.is_(None),
-                    (Pipeline.status == PipelineStatus.PUBLISHED)
-                    & (Pipeline.published_at > cutoff_date)
-                    & (
-                        Pipeline.publish_job_id.isnot(None)
-                        | Pipeline.update_repo_job_id.isnot(None)
-                    ),
-                ),
-                (Pipeline.status == PipelineStatus.PUBLISHING)
-                & Pipeline.update_repo_job_id.is_(None)
-                & Pipeline.flat_manager_repo.in_(["stable", "beta"]),
-            )
-        )
-        result = await db.execute(query)
-        pipelines = list(result.scalars().all())
-
-        job_monitor = JobMonitor(db=db)
-        updated_count = 0
-
-        for pipeline in pipelines:
-            if await job_monitor.check_and_update_pipeline_jobs(pipeline):
-                updated_count += 1
-
-        if updated_count > 0:
-            await db.commit()
-
-        return {
-            "status": "completed",
-            "checked_pipelines": len(pipelines),
-            "updated_pipelines": updated_count,
-        }
-
-
-@pipelines_router.post(
-    "/github-tasks/process",
-    status_code=http_status.HTTP_200_OK,
-)
-async def process_github_tasks(
-    token: str = Depends(verify_token),
-):
-    from app.services.github_task import GitHubTaskService
-
-    async with get_db() as db:
-        service = GitHubTaskService()
-        processed = await service.process_pending_tasks(db)
-        await db.commit()
-
-        return {
-            "status": "completed",
-            "processed_tasks": processed,
-        }
-
-
-@pipelines_router.post(
-    "/github-tasks/cleanup",
-    status_code=http_status.HTTP_200_OK,
-)
-async def cleanup_github_tasks(
-    token: str = Depends(verify_token),
-    days: int = 7,
-):
-    from app.services.github_task import GitHubTaskService
-
-    async with get_db() as db:
-        service = GitHubTaskService()
-        deleted = await service.cleanup_old_tasks(db, days)
-        await db.commit()
-
-        return {
-            "status": "completed",
-            "deleted_tasks": deleted,
-        }
-
-
-@pipelines_router.post(
-    "/pipelines/cleanup-stale",
-    status_code=http_status.HTTP_200_OK,
-)
-async def cleanup_stale_pipelines(
-    token: str = Depends(verify_token),
-    hours: int = 24,
-):
-    async with get_db() as db:
-        from datetime import datetime, timedelta, timezone
-
-        from sqlalchemy import select
-
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
-
-        query = select(Pipeline).where(
-            Pipeline.status == PipelineStatus.RUNNING,
-            Pipeline.created_at < cutoff,
-        )
-        result = await db.execute(query)
-        stale_pipelines = list(result.scalars().all())
-
-        cancelled_ids = []
-        for pipeline in stale_pipelines:
-            pipeline.status = PipelineStatus.CANCELLED
-            pipeline.finished_at = datetime.now(tz=timezone.utc)
-            cancelled_ids.append(str(pipeline.id))
-
-        if stale_pipelines:
-            await db.commit()
-            logger.info(
-                "Cancelled stale pipelines", count=len(cancelled_ids), ids=cancelled_ids
-            )
-
-        return {
-            "status": "completed",
-            "cancelled_pipelines": len(stale_pipelines),
-        }

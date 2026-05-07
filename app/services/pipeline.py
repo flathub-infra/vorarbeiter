@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
@@ -155,6 +156,32 @@ class PipelineService:
             raise ValueError(
                 f"Invalid triggered_by value: {triggered_by}. Valid values are: {valid_values}"
             )
+
+    async def cancel_stale_running_pipelines(
+        self, db: AsyncSession, hours: int = 24
+    ) -> list[str]:
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
+
+        query = select(Pipeline).where(
+            Pipeline.status == PipelineStatus.RUNNING,
+            Pipeline.created_at < cutoff,
+        )
+        result = await db.execute(query)
+        stale_pipelines = list(result.scalars().all())
+
+        cancelled_at = datetime.now(tz=timezone.utc)
+        cancelled_ids = []
+        for pipeline in stale_pipelines:
+            pipeline.status = PipelineStatus.CANCELLED
+            pipeline.finished_at = cancelled_at
+            cancelled_ids.append(str(pipeline.id))
+
+        if cancelled_ids:
+            logger.info(
+                "Cancelled stale pipelines", count=len(cancelled_ids), ids=cancelled_ids
+            )
+
+        return cancelled_ids
 
     async def trigger_manual_pipeline(
         self, app_id: str, params: dict[str, Any]

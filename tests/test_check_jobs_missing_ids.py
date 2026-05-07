@@ -8,8 +8,8 @@ from app.models import Pipeline, PipelineStatus
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_endpoint_fetches_missing_ids(
-    client, db_session_maker, auth_headers
+async def test_check_jobs_fetches_missing_ids(
+    db_session_maker, run_check_all_active_pipelines
 ):
     session_maker = db_session_maker
 
@@ -44,20 +44,14 @@ async def test_check_jobs_endpoint_fetches_missing_ids(
         {"build": {"commit_job_id": 789, "publish_job_id": 101112}},
         {"build": {"commit_job_id": 456, "publish_job_id": 131415}},
     ]
-    mock_fm_instance.get_job.return_value = {"status": 1}  # STARTED
+    mock_fm_instance.get_job.return_value = {"status": 1}
 
     with patch(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        response = client.post(
-            "/api/pipelines/check-jobs",
-            headers=auth_headers,
-        )
+        result = await run_check_all_active_pipelines(session_maker)
 
-        assert response.status_code == 200
-        result = response.json()
-        assert result["status"] == "completed"
         assert result["checked_pipelines"] == 2
         assert result["updated_pipelines"] == 2
 
@@ -76,8 +70,8 @@ async def test_check_jobs_endpoint_fetches_missing_ids(
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_endpoint_handles_partial_missing_ids(
-    client, db_session_maker, auth_headers
+async def test_check_jobs_handles_partial_missing_ids(
+    db_session_maker, run_check_all_active_pipelines
 ):
     session_maker = db_session_maker
 
@@ -105,13 +99,8 @@ async def test_check_jobs_endpoint_handles_partial_missing_ids(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        response = client.post(
-            "/api/pipelines/check-jobs",
-            headers=auth_headers,
-        )
+        result = await run_check_all_active_pipelines(session_maker)
 
-        assert response.status_code == 200
-        result = response.json()
         assert result["checked_pipelines"] == 1
         assert result["updated_pipelines"] == 1
 
@@ -124,8 +113,8 @@ async def test_check_jobs_endpoint_handles_partial_missing_ids(
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_endpoint_handles_fetch_error(
-    client, db_session_maker, auth_headers
+async def test_check_jobs_handles_fetch_error(
+    db_session_maker, run_check_all_active_pipelines
 ):
     session_maker = db_session_maker
 
@@ -150,14 +139,8 @@ async def test_check_jobs_endpoint_handles_fetch_error(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        response = client.post(
-            "/api/pipelines/check-jobs",
-            headers=auth_headers,
-        )
+        result = await run_check_all_active_pipelines(session_maker)
 
-        assert response.status_code == 200
-        result = response.json()
-        assert result["status"] == "completed"
         assert result["checked_pipelines"] == 1
         assert result["updated_pipelines"] == 0
 

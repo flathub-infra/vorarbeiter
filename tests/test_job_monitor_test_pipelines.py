@@ -9,9 +9,8 @@ from app.models import Pipeline, PipelineStatus
 
 @pytest.mark.asyncio
 async def test_check_jobs_skips_publish_for_test_pipelines(
-    client, db_session_maker, auth_headers
+    db_session_maker, run_check_all_active_pipelines
 ):
-    """Test that test pipelines skip publish and update-repo processing"""
     session_maker = db_session_maker
 
     test_pipeline = Pipeline(
@@ -21,7 +20,7 @@ async def test_check_jobs_skips_publish_for_test_pipelines(
         commit_job_id=12345,
         publish_job_id=12346,
         build_id=1,
-        flat_manager_repo="test",  # Test pipeline
+        flat_manager_repo="test",
         params={},
     )
 
@@ -32,7 +31,7 @@ async def test_check_jobs_skips_publish_for_test_pipelines(
         commit_job_id=12347,
         publish_job_id=12348,
         build_id=2,
-        flat_manager_repo="stable",  # Stable pipeline
+        flat_manager_repo="stable",
         params={},
     )
 
@@ -43,8 +42,8 @@ async def test_check_jobs_skips_publish_for_test_pipelines(
     mock_fm_instance = AsyncMock()
     mock_fm_instance.get_job = AsyncMock(
         return_value={
-            "status": 2,  # ENDED
-            "kind": 1,  # PUBLISH
+            "status": 2,
+            "kind": 1,
             "results": '{"update-repo-job": 99999}',
         }
     )
@@ -53,13 +52,7 @@ async def test_check_jobs_skips_publish_for_test_pipelines(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        response = client.post(
-            "/api/pipelines/check-jobs",
-            headers=auth_headers,
-        )
-
-        assert response.status_code == 200
-        result = response.json()
+        result = await run_check_all_active_pipelines(session_maker)
 
         assert result["checked_pipelines"] == 2
         assert result["updated_pipelines"] == 1
@@ -80,9 +73,8 @@ async def test_check_jobs_skips_publish_for_test_pipelines(
 
 @pytest.mark.asyncio
 async def test_fetch_missing_ids_skips_publish_for_test_pipelines(
-    client, db_session_maker, auth_headers
+    db_session_maker, run_check_all_active_pipelines
 ):
-    """Test that test pipelines don't fetch publish_job_id"""
     session_maker = db_session_maker
 
     test_pipeline = Pipeline(
@@ -104,19 +96,14 @@ async def test_fetch_missing_ids_skips_publish_for_test_pipelines(
     mock_fm_instance.get_build_info.return_value = {
         "build": {"commit_job_id": 789, "publish_job_id": 101112}
     }
-    mock_fm_instance.get_job.return_value = {"status": 1}  # STARTED
+    mock_fm_instance.get_job.return_value = {"status": 1}
 
     with patch(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        response = client.post(
-            "/api/pipelines/check-jobs",
-            headers=auth_headers,
-        )
+        result = await run_check_all_active_pipelines(session_maker)
 
-        assert response.status_code == 200
-        result = response.json()
         assert result["checked_pipelines"] == 1
         assert result["updated_pipelines"] == 1
 
@@ -125,14 +112,13 @@ async def test_fetch_missing_ids_skips_publish_for_test_pipelines(
             db_result = await session.execute(query)
             updated_pipeline = db_result.scalars().first()
             assert updated_pipeline.commit_job_id == 789
-            assert updated_pipeline.publish_job_id is None  # Should NOT be fetched
+            assert updated_pipeline.publish_job_id is None
 
 
 @pytest.mark.asyncio
 async def test_publishing_status_skipped_for_test_pipelines(
-    client, db_session_maker, auth_headers
+    db_session_maker, run_check_all_active_pipelines
 ):
-    """Test that PUBLISHING status pipelines are skipped for test repos"""
     session_maker = db_session_maker
 
     test_pipeline = Pipeline(
@@ -158,15 +144,10 @@ async def test_publishing_status_skipped_for_test_pipelines(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        response = client.post(
-            "/api/pipelines/check-jobs",
-            headers=auth_headers,
-        )
+        result = await run_check_all_active_pipelines(session_maker)
 
-        assert response.status_code == 200
-        result = response.json()
         assert result["checked_pipelines"] == 1
-        assert result["updated_pipelines"] == 0  # No updates
+        assert result["updated_pipelines"] == 0
 
         mock_fm_instance.get_job.assert_not_called()
 

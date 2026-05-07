@@ -9,7 +9,7 @@ from app.models import Pipeline, PipelineStatus
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_endpoint_success(client, db_session_maker, auth_headers):
+async def test_check_jobs_success(db_session_maker, run_check_all_active_pipelines):
     session_maker = db_session_maker
 
     pipeline1 = Pipeline(
@@ -63,80 +63,66 @@ async def test_check_jobs_endpoint_success(client, db_session_maker, auth_header
         return_value={"build": {"commit_job_id": 12349, "publish_job_id": 12350}}
     )
 
-    with patch(
-        "app.services.job_monitor.get_flat_manager_client",
-        return_value=mock_fm_instance,
+    with (
+        patch(
+            "app.services.job_monitor.get_flat_manager_client",
+            return_value=mock_fm_instance,
+        ),
+        patch("app.services.job_monitor.JobMonitor._notify_committed"),
+        patch("app.services.job_monitor.JobMonitor._notify_flat_manager_job_completed"),
+        patch("app.services.job_monitor.JobMonitor._notify_flat_manager_job_started"),
     ):
-        with patch("app.services.job_monitor.JobMonitor._notify_committed"):
-            with patch(
-                "app.services.job_monitor.JobMonitor._notify_flat_manager_job_completed"
-            ):
-                with patch(
-                    "app.services.job_monitor.JobMonitor._notify_flat_manager_job_started"
-                ):
-                    mock_fm_instance.get_job = AsyncMock(
-                        side_effect=[
-                            {"status": 2},
-                            {"status": 1},
-                            {"status": 1},
-                            {
-                                "status": 2,
-                                "kind": 1,
-                                "results": '{"update-repo-job": 99999}',
-                            },
-                        ]
-                    )
+        mock_fm_instance.get_job = AsyncMock(
+            side_effect=[
+                {"status": 2},
+                {"status": 1},
+                {"status": 1},
+                {
+                    "status": 2,
+                    "kind": 1,
+                    "results": '{"update-repo-job": 99999}',
+                },
+            ]
+        )
 
-                    response = client.post(
-                        "/api/pipelines/check-jobs",
-                        headers=auth_headers,
-                    )
+        result = await run_check_all_active_pipelines(session_maker)
 
-                    assert response.status_code == 200
-                    result = response.json()
-                    assert result["status"] == "completed"
-                    assert result["checked_pipelines"] == 4
-                    assert result["updated_pipelines"] == 2
+        assert result["checked_pipelines"] == 4
+        assert result["updated_pipelines"] == 2
 
-                    async with session_maker() as session:
-                        query = select(Pipeline).where(Pipeline.id == pipeline1.id)
-                        db_result = await session.execute(query)
-                        updated_pipeline = db_result.scalars().first()
-                        assert updated_pipeline.status == PipelineStatus.COMMITTED
+        async with session_maker() as session:
+            query = select(Pipeline).where(Pipeline.id == pipeline1.id)
+            db_result = await session.execute(query)
+            updated_pipeline = db_result.scalars().first()
+            assert updated_pipeline.status == PipelineStatus.COMMITTED
 
-                        query = select(Pipeline).where(Pipeline.id == pipeline3.id)
-                        db_result = await session.execute(query)
-                        updated_pipeline3 = db_result.scalars().first()
-                        assert updated_pipeline3.commit_job_id == 12349
+            query = select(Pipeline).where(Pipeline.id == pipeline3.id)
+            db_result = await session.execute(query)
+            updated_pipeline3 = db_result.scalars().first()
+            assert updated_pipeline3.commit_job_id == 12349
 
 
-@pytest.mark.asyncio
-async def test_check_jobs_endpoint_unauthorized(client):
+def test_check_jobs_endpoint_removed(client):
     response = client.post(
         "/api/pipelines/check-jobs",
         headers={"Authorization": "Bearer wrong_token"},
     )
 
-    assert response.status_code == 401
-    assert response.json()["detail"] == "Invalid API token"
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_endpoint_no_pipelines(client, db_session_maker, auth_headers):
-    response = client.post(
-        "/api/pipelines/check-jobs",
-        headers=auth_headers,
-    )
+async def test_check_jobs_no_pipelines(
+    db_session_maker, run_check_all_active_pipelines
+):
+    result = await run_check_all_active_pipelines(db_session_maker)
 
-    assert response.status_code == 200
-    result = response.json()
-    assert result["status"] == "completed"
     assert result["checked_pipelines"] == 0
     assert result["updated_pipelines"] == 0
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_endpoint_all_failed(client, db_session_maker, auth_headers):
+async def test_check_jobs_all_failed(db_session_maker, run_check_all_active_pipelines):
     session_maker = db_session_maker
 
     pipeline = Pipeline(
@@ -163,14 +149,8 @@ async def test_check_jobs_endpoint_all_failed(client, db_session_maker, auth_hea
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        response = client.post(
-            "/api/pipelines/check-jobs",
-            headers=auth_headers,
-        )
+        result = await run_check_all_active_pipelines(session_maker)
 
-        assert response.status_code == 200
-        result = response.json()
-        assert result["status"] == "completed"
         assert result["checked_pipelines"] == 1
         assert result["updated_pipelines"] == 1
 
@@ -182,15 +162,13 @@ async def test_check_jobs_endpoint_all_failed(client, db_session_maker, auth_hea
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_endpoint_includes_published_pipelines(
-    client, db_session_maker, auth_headers
+async def test_check_jobs_includes_published_pipelines(
+    db_session_maker, run_check_all_active_pipelines
 ):
-    """Test that check-jobs endpoint includes PUBLISHED pipelines with job IDs"""
     session_maker = db_session_maker
 
     now = datetime.now()
 
-    # PUBLISHED pipeline with publish_job_id - should be included
     published_pipeline_with_publish = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.PublishedApp1",
@@ -202,7 +180,6 @@ async def test_check_jobs_endpoint_includes_published_pipelines(
         params={},
     )
 
-    # PUBLISHED pipeline with update_repo_job_id - should be included
     published_pipeline_with_update = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.PublishedApp2",
@@ -214,7 +191,6 @@ async def test_check_jobs_endpoint_includes_published_pipelines(
         params={},
     )
 
-    # PUBLISHED pipeline with no job IDs - should NOT be included
     published_pipeline_no_jobs = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.PublishedApp3",
@@ -225,7 +201,6 @@ async def test_check_jobs_endpoint_includes_published_pipelines(
         params={},
     )
 
-    # Old PUBLISHED pipeline - should NOT be included (published > 24h ago)
     old_published_pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.OldApp",
@@ -249,20 +224,13 @@ async def test_check_jobs_endpoint_includes_published_pipelines(
         await session.commit()
 
     mock_fm_instance = AsyncMock()
-    mock_fm_instance.get_job = AsyncMock(return_value={"status": 3})  # ENDED
+    mock_fm_instance.get_job = AsyncMock(return_value={"status": 3})
 
     with patch(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        response = client.post(
-            "/api/pipelines/check-jobs",
-            headers=auth_headers,
-        )
+        result = await run_check_all_active_pipelines(session_maker)
 
-        assert response.status_code == 200
-        result = response.json()
-        assert result["status"] == "completed"
-        # Should include 2 PUBLISHED pipelines (with publish_job_id and update_repo_job_id)
         assert result["checked_pipelines"] == 2
         assert result["updated_pipelines"] == 2

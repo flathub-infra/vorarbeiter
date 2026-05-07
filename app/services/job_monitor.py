@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
@@ -43,6 +43,51 @@ class JobMonitor:
     def __init__(self, db: AsyncSession | None = None):
         self.flat_manager = get_flat_manager_client()
         self.db = db
+
+    async def check_all_active_pipelines(self, db: AsyncSession) -> dict[str, int]:
+        cutoff_date = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+
+        query = select(Pipeline).where(
+            or_(
+                (Pipeline.created_at > cutoff_date)
+                & or_(
+                    (Pipeline.status == PipelineStatus.SUCCEEDED)
+                    & Pipeline.commit_job_id.isnot(None),
+                    (Pipeline.status == PipelineStatus.COMMITTED)
+                    & Pipeline.publish_job_id.isnot(None),
+                    (Pipeline.status == PipelineStatus.PUBLISHING)
+                    & Pipeline.update_repo_job_id.isnot(None),
+                    (Pipeline.status == PipelineStatus.SUCCEEDED)
+                    & Pipeline.build_id.isnot(None)
+                    & Pipeline.commit_job_id.is_(None),
+                    (Pipeline.status == PipelineStatus.COMMITTED)
+                    & Pipeline.build_id.isnot(None)
+                    & Pipeline.publish_job_id.is_(None),
+                    (Pipeline.status == PipelineStatus.PUBLISHED)
+                    & (Pipeline.published_at > cutoff_date)
+                    & (
+                        Pipeline.publish_job_id.isnot(None)
+                        | Pipeline.update_repo_job_id.isnot(None)
+                    ),
+                ),
+                (Pipeline.status == PipelineStatus.PUBLISHING)
+                & Pipeline.update_repo_job_id.is_(None)
+                & Pipeline.flat_manager_repo.in_(["stable", "beta"]),
+            )
+        )
+        result = await db.execute(query)
+        pipelines = list(result.scalars().all())
+
+        updated_count = 0
+
+        for pipeline in pipelines:
+            if await self.check_and_update_pipeline_jobs(pipeline):
+                updated_count += 1
+
+        return {
+            "checked_pipelines": len(pipelines),
+            "updated_pipelines": updated_count,
+        }
 
     async def check_and_update_pipeline_jobs(self, pipeline: Pipeline) -> bool:
         updated = False

@@ -13,6 +13,7 @@ from app.main import app
 from app.config import settings
 from app.database import engine as app_engine
 from app.models import Base
+from app.services.job_monitor import JobMonitor
 import app.utils.flat_manager as flat_manager_module
 import app.utils.github as github_module
 
@@ -73,6 +74,17 @@ def client():
 @pytest.fixture
 def auth_headers():
     return {"Authorization": "Bearer raeVenga1eez3Geeca"}
+
+
+@pytest.fixture
+def run_check_all_active_pipelines():
+    async def run(session_maker):
+        async with session_maker() as session:
+            result = await JobMonitor(db=session).check_all_active_pipelines(session)
+            await session.commit()
+            return result
+
+    return run
 
 
 def create_mock_get_db(mock_session):
