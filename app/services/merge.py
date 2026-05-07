@@ -447,6 +447,10 @@ class MergeService:
                 if not await self._clear_pr_metadata(pr_number, ctx.pr_metadata):
                     errors.append("Failed to clear PR assignees/reviewers")
 
+            repo_url = ctx.repo_html_url or f"https://github.com/flathub/{appid}"
+            if not await self._close_and_lock_pr(pr_number, repo_url):
+                errors.append("Failed to close/lock PR")
+
             if errors:
                 await self._post_comment(
                     pr_number,
@@ -454,10 +458,6 @@ class MergeService:
                     "succeeded but some post-merge steps require manual "
                     "intervention:\n\n" + "\n".join(f"- {e}" for e in errors),
                 )
-            else:
-                repo_url = ctx.repo_html_url or f"https://github.com/flathub/{appid}"
-                if not await self._close_and_lock_pr(pr_number, repo_url):
-                    errors.append("Failed to close/lock PR")
         except Exception as err:
             logger.exception(
                 "Unexpected error during merge finalization",

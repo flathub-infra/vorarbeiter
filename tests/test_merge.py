@@ -1067,7 +1067,9 @@ class TestMergeServiceFinalize:
             assert mr.error is None
 
     @pytest.mark.asyncio
-    async def test_finalize_skips_close_and_lock_when_errors(self, db_session_maker):
+    async def test_finalize_closes_and_locks_pr_even_with_errors(
+        self, db_session_maker
+    ):
         service = MergeService()
         merge_id = uuid.uuid4()
         await self._seed(db_session_maker, merge_id)
@@ -1102,7 +1104,9 @@ class TestMergeServiceFinalize:
         ):
             await service._finalize(self._make_ctx(merge_id))
 
-        mock_close.assert_not_called()
+        mock_close.assert_called_once_with(
+            123, "https://github.com/flathub/org.example.App"
+        )
         mock_comment.assert_called_once()
         body = mock_comment.call_args.args[1]
         assert body.startswith("⚠️ Merge finalization completed with errors")
