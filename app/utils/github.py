@@ -111,9 +111,16 @@ class GitHubAPIClient:
         async with httpx.AsyncClient() as client:
             for attempt in range(retries + 1):
                 try:
-                    response = await getattr(client, method)(
-                        url, headers=headers, **request_kwargs
-                    )
+                    if method.lower() == "delete" and any(
+                        k in request_kwargs for k in ("content", "json", "data")
+                    ):
+                        response = await client.request(
+                            "DELETE", url, headers=headers, **request_kwargs
+                        )
+                    else:
+                        response = await getattr(client, method)(
+                            url, headers=headers, **request_kwargs
+                        )
 
                     if self._is_rate_limit_error(response):
                         wait_time = self._get_rate_limit_wait_time(response)
