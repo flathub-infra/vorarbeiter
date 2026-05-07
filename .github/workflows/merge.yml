@@ -59,7 +59,9 @@ jobs:
           set -euo pipefail
           FLATHUBBOT_TOKEN="$(jq -r '.inputs.flathubbot_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$FLATHUBBOT_TOKEN"
-          git -c http.extraheader="Authorization: Bearer $FLATHUBBOT_TOKEN" \
+          AUTH_B64="$(printf 'x-access-token:%s' "$FLATHUBBOT_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_B64"
+          git -c http.extraheader="Authorization: Basic $AUTH_B64" \
               push "https://github.com/flathub/$APPID.git" \
               "FETCH_HEAD:refs/heads/$TARGET_BRANCH"
 
