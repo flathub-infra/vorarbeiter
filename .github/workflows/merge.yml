@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           git init -q repo
           cd repo
-          git fetch --depth 1 "$FORK_URL" "$EXPECTED_SHA"
+          git fetch "$FORK_URL" "$EXPECTED_SHA"
           fetched_sha=$(git rev-parse FETCH_HEAD)
           [ "$fetched_sha" = "$EXPECTED_SHA" ] || exit 1
 
