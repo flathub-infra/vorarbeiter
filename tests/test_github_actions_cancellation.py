@@ -1,7 +1,7 @@
 import pytest
 import zipfile
 from io import BytesIO
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch
 
 from app.services.github_actions import GitHubActionsService
 
@@ -9,19 +9,6 @@ from app.services.github_actions import GitHubActionsService
 @pytest.fixture
 def github_actions_service():
     return GitHubActionsService()
-
-
-@pytest.fixture
-def mock_httpx_get():
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.get = AsyncMock(return_value=mock_response)
-        mock_client_instance.post = AsyncMock(return_value=mock_response)
-        MockClient.return_value.__aenter__.return_value = mock_client_instance
-        yield mock_client_instance.get, mock_response
 
 
 @pytest.fixture
@@ -124,105 +111,108 @@ def empty_annotations():
 
 @pytest.mark.asyncio
 async def test_get_workflow_run_details_success(
-    github_actions_service, mock_httpx_get, cancelled_run_response
+    github_actions_service, mock_httpx, cancelled_run_response
 ):
     """Test successful workflow run details retrieval."""
-    mock_get, mock_response = mock_httpx_get
-    mock_response.json.return_value = cancelled_run_response
+    mock_httpx.set_response("request", json_data=cancelled_run_response)
 
-    result = await github_actions_service.get_workflow_run_details(
-        "owner", "repo", 12345
-    )
+    with mock_httpx.patch():
+        result = await github_actions_service.get_workflow_run_details(
+            "owner", "repo", 12345
+        )
 
     assert result == cancelled_run_response
-    mock_get.assert_called_once()
+    mock_httpx.request.assert_called_once()
+    call_args = mock_httpx.request.call_args
+    assert call_args[0][0] == "GET"
     assert (
-        "https://api.github.com/repos/owner/repo/actions/runs/12345"
-        in mock_get.call_args[0][0]
+        "https://api.github.com/repos/owner/repo/actions/runs/12345" in call_args[0][1]
     )
 
 
 @pytest.mark.asyncio
-async def test_get_workflow_run_details_http_error(
-    github_actions_service, mock_httpx_get
-):
+async def test_get_workflow_run_details_http_error(github_actions_service, mock_httpx):
     """Test workflow run details retrieval with HTTP error."""
-    mock_get, mock_response = mock_httpx_get
-    mock_response.raise_for_status.side_effect = Exception("HTTP 404")
+    response = mock_httpx.set_response("request")
+    response.raise_for_status.side_effect = Exception("HTTP 404")
 
-    result = await github_actions_service.get_workflow_run_details(
-        "owner", "repo", 12345
-    )
+    with mock_httpx.patch():
+        result = await github_actions_service.get_workflow_run_details(
+            "owner", "repo", 12345
+        )
 
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_get_workflow_run_details_exception(
-    github_actions_service, mock_httpx_get
-):
+async def test_get_workflow_run_details_exception(github_actions_service, mock_httpx):
     """Test workflow run details retrieval with unexpected exception."""
-    mock_get, mock_response = mock_httpx_get
-    mock_get.side_effect = Exception("Unexpected error")
+    mock_httpx.set_response("request", side_effect=Exception("Unexpected error"))
 
-    result = await github_actions_service.get_workflow_run_details(
-        "owner", "repo", 12345
-    )
+    with mock_httpx.patch():
+        result = await github_actions_service.get_workflow_run_details(
+            "owner", "repo", 12345
+        )
 
     assert result is None
 
 
 @pytest.mark.asyncio
 async def test_download_run_logs_success(
-    github_actions_service, mock_httpx_get, log_zip_with_cancellation
+    github_actions_service, mock_httpx, log_zip_with_cancellation
 ):
     """Test successful log download and extraction."""
-    mock_get, mock_response = mock_httpx_get
-    mock_response.content = log_zip_with_cancellation
+    response = mock_httpx.set_response("request")
+    response.content = log_zip_with_cancellation
 
-    result = await github_actions_service.download_run_logs("owner", "repo", 12345)
+    with mock_httpx.patch():
+        result = await github_actions_service.download_run_logs("owner", "repo", 12345)
 
     assert "The operation was canceled." in result
     assert "Starting job..." in result
-    mock_get.assert_called_once()
+    mock_httpx.request.assert_called_once()
+    call_args = mock_httpx.request.call_args
+    assert call_args[0][0] == "GET"
     assert (
         "https://api.github.com/repos/owner/repo/actions/runs/12345/logs"
-        in mock_get.call_args[0][0]
+        in call_args[0][1]
     )
 
 
 @pytest.mark.asyncio
 async def test_download_run_logs_without_cancellation(
-    github_actions_service, mock_httpx_get, log_zip_without_cancellation
+    github_actions_service, mock_httpx, log_zip_without_cancellation
 ):
     """Test log download without cancellation message."""
-    mock_get, mock_response = mock_httpx_get
-    mock_response.content = log_zip_without_cancellation
+    response = mock_httpx.set_response("request")
+    response.content = log_zip_without_cancellation
 
-    result = await github_actions_service.download_run_logs("owner", "repo", 12345)
+    with mock_httpx.patch():
+        result = await github_actions_service.download_run_logs("owner", "repo", 12345)
 
     assert "The operation was canceled." not in result
     assert "Build failed due to errors" in result
 
 
 @pytest.mark.asyncio
-async def test_download_run_logs_http_error(github_actions_service, mock_httpx_get):
+async def test_download_run_logs_http_error(github_actions_service, mock_httpx):
     """Test log download with HTTP error."""
-    mock_get, mock_response = mock_httpx_get
-    mock_response.raise_for_status.side_effect = Exception("HTTP 404")
+    response = mock_httpx.set_response("request")
+    response.raise_for_status.side_effect = Exception("HTTP 404")
 
-    result = await github_actions_service.download_run_logs("owner", "repo", 12345)
+    with mock_httpx.patch():
+        result = await github_actions_service.download_run_logs("owner", "repo", 12345)
 
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_download_run_logs_exception(github_actions_service, mock_httpx_get):
+async def test_download_run_logs_exception(github_actions_service, mock_httpx):
     """Test log download with unexpected exception."""
-    mock_get, mock_response = mock_httpx_get
-    mock_get.side_effect = Exception("Unexpected error")
+    mock_httpx.set_response("request", side_effect=Exception("Unexpected error"))
 
-    result = await github_actions_service.download_run_logs("owner", "repo", 12345)
+    with mock_httpx.patch():
+        result = await github_actions_service.download_run_logs("owner", "repo", 12345)
 
     assert result is None
 

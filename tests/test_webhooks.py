@@ -15,7 +15,7 @@ from app.main import app
 from app.models import Pipeline, PipelineStatus
 from app.routes.webhooks import is_submodule_only_pr
 from app.models.webhook_event import WebhookEvent, WebhookSource
-from tests.conftest import create_mock_get_db
+from tests.conftest import MockHttpxClient, create_mock_get_db
 
 # Sample GitHub payloads (simplified)
 SAMPLE_GITHUB_PAYLOAD = {
@@ -640,28 +640,23 @@ async def test_receive_github_webhook_ignores_submodule_only_pr(client, mock_db)
 
 
 @pytest.mark.asyncio
-async def test_fetch_flathub_json_success():
+async def test_fetch_flathub_json_success(mock_httpx):
     from app.routes.webhooks import fetch_flathub_json
 
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json = Mock(
-        return_value={"end-of-life": "This application is no longer maintained."}
+    mock_response = mock_httpx.set_response(
+        "request",
+        json_data={"end-of-life": "This application is no longer maintained."},
     )
-    mock_response.raise_for_status = Mock()
+    mock_response.status_code = 200
 
-    mock_client_instance = AsyncMock()
-    mock_client_instance.get = AsyncMock(return_value=mock_response)
-    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+    with mock_httpx.patch():
         result = await fetch_flathub_json(
             "test-owner/test-repo", "abc123", "test-token"
         )
 
     assert result == {"end-of-life": "This application is no longer maintained."}
-    mock_client_instance.get.assert_awaited_once_with(
+    mock_httpx.request.assert_awaited_once_with(
+        "GET",
         "https://api.github.com/repos/test-owner/test-repo/contents/flathub.json?ref=abc123",
         headers={
             "Accept": "application/vnd.github.raw+json",
@@ -672,19 +667,12 @@ async def test_fetch_flathub_json_success():
 
 
 @pytest.mark.asyncio
-async def test_fetch_flathub_json_missing_file():
+async def test_fetch_flathub_json_missing_file(mock_httpx):
     from app.routes.webhooks import fetch_flathub_json
 
-    mock_response = AsyncMock()
-    mock_response.status_code = 404
-    mock_response.raise_for_status = Mock()
+    mock_response = mock_httpx.set_response("request", status_code=404)
 
-    mock_client_instance = AsyncMock()
-    mock_client_instance.get = AsyncMock(return_value=mock_response)
-    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+    with mock_httpx.patch():
         result = await fetch_flathub_json("test-owner/test-repo", "abc123")
 
     assert result == {}
@@ -792,7 +780,12 @@ def test_get_eol_only_changes(base_json, head_json, expected_data):
     ],
 )
 async def test_is_eol_only_pr(
-    mock_files_response, base_json, head_json, expected_result, expected_data
+    mock_files_response,
+    base_json,
+    head_json,
+    expected_result,
+    expected_data,
+    mock_httpx,
 ):
     from app.routes.webhooks import is_eol_only_pr
 
@@ -805,17 +798,9 @@ async def test_is_eol_only_pr(
         },
     }
 
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json = Mock(return_value=mock_files_response)
-    mock_response.raise_for_status = Mock()
+    mock_httpx.set_response("request", json_data=mock_files_response)
 
-    mock_client_instance = AsyncMock()
-    mock_client_instance.get = AsyncMock(return_value=mock_response)
-    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+    with mock_httpx.patch():
         with patch(
             "app.routes.webhooks.fetch_flathub_json",
             AsyncMock(side_effect=[base_json, head_json]),
@@ -881,7 +866,12 @@ async def test_is_eol_only_pr(
     ],
 )
 async def test_is_eol_only_push(
-    mock_files_response, base_json, head_json, expected_result, expected_data
+    mock_files_response,
+    base_json,
+    head_json,
+    expected_result,
+    expected_data,
+    mock_httpx,
 ):
     from app.routes.webhooks import is_eol_only_push
 
@@ -891,17 +881,9 @@ async def test_is_eol_only_push(
         "after": "def456",
     }
 
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json = Mock(return_value={"files": mock_files_response})
-    mock_response.raise_for_status = Mock()
+    mock_httpx.set_response("request", json_data={"files": mock_files_response})
 
-    mock_client_instance = AsyncMock()
-    mock_client_instance.get = AsyncMock(return_value=mock_response)
-    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+    with mock_httpx.patch():
         with patch(
             "app.routes.webhooks.fetch_flathub_json",
             AsyncMock(side_effect=[base_json, head_json]),
@@ -920,7 +902,7 @@ async def test_is_eol_only_push(
 
 
 @pytest.mark.asyncio
-async def test_is_eol_only_push_skips_zero_sha():
+async def test_is_eol_only_push_skips_zero_sha(mock_httpx):
     from app.routes.webhooks import is_eol_only_push
 
     payload = {
@@ -929,12 +911,12 @@ async def test_is_eol_only_push_skips_zero_sha():
         "after": "def456",
     }
 
-    with patch("httpx.AsyncClient") as mock_client_class:
+    with mock_httpx.patch():
         result, data = await is_eol_only_push(payload)
 
     assert result is False
     assert data is None
-    assert not mock_client_class.called
+    mock_httpx.request.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1675,18 +1657,15 @@ async def test_create_pipeline_disable_test_builds_bot_build(flag_enabled):
         patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
         patch("app.routes.webhooks.get_db", mock_get_db),
         patch("app.pipelines.build.get_db", mock_get_db),
-        patch("httpx.AsyncClient") as mock_http,
     ):
-        mock_response = AsyncMock()
-        mock_response.json = Mock(return_value=pr_data)
-        mock_response.raise_for_status = Mock()
-        mock_http.return_value.__aenter__.return_value.get = AsyncMock(
-            return_value=mock_response
-        )
+        mock_httpx = MockHttpxClient()
+        mock_response = mock_httpx.set_response("request")
+        mock_response.json.return_value = pr_data
 
-        from app.routes.webhooks import create_pipeline
+        with mock_httpx.patch():
+            from app.routes.webhooks import create_pipeline
 
-        result = await create_pipeline(webhook_event)
+            result = await create_pipeline(webhook_event)
 
         if flag_enabled:
             assert result is None
@@ -1793,17 +1772,12 @@ def test_should_store_event_bot_retry_case_insensitive():
 
 
 @pytest.mark.asyncio
-async def test_validate_retry_permissions_collaborator():
+async def test_validate_retry_permissions_collaborator(mock_httpx):
     from app.routes.webhooks import validate_retry_permissions
 
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_response = MagicMock()
-        mock_response.status_code = 204
+    mock_httpx.set_response("request", status_code=204)
 
-        mock_client_instance = AsyncMock()
-        mock_client_instance.get = AsyncMock(return_value=mock_response)
-        MockClient.return_value.__aenter__.return_value = mock_client_instance
-
+    with mock_httpx.patch():
         with patch("app.routes.webhooks.settings.github_status_token", "test-token"):
             result = await validate_retry_permissions("flathub/test-app", "test-user")
 
@@ -1811,22 +1785,18 @@ async def test_validate_retry_permissions_collaborator():
 
 
 @pytest.mark.asyncio
-async def test_validate_retry_permissions_org_member():
+async def test_validate_retry_permissions_org_member(mock_httpx):
     from app.routes.webhooks import validate_retry_permissions
 
-    with patch("httpx.AsyncClient") as MockClient:
-        collab_response = MagicMock()
-        collab_response.status_code = 404
+    collab_response = MagicMock()
+    collab_response.status_code = 404
 
-        org_response = MagicMock()
-        org_response.status_code = 204
+    org_response = MagicMock()
+    org_response.status_code = 204
 
-        mock_client_instance = AsyncMock()
-        mock_client_instance.get = AsyncMock(
-            side_effect=[collab_response, org_response]
-        )
-        MockClient.return_value.__aenter__.return_value = mock_client_instance
+    mock_httpx.set_response("request", side_effect=[collab_response, org_response])
 
+    with mock_httpx.patch():
         with patch("app.routes.webhooks.settings.github_status_token", "test-token"):
             result = await validate_retry_permissions("flathub/test-app", "test-user")
 
@@ -1834,22 +1804,18 @@ async def test_validate_retry_permissions_org_member():
 
 
 @pytest.mark.asyncio
-async def test_validate_retry_permissions_denied():
+async def test_validate_retry_permissions_denied(mock_httpx):
     from app.routes.webhooks import validate_retry_permissions
 
-    with patch("httpx.AsyncClient") as MockClient:
-        collab_response = MagicMock()
-        collab_response.status_code = 404
+    collab_response = MagicMock()
+    collab_response.status_code = 404
 
-        org_response = MagicMock()
-        org_response.status_code = 404
+    org_response = MagicMock()
+    org_response.status_code = 404
 
-        mock_client_instance = AsyncMock()
-        mock_client_instance.get = AsyncMock(
-            side_effect=[collab_response, org_response]
-        )
-        MockClient.return_value.__aenter__.return_value = mock_client_instance
+    mock_httpx.set_response("request", side_effect=[collab_response, org_response])
 
+    with mock_httpx.patch():
         with patch("app.routes.webhooks.settings.github_status_token", "test-token"):
             result = await validate_retry_permissions("flathub/test-app", "test-user")
 
@@ -2122,35 +2088,27 @@ async def test_create_pipeline_bot_build_closed_pr():
                     with patch(
                         "app.routes.webhooks.settings.github_status_token", "test-token"
                     ):
-                        with patch("httpx.AsyncClient") as MockClient:
-                            mock_response = MagicMock()
-                            mock_response.json.return_value = mock_pr_response
-                            mock_response.raise_for_status.return_value = None
+                        mock_httpx = MockHttpxClient()
+                        mock_response = mock_httpx.set_response("request")
+                        mock_response.json.return_value = mock_pr_response
 
-                            mock_client_instance = AsyncMock()
-                            mock_client_instance.get = AsyncMock(
-                                return_value=mock_response
-                            )
-                            MockClient.return_value.__aenter__.return_value = (
-                                mock_client_instance
-                            )
-
+                        with mock_httpx.patch():
                             from app.routes.webhooks import create_pipeline
 
                             result = await create_pipeline(webhook_event)
 
-                            assert result is None
-                            mock_logger.info.assert_called_once_with(
-                                "PR is closed/merged, ignoring 'bot, build' command",
-                                pr_number=42,
-                                repo="test-owner/test-repo",
-                                pr_state="closed",
-                            )
-                            mock_comment.assert_called_once_with(
-                                git_repo="test-owner/test-repo",
-                                pr_number=42,
-                                comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
-                            )
+                        assert result is None
+                        mock_logger.info.assert_called_once_with(
+                            "PR is closed/merged, ignoring 'bot, build' command",
+                            pr_number=42,
+                            repo="test-owner/test-repo",
+                            pr_state="closed",
+                        )
+                        mock_comment.assert_called_once_with(
+                            git_repo="test-owner/test-repo",
+                            pr_number=42,
+                            comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
+                        )
 
 
 @pytest.mark.asyncio
@@ -2183,35 +2141,27 @@ async def test_create_pipeline_bot_build_merged_pr():
                     with patch(
                         "app.routes.webhooks.settings.github_status_token", "test-token"
                     ):
-                        with patch("httpx.AsyncClient") as MockClient:
-                            mock_response = MagicMock()
-                            mock_response.json.return_value = mock_pr_response
-                            mock_response.raise_for_status.return_value = None
+                        mock_httpx = MockHttpxClient()
+                        mock_response = mock_httpx.set_response("request")
+                        mock_response.json.return_value = mock_pr_response
 
-                            mock_client_instance = AsyncMock()
-                            mock_client_instance.get = AsyncMock(
-                                return_value=mock_response
-                            )
-                            MockClient.return_value.__aenter__.return_value = (
-                                mock_client_instance
-                            )
-
+                        with mock_httpx.patch():
                             from app.routes.webhooks import create_pipeline
 
                             result = await create_pipeline(webhook_event)
 
-                            assert result is None
-                            mock_logger.info.assert_called_once_with(
-                                "PR is closed/merged, ignoring 'bot, build' command",
-                                pr_number=42,
-                                repo="test-owner/test-repo",
-                                pr_state="merged",
-                            )
-                            mock_comment.assert_called_once_with(
-                                git_repo="test-owner/test-repo",
-                                pr_number=42,
-                                comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
-                            )
+                        assert result is None
+                        mock_logger.info.assert_called_once_with(
+                            "PR is closed/merged, ignoring 'bot, build' command",
+                            pr_number=42,
+                            repo="test-owner/test-repo",
+                            pr_state="merged",
+                        )
+                        mock_comment.assert_called_once_with(
+                            git_repo="test-owner/test-repo",
+                            pr_number=42,
+                            comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
+                        )
 
 
 @pytest.mark.asyncio
@@ -2263,26 +2213,18 @@ async def test_create_pipeline_bot_build_open_pr_continues():
                                 "app.routes.webhooks.settings.github_status_token",
                                 "test-token",
                             ):
-                                with patch("httpx.AsyncClient") as MockClient:
-                                    mock_response = MagicMock()
-                                    mock_response.json.return_value = mock_pr_response
-                                    mock_response.raise_for_status.return_value = None
+                                mock_httpx = MockHttpxClient()
+                                mock_response = mock_httpx.set_response("request")
+                                mock_response.json.return_value = mock_pr_response
 
-                                    mock_client_instance = AsyncMock()
-                                    mock_client_instance.get = AsyncMock(
-                                        return_value=mock_response
-                                    )
-                                    MockClient.return_value.__aenter__.return_value = (
-                                        mock_client_instance
-                                    )
-
+                                with mock_httpx.patch():
                                     from app.routes.webhooks import create_pipeline
 
                                     result = await create_pipeline(webhook_event)
 
-                                    assert result == pipeline_id
-                                    mock_pipeline_service.create_pipeline.assert_called_once()
-                                    mock_pipeline_service.start_pipeline.assert_called_once()
+                                assert result == pipeline_id
+                                mock_pipeline_service.create_pipeline.assert_called_once()
+                                mock_pipeline_service.start_pipeline.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -2377,16 +2319,13 @@ async def test_handle_eol_only_push_non_production_ref():
 
 
 @pytest.mark.asyncio
-async def test_fetch_flathub_json_http_error():
+async def test_fetch_flathub_json_http_error(mock_httpx):
     """Test that HTTP errors return None."""
     from app.routes.webhooks import fetch_flathub_json
 
-    mock_client_instance = AsyncMock()
-    mock_client_instance.get = AsyncMock(side_effect=httpx.HTTPError("Server error"))
-    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+    mock_httpx.set_response("request", side_effect=httpx.HTTPError("Server error"))
 
-    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+    with mock_httpx.patch():
         result = await fetch_flathub_json("test-owner/test-repo", "abc123")
 
     assert result is None
@@ -2441,21 +2380,13 @@ def test_get_eol_only_changes_boolean_value():
 
 
 @pytest.mark.asyncio
-async def test_fetch_flathub_json_non_object():
+async def test_fetch_flathub_json_non_object(mock_httpx):
     """Test that non-object JSON returns empty dict."""
     from app.routes.webhooks import fetch_flathub_json
 
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json = Mock(return_value=["array", "instead", "of", "object"])
-    mock_response.raise_for_status = Mock()
+    mock_httpx.set_response("request", json_data=["array", "instead", "of", "object"])
 
-    mock_client_instance = AsyncMock()
-    mock_client_instance.get = AsyncMock(return_value=mock_response)
-    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+    with mock_httpx.patch():
         result = await fetch_flathub_json("test-owner/test-repo", "abc123")
 
     assert result == {}
@@ -2847,18 +2778,15 @@ async def test_create_pipeline_bot_build_stores_target_branch(
         patch("app.pipelines.build.get_db", mock_get_db),
         patch("app.routes.webhooks.update_commit_status", AsyncMock()),
         patch("app.routes.webhooks.create_pr_comment", AsyncMock()),
-        patch("httpx.AsyncClient") as mock_http,
     ):
-        mock_response = MagicMock()
-        mock_response.json = Mock(return_value=pr_data)
-        mock_response.raise_for_status = Mock()
-        mock_http.return_value.__aenter__.return_value.get = AsyncMock(
-            return_value=mock_response
-        )
+        mock_httpx = MockHttpxClient()
+        mock_response = mock_httpx.set_response("request")
+        mock_response.json.return_value = pr_data
 
-        from app.routes.webhooks import create_pipeline
+        with mock_httpx.patch():
+            from app.routes.webhooks import create_pipeline
 
-        await create_pipeline(webhook_event)
+            await create_pipeline(webhook_event)
 
         _, kwargs = mock_pipeline_service.create_pipeline.call_args
         assert kwargs["params"].get("pr_target_branch") == expected_pr_target_branch
