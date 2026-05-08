@@ -2,7 +2,7 @@ import io
 import zipfile
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpxyz as httpx
 import pytest
 
 from app.services.diffoscope import (

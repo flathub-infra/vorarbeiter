@@ -1,5 +1,5 @@
 import time
-import httpx
+import httpxyz as httpx
 import structlog
 
 from app.config import settings

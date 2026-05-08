@@ -3,7 +3,7 @@ from typing import Any
 import structlog
 from datetime import datetime, timezone
 
-import httpx
+import httpxyz as httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

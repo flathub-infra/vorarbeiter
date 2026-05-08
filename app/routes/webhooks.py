@@ -6,7 +6,7 @@ import uuid
 import json
 from datetime import datetime, timezone
 
-import httpx
+import httpxyz as httpx
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from sqlalchemy import select, text

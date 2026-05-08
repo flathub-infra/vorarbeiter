@@ -2,7 +2,7 @@ from enum import IntEnum
 from typing import Any, NotRequired, TypedDict
 from urllib.parse import urlparse
 
-import httpx
+import httpxyz as httpx
 import structlog
 
 logger = structlog.get_logger(__name__)

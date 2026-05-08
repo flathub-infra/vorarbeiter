@@ -20,6 +20,7 @@ dependencies = [
     "jinja2>=3.1.0",
     "pyyaml>=6.0.3",
     "pygobject>=3.56.2",
+    "httpxyz>=0.31.1",
 ]
 
 [dependency-groups]
@@ -28,7 +29,6 @@ dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.15.12",
-    "httpx>=0.28.1",
     "pytest-xdist>=3.8.0",
     "granian[reload]>=2.7.4",
     "ty>=0.0.34",

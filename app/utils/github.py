@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-import httpx
+import httpxyz as httpx
 import structlog
 
 if TYPE_CHECKING:

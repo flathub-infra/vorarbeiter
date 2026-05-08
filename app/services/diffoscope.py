@@ -3,7 +3,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from io import BytesIO
 
-import httpx
+import httpxyz as httpx
 import structlog
 
 logger = structlog.get_logger(__name__)

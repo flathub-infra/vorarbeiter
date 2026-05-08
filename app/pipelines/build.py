@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
-import httpx
+import httpxyz as httpx
 import sentry_sdk
 import structlog
 from pydantic import BaseModel

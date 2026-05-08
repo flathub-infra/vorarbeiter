@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpxyz as httpx
 import sentry_sdk
 import structlog
 
