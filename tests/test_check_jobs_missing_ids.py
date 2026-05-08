@@ -40,10 +40,13 @@ async def test_check_jobs_fetches_missing_ids(
         await session.commit()
 
     mock_fm_instance = AsyncMock()
-    mock_fm_instance.get_build_info.side_effect = [
-        {"build": {"commit_job_id": 789, "publish_job_id": 101112}},
-        {"build": {"commit_job_id": 456, "publish_job_id": 131415}},
-    ]
+
+    async def get_build_info(build_id):
+        if build_id == 123:
+            return {"build": {"commit_job_id": 789, "publish_job_id": 101112}}
+        return {"build": {"commit_job_id": 456, "publish_job_id": 131415}}
+
+    mock_fm_instance.get_build_info.side_effect = get_build_info
     mock_fm_instance.get_job.return_value = {"status": 1}
 
     with patch(

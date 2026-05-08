@@ -72,23 +72,24 @@ async def test_check_jobs_success(db_session_maker, run_check_all_active_pipelin
         patch("app.services.job_monitor.JobMonitor._notify_flat_manager_job_completed"),
         patch("app.services.job_monitor.JobMonitor._notify_flat_manager_job_started"),
     ):
-        mock_fm_instance.get_job = AsyncMock(
-            side_effect=[
-                {"status": 2},
-                {"status": 1},
-                {"status": 1},
-                {
+
+        async def get_job(job_id):
+            if job_id == 12345:
+                return {"status": 2}
+            if job_id == 12348:
+                return {
                     "status": 2,
                     "kind": 1,
                     "results": '{"update-repo-job": 99999}',
-                },
-            ]
-        )
+                }
+            return {"status": 1}
+
+        mock_fm_instance.get_job = AsyncMock(side_effect=get_job)
 
         result = await run_check_all_active_pipelines(session_maker)
 
         assert result["checked_pipelines"] == 4
-        assert result["updated_pipelines"] == 2
+        assert result["updated_pipelines"] == 3
 
         async with session_maker() as session:
             query = select(Pipeline).where(Pipeline.id == pipeline1.id)
@@ -100,6 +101,12 @@ async def test_check_jobs_success(db_session_maker, run_check_all_active_pipelin
             db_result = await session.execute(query)
             updated_pipeline3 = db_result.scalars().first()
             assert updated_pipeline3.commit_job_id == 12349
+
+            query = select(Pipeline).where(Pipeline.id == pipeline4.id)
+            db_result = await session.execute(query)
+            updated_pipeline4 = db_result.scalars().first()
+            assert updated_pipeline4.status == PipelineStatus.PUBLISHING
+            assert updated_pipeline4.update_repo_job_id == 99999
 
 
 def test_check_jobs_endpoint_removed(client):

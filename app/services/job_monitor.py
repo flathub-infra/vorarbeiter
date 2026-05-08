@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -43,6 +44,7 @@ class JobMonitor:
     def __init__(self, db: AsyncSession | None = None):
         self.flat_manager = get_flat_manager_client()
         self.db = db
+        self._db_lock = asyncio.Lock()
 
     async def check_all_active_pipelines(self, db: AsyncSession) -> dict[str, int]:
         cutoff_date = datetime.now(tz=timezone.utc) - timedelta(hours=24)
@@ -78,11 +80,23 @@ class JobMonitor:
         result = await db.execute(query)
         pipelines = list(result.scalars().all())
 
-        updated_count = 0
+        # Benchmarks show the heavy /extended endpoint knees around C=5.
+        sem = asyncio.Semaphore(5)
 
-        for pipeline in pipelines:
-            if await self.check_and_update_pipeline_jobs(pipeline):
-                updated_count += 1
+        async def _process(pipeline: Pipeline) -> bool:
+            async with sem:
+                try:
+                    return await self.check_and_update_pipeline_jobs(pipeline)
+                except Exception as e:
+                    logger.warning(
+                        "Error processing pipeline in check-jobs",
+                        pipeline_id=str(pipeline.id),
+                        error=str(e),
+                    )
+                    return False
+
+        results = await asyncio.gather(*(_process(pipeline) for pipeline in pipelines))
+        updated_count = sum(1 for result in results if result)
 
         return {
             "checked_pipelines": len(pipelines),
@@ -424,8 +438,9 @@ class JobMonitor:
             )
             .order_by(Pipeline.published_at.desc())
         )
-        result = await self.db.execute(query)
-        peer = result.scalars().first()
+        async with self._db_lock:
+            result = await self.db.execute(query)
+            peer = result.scalars().first()
 
         if not peer or not peer.update_repo_job_id:
             return False
