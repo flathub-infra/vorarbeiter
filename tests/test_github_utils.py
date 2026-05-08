@@ -16,11 +16,8 @@ from app.utils.github import (
 
 @pytest.fixture
 def mock_settings():
-    github_module._github_client = None
-    with patch("app.utils.github.settings") as mock:
-        mock.github_status_token = "test-token"
-        yield mock
-    github_module._github_client = None
+    with patch.object(github_module.settings, "flathubbot_token", "test-token"):
+        yield github_module.settings
 
 
 @pytest.mark.asyncio
@@ -524,26 +521,6 @@ async def test_rate_limit_detection(mock_settings):
     normal_403_response.json.return_value = {"message": "Resource not accessible"}
 
     assert client._is_rate_limit_error(normal_403_response) is False
-
-
-def test_get_github_client_for_token_reuses_status_client(mock_settings):
-    from app.utils.github import get_github_client, get_github_client_for_token
-
-    assert get_github_client_for_token("test-token") is get_github_client()
-
-
-def test_get_github_client_for_token_creates_custom_client(mock_settings):
-    from app.utils.github import (
-        GitHubAPIClient,
-        get_github_client,
-        get_github_client_for_token,
-    )
-
-    client = get_github_client_for_token("other-token")
-
-    assert isinstance(client, GitHubAPIClient)
-    assert client is not get_github_client()
-    assert client.headers["Authorization"] == "token other-token"
 
 
 @pytest.mark.asyncio

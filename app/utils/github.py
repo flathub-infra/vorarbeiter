@@ -196,21 +196,15 @@ _github_actions_client: GitHubAPIClient | None = None
 def get_github_client() -> GitHubAPIClient:
     global _github_client
     if _github_client is None:
-        _github_client = GitHubAPIClient(settings.github_status_token)
+        _github_client = GitHubAPIClient(settings.flathubbot_token)
     return _github_client
 
 
 def get_github_actions_client() -> GitHubAPIClient:
     global _github_actions_client
     if _github_actions_client is None:
-        _github_actions_client = GitHubAPIClient(settings.github_token)
+        _github_actions_client = GitHubAPIClient(settings.github_actions_token)
     return _github_actions_client
-
-
-def get_github_client_for_token(token: str | None = None) -> GitHubAPIClient:
-    if not token or token == settings.github_status_token:
-        return get_github_client()
-    return GitHubAPIClient(token)
 
 
 async def update_commit_status(
@@ -504,7 +498,7 @@ async def is_issue_edited(git_repo: str, issue_number: int) -> bool | None:
 
     transport = RequestsHTTPTransport(
         url="https://api.github.com/graphql",
-        headers={"Authorization": f"Bearer {settings.github_status_token}"},
+        headers={"Authorization": f"Bearer {settings.flathubbot_token}"},
     )
     client = Client(transport=transport, fetch_schema_from_transport=False)
 

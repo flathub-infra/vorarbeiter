@@ -23,7 +23,6 @@ from app.utils.github import (
     close_github_issue,
     create_pr_comment,
     get_github_client,
-    get_github_client_for_token,
     get_workflow_run_title,
     is_issue_edited,
     update_commit_status,
@@ -348,10 +347,9 @@ def should_store_event(payload: dict) -> bool:
 async def fetch_flathub_json(
     repo: str,
     ref: str,
-    github_token: str | None = None,
 ) -> dict[str, Any] | None:
     url = f"https://api.github.com/repos/{repo}/contents/flathub.json?ref={ref}"
-    client = get_github_client_for_token(github_token)
+    client = get_github_client()
 
     try:
         response = await client.request(
@@ -386,10 +384,8 @@ async def fetch_flathub_json(
         return None
 
 
-async def get_pr_files(
-    repo: str, number: int, github_token: str | None = None
-) -> list[dict] | None:
-    client = get_github_client_for_token(github_token)
+async def get_pr_files(repo: str, number: int) -> list[dict] | None:
+    client = get_github_client()
 
     try:
         response = await client.request(
@@ -453,11 +449,10 @@ async def check_eol_only_change(
     repo: str,
     base_ref: str,
     head_ref: str,
-    github_token: str | None = None,
 ) -> tuple[bool, dict[str, str] | None]:
     base_json, head_json = await asyncio.gather(
-        fetch_flathub_json(repo, base_ref, github_token),
-        fetch_flathub_json(repo, head_ref, github_token),
+        fetch_flathub_json(repo, base_ref),
+        fetch_flathub_json(repo, head_ref),
     )
     if base_json is None or head_json is None:
         return False, None
@@ -467,7 +462,7 @@ async def check_eol_only_change(
 
 
 async def is_eol_only_pr(
-    payload: dict[str, Any], github_token: str | None = None
+    payload: dict[str, Any],
 ) -> tuple[bool, dict[str, str] | None]:
     repo = payload.get("repository", {}).get("full_name")
     pr = payload.get("pull_request", {})
@@ -478,7 +473,7 @@ async def is_eol_only_pr(
     if not (repo and number and base_ref and head_ref):
         return False, None
 
-    files = await get_pr_files(repo, number, github_token)
+    files = await get_pr_files(repo, number)
     if files is None:
         return False, None
 
@@ -489,11 +484,11 @@ async def is_eol_only_pr(
     if file_info.get("filename") != "flathub.json":
         return False, None
 
-    return await check_eol_only_change(repo, base_ref, head_ref, github_token)
+    return await check_eol_only_change(repo, base_ref, head_ref)
 
 
 async def is_eol_only_push(
-    payload: dict[str, Any], github_token: str | None = None
+    payload: dict[str, Any],
 ) -> tuple[bool, dict[str, str] | None]:
     repo = payload.get("repository", {}).get("full_name")
     before = payload.get("before")
@@ -506,7 +501,7 @@ async def is_eol_only_push(
     if before == zero_sha or after == zero_sha:
         return False, None
 
-    client = get_github_client_for_token(github_token)
+    client = get_github_client()
 
     try:
         response = await client.request(
@@ -531,7 +526,7 @@ async def is_eol_only_push(
     if file_info.get("filename") != "flathub.json":
         return False, None
 
-    return await check_eol_only_change(repo, before, after, github_token)
+    return await check_eol_only_change(repo, before, after)
 
 
 async def handle_eol_only_pr(
@@ -655,9 +650,7 @@ async def handle_eol_only_push(
     )
 
 
-async def is_submodule_only_pr(
-    payload: dict[str, Any], github_token: str | None = None
-) -> bool:
+async def is_submodule_only_pr(payload: dict[str, Any]) -> bool:
     repo, number = (
         payload.get("repository", {}).get("full_name"),
         payload.get("pull_request", {}).get("number"),
@@ -666,16 +659,13 @@ async def is_submodule_only_pr(
     if not (repo and number):
         return False
 
-    # Public API, token is only required if requests exceed some per
-    # minute limit
+    # Anonymous; only fires for the rare github-actions[bot] PR, so the
+    # 60/hr-per-IP unauthenticated rate limit is sufficient.
     url = f"https://api.github.com/repos/{repo}/pulls/{number}/files"
-    headers = {}
-    if github_token:
-        headers["Authorization"] = f"Bearer {github_token}"
 
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get(url, headers=headers)
+            r = await client.get(url)
             r.raise_for_status()
             files = r.json()
     except (httpx.HTTPError, ValueError) as err:
@@ -799,9 +789,7 @@ async def receive_github_webhook(
     is_eol_only = False
     eol_data = None
     if is_pr_event:
-        is_eol_only, eol_data = await is_eol_only_pr(
-            payload, settings.github_status_token
-        )
+        is_eol_only, eol_data = await is_eol_only_pr(payload)
 
     event = WebhookEvent(
         id=delivery_id,
@@ -905,9 +893,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             }
         )
 
-        is_eol_only, eol_data = await is_eol_only_push(
-            payload, settings.github_status_token
-        )
+        is_eol_only, eol_data = await is_eol_only_push(payload)
         if is_eol_only:
             await handle_eol_only_push(event, ref, sha, eol_data)
             return None

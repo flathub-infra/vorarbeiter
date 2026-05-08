@@ -650,9 +650,8 @@ async def test_fetch_flathub_json_success(mock_httpx):
     mock_response.status_code = 200
 
     with mock_httpx.patch():
-        result = await fetch_flathub_json(
-            "test-owner/test-repo", "abc123", "test-token"
-        )
+        with patch("app.utils.github.settings.flathubbot_token", "test-token"):
+            result = await fetch_flathub_json("test-owner/test-repo", "abc123")
 
     assert result == {"end-of-life": "This application is no longer maintained."}
     mock_httpx.request.assert_awaited_once_with(
@@ -1778,7 +1777,7 @@ async def test_validate_retry_permissions_collaborator(mock_httpx):
     mock_httpx.set_response("request", status_code=204)
 
     with mock_httpx.patch():
-        with patch("app.routes.webhooks.settings.github_status_token", "test-token"):
+        with patch("app.routes.webhooks.settings.flathubbot_token", "test-token"):
             result = await validate_retry_permissions("flathub/test-app", "test-user")
 
             assert result is True
@@ -1797,7 +1796,7 @@ async def test_validate_retry_permissions_org_member(mock_httpx):
     mock_httpx.set_response("request", side_effect=[collab_response, org_response])
 
     with mock_httpx.patch():
-        with patch("app.routes.webhooks.settings.github_status_token", "test-token"):
+        with patch("app.routes.webhooks.settings.flathubbot_token", "test-token"):
             result = await validate_retry_permissions("flathub/test-app", "test-user")
 
             assert result is True
@@ -1816,7 +1815,7 @@ async def test_validate_retry_permissions_denied(mock_httpx):
     mock_httpx.set_response("request", side_effect=[collab_response, org_response])
 
     with mock_httpx.patch():
-        with patch("app.routes.webhooks.settings.github_status_token", "test-token"):
+        with patch("app.routes.webhooks.settings.flathubbot_token", "test-token"):
             result = await validate_retry_permissions("flathub/test-app", "test-user")
 
             assert result is False
@@ -2086,7 +2085,7 @@ async def test_create_pipeline_bot_build_closed_pr():
                     "app.routes.webhooks.create_pr_comment", AsyncMock()
                 ) as mock_comment:
                     with patch(
-                        "app.routes.webhooks.settings.github_status_token", "test-token"
+                        "app.routes.webhooks.settings.flathubbot_token", "test-token"
                     ):
                         mock_httpx = MockHttpxClient()
                         mock_response = mock_httpx.set_response("request")
@@ -2139,7 +2138,7 @@ async def test_create_pipeline_bot_build_merged_pr():
                     "app.routes.webhooks.create_pr_comment", AsyncMock()
                 ) as mock_comment:
                     with patch(
-                        "app.routes.webhooks.settings.github_status_token", "test-token"
+                        "app.routes.webhooks.settings.flathubbot_token", "test-token"
                     ):
                         mock_httpx = MockHttpxClient()
                         mock_response = mock_httpx.set_response("request")
@@ -2210,7 +2209,7 @@ async def test_create_pipeline_bot_build_open_pr_continues():
                             "app.routes.webhooks.create_pr_comment", AsyncMock()
                         ):
                             with patch(
-                                "app.routes.webhooks.settings.github_status_token",
+                                "app.routes.webhooks.settings.flathubbot_token",
                                 "test-token",
                             ):
                                 mock_httpx = MockHttpxClient()

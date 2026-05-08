@@ -8,8 +8,7 @@ class Settings(BaseSettings):
     database_replica_url: str | None = None
     debug: bool = False
     flathubbot_token: str = "test_flathubbot_token"
-    github_token: str = "test_github_token"
-    github_status_token: str = "test_github_status_token"
+    github_actions_token: str = "test_github_actions_token"
     github_webhook_secret: str = "test_webhook_secret"
     flat_manager_token: str = "test_repo_token"
     flat_manager_url: str = "https://hub.flathub.org"

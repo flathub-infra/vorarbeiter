@@ -293,7 +293,7 @@ class TestMergeServiceAuthorization:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=admin_response)
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._is_authorized("admin_user")
             assert result is True
 
@@ -314,7 +314,7 @@ class TestMergeServiceAuthorization:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(side_effect=[not_admin, reviewer_response])
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._is_authorized("reviewer_user")
             assert result is True
 
@@ -328,7 +328,7 @@ class TestMergeServiceAuthorization:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=not_member)
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._is_authorized("random_user")
             assert result is False
 
@@ -343,7 +343,7 @@ class TestMergeServiceAuthorization:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=pending_response)
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._is_authorized("invited_user")
             assert result is False
 
@@ -359,7 +359,7 @@ class TestMergeServiceCollaborators:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=success_response)
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._add_collaborators(
                 "org.kde.Dolphin",
                 [
@@ -401,7 +401,7 @@ class TestMergeServiceCollaborators:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=success_response)
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._add_collaborators("org.kde.Dolphin", ["user1"])
             assert result is True
 
@@ -421,7 +421,7 @@ class TestMergeServiceCollaborators:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=success_response)
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._add_collaborators("org.gnome.Nautilus", ["user1"])
             assert result is True
 
@@ -439,7 +439,7 @@ class TestMergeServiceCollaborators:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=success_response)
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._add_collaborators(
                 "org.gnome.World.Secrets", ["user1"]
             )
@@ -459,7 +459,7 @@ class TestMergeServiceCollaborators:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=success_response)
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._add_collaborators(
                 "com.example.App", ["user1", "flathub/custom-team"]
             )
@@ -480,7 +480,7 @@ class TestMergeServiceLabelsAndMetadata:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=response)
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._set_labels(123, ["migrate-app-id"])
 
         assert result is True
@@ -503,7 +503,7 @@ class TestMergeServiceLabelsAndMetadata:
             team_reviewers=["team"],
         )
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._clear_pr_metadata(123, metadata)
 
         assert result is True
@@ -532,7 +532,7 @@ class TestMergeServiceCloseAndLock:
             side_effect=[comment_response, close_response, issue_response]
         )
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._close_and_lock_pr(
                 123, "https://github.com/flathub/org.example.App"
             )
@@ -567,7 +567,7 @@ class TestMergeServiceCloseAndLock:
             ]
         )
 
-        with patch.object(service, "_get_client", return_value=mock_client):
+        with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._close_and_lock_pr(
                 123, "https://github.com/flathub/org.example.App"
             )

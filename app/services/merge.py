@@ -23,8 +23,7 @@ from app.models.merge_request import (
 from app.schemas.merge import parse_merge_command
 from app.utils.github import (
     GQL_EXCEPTIONS,
-    GitHubAPIClient,
-    get_github_client_for_token,
+    get_github_client,
 )
 from app.utils.manifest import detect_appid_from_github
 
@@ -138,9 +137,6 @@ class MergeCallbackConflictError(MergeCallbackError):
 
 
 class MergeService:
-    def _get_client(self) -> GitHubAPIClient:
-        return get_github_client_for_token(settings.flathubbot_token)
-
     async def handle_merge_command(self, payload: dict) -> None:
         comment_body = payload.get("comment", {}).get("body", "")
         pr_number = payload.get("issue", {}).get("number")
@@ -229,7 +225,7 @@ class MergeService:
         fork_url = pr_details["fork_clone_url"]
         pr_author = pr_details["author"]
 
-        client = self._get_client()
+        client = get_github_client()
         manifest_file, appid = await detect_appid_from_github(
             client, fork_repo, fork_branch
         )
@@ -497,7 +493,7 @@ class MergeService:
                 await db.commit()
 
     async def _is_authorized(self, username: str) -> bool:
-        client = self._get_client()
+        client = get_github_client()
         for team in ("admins", "reviewers"):
             response = await client.request(
                 "get",
@@ -515,7 +511,7 @@ class MergeService:
         return False
 
     async def _get_pr_details(self, pr_number: int) -> dict[str, Any] | None:
-        client = self._get_client()
+        client = get_github_client()
         response = await client.request(
             "get",
             f"https://api.github.com/repos/{FLATHUB_REPO}/pulls/{pr_number}",
@@ -544,7 +540,7 @@ class MergeService:
         }
 
     async def _check_repo_exists(self, appid: str) -> bool:
-        client = self._get_client()
+        client = get_github_client()
         response = await client.request(
             "get",
             f"https://api.github.com/repos/flathub/{appid}",
@@ -587,7 +583,7 @@ class MergeService:
         return latest_request.repo_html_url or f"https://github.com/flathub/{appid}"
 
     async def _create_repo(self, appid: str) -> str | None:
-        client = self._get_client()
+        client = get_github_client()
 
         response = await client.request(
             "post",
@@ -607,7 +603,7 @@ class MergeService:
         return response.json().get("html_url")
 
     async def _dispatch_merge_workflow(self, merge_request: MergeRequest) -> None:
-        client = self._get_client()
+        client = get_github_client()
         callback_url = f"{settings.base_url}/api/merge/{merge_request.id}/callback"
 
         payload = {
@@ -686,7 +682,7 @@ class MergeService:
         return success
 
     async def _add_collaborators(self, appid: str, collaborators: list[str]) -> bool:
-        client = self._get_client()
+        client = get_github_client()
         teams_to_add: list[str] = ["trusted-maintainers"]
 
         if appid.startswith("org.kde."):
@@ -731,7 +727,7 @@ class MergeService:
         return success
 
     async def _remove_collaborator(self, appid: str, username: str) -> bool:
-        client = self._get_client()
+        client = get_github_client()
         response = await client.request(
             "delete",
             f"https://api.github.com/repos/flathub/{appid}/collaborators/{username}",
@@ -743,7 +739,7 @@ class MergeService:
     async def _verify_branch_state(
         self, appid: str, branch: str, expected_sha: str
     ) -> tuple[bool, bool]:
-        client = self._get_client()
+        client = get_github_client()
         response = await client.request(
             "get",
             f"https://api.github.com/repos/flathub/{appid}/branches/{branch}",
@@ -767,7 +763,7 @@ class MergeService:
         return sha_ok, data.get("protected", False) is True
 
     async def _set_labels(self, pr_number: int, current_labels: list[str]) -> bool:
-        client = self._get_client()
+        client = get_github_client()
 
         if "migrate-app-id" in current_labels:
             add_response = await client.request(
@@ -791,7 +787,7 @@ class MergeService:
     async def _clear_pr_metadata(
         self, pr_number: int, pr_metadata: _PrMetadata
     ) -> bool:
-        client = self._get_client()
+        client = get_github_client()
         assignees = pr_metadata.assignees
         user_reviewers = pr_metadata.user_reviewers
         team_reviewers = pr_metadata.team_reviewers
@@ -837,7 +833,7 @@ class MergeService:
         return success
 
     async def _close_and_lock_pr(self, pr_number: int, repo_url: str) -> bool:
-        client = self._get_client()
+        client = get_github_client()
         comment = CLOSE_COMMENT_TEMPLATE.format(repo_url=repo_url)
 
         comment_response = await client.request(
@@ -888,7 +884,7 @@ class MergeService:
         return True
 
     async def _post_comment(self, pr_number: int, comment: str) -> None:
-        client = self._get_client()
+        client = get_github_client()
         await client.request(
             "post",
             f"https://api.github.com/repos/{FLATHUB_REPO}/issues/{pr_number}/comments",
