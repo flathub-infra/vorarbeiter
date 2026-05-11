@@ -11,7 +11,7 @@ dependencies = [
     "psycopg-binary>=3.3.4",
     "psycopg-pool>=3.3.1",
     "fastapi>=0.136.1",
-    "pydantic-settings>=2.8.1",
+    "pydantic-settings>=2.14.1",
     "sentry-sdk>=2.59.0",
     "sqlalchemy>=2.0.40",
     "structlog>=24.1.0",
@@ -19,8 +19,8 @@ dependencies = [
     "gql[requests]>=4.0.0,<5",
     "jinja2>=3.1.0",
     "pyyaml>=6.0.3",
-    "pygobject>=3.56.2",
-    "httpxyz>=0.31.1",
+    "pygobject>=3.56.3",
+    "httpxyz>=0.31.2",
 ]
 
 [dependency-groups]
@@ -31,7 +31,7 @@ dev = [
     "ruff>=0.15.12",
     "pytest-xdist>=3.8.0",
     "granian[reload]>=2.7.4",
-    "ty>=0.0.34",
+    "ty>=0.0.35",
 ]
 
 [tool.mypy]
