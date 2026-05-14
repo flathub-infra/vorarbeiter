@@ -19,6 +19,7 @@ from app.pipelines.build import BuildPipeline, app_build_types, cancel_pipeline
 from app.services.github_actions import GitHubActionsService
 from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_repo
 from app.utils.github import (
+    add_comment_reaction,
     add_issue_comment,
     close_github_issue,
     create_pr_comment,
@@ -805,6 +806,13 @@ async def receive_github_webhook(
             async with get_db() as db:
                 db.add(event)
                 await db.commit()
+
+            if "comment" in payload:
+                comment_id = payload.get("comment", {}).get("id")
+                if comment_id:
+                    async with get_db() as db:
+                        await add_comment_reaction(repo_name, comment_id, db=db)
+                        await db.commit()
 
             if is_eol_only:
                 await handle_eol_only_pr(payload, eol_data)

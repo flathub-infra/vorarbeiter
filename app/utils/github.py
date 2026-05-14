@@ -324,6 +324,52 @@ async def create_pr_comment(
     return False
 
 
+async def add_comment_reaction(
+    git_repo: str,
+    comment_id: int,
+    content: str = "+1",
+    db: "AsyncSession | None" = None,
+) -> bool:
+    if not git_repo:
+        logger.error("Missing git_repo for GitHub reaction. Skipping reaction.")
+        return False
+
+    if not comment_id:
+        logger.error("Missing comment_id for GitHub reaction. Skipping reaction.")
+        return False
+
+    url = f"https://api.github.com/repos/{git_repo}/issues/comments/{comment_id}/reactions"
+    payload = {"content": content}
+    ctx = {"git_repo": git_repo, "comment_id": comment_id}
+
+    client = get_github_client()
+    result = await client.request_with_result("post", url, json=payload, context=ctx)
+
+    if result.response:
+        logger.info(
+            "Successfully added comment reaction",
+            git_repo=git_repo,
+            comment_id=comment_id,
+            content=content,
+        )
+        return True
+
+    if result.should_queue and db:
+        from app.services.github_task import GitHubTaskService
+
+        await GitHubTaskService().queue_task(
+            db,
+            task_type="comment_reaction",
+            method="post",
+            url=url,
+            payload=payload,
+            context=ctx,
+            retry_after=result.retry_after,
+        )
+
+    return False
+
+
 async def create_github_issue(
     git_repo: str, title: str, body: str
 ) -> tuple[str, int] | None:

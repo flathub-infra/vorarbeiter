@@ -5,6 +5,7 @@ import pytest
 
 import app.utils.github as github_module
 from app.utils.github import (
+    add_comment_reaction,
     add_issue_comment,
     close_github_issue,
     create_github_issue,
@@ -616,3 +617,74 @@ async def test_linter_warning_messages_deduplicates():
     assert len(foo_bar_baz_msgs) == 1
 
     assert any("baz-foo-moo" in m for m in result)
+
+
+@pytest.mark.asyncio
+async def test_add_comment_reaction_success(mock_settings, mock_httpx):
+    mock_httpx.set_response("request")
+    with mock_httpx.patch():
+        result = await add_comment_reaction(
+            git_repo="flathub/test-app", comment_id=98765
+        )
+
+    assert result is True
+    mock_httpx.request.assert_called_once()
+    call_args = mock_httpx.request.call_args
+
+    assert call_args[0][0] == "POST"
+    assert (
+        call_args[0][1]
+        == "https://api.github.com/repos/flathub/test-app/issues/comments/98765/reactions"
+    )
+    assert call_args[1]["json"] == {"content": "+1"}
+    assert call_args[1]["headers"]["Authorization"] == "token test-token"
+
+
+@pytest.mark.asyncio
+async def test_add_comment_reaction_missing_repo(mock_settings, mock_httpx):
+    with mock_httpx.patch():
+        result = await add_comment_reaction(git_repo="", comment_id=98765)
+
+    assert result is False
+    mock_httpx.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_add_comment_reaction_missing_comment_id(mock_settings, mock_httpx):
+    with mock_httpx.patch():
+        result = await add_comment_reaction(git_repo="flathub/test-app", comment_id=0)
+
+    assert result is False
+    mock_httpx.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_add_comment_reaction_queues_on_rate_limit(
+    mock_settings, mock_httpx, db_session_maker
+):
+    from sqlalchemy import select
+    from app.models.github_task import GitHubTask
+
+    rate_limit_response = mock_httpx.set_response(
+        "request",
+        status_code=403,
+        json_data={"message": "API rate limit exceeded"},
+    )
+    rate_limit_response.headers = {"Retry-After": "60"}
+
+    with mock_httpx.patch():
+        async with db_session_maker() as db:
+            result = await add_comment_reaction(
+                git_repo="flathub/test-app", comment_id=98765, db=db
+            )
+            await db.commit()
+
+        async with db_session_maker() as db:
+            tasks = (await db.execute(select(GitHubTask))).scalars().all()
+
+    assert result is False
+    assert len(tasks) == 1
+    assert tasks[0].task_type == "comment_reaction"
+    assert tasks[0].method == "post"
+    assert tasks[0].payload == {"content": "+1"}
+    assert "issues/comments/98765/reactions" in tasks[0].url

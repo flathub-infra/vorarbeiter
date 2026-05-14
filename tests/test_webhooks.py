@@ -200,6 +200,52 @@ def test_receive_github_webhook_success(client: TestClient, mock_db):
                     assert mock_db.commit.called
 
 
+def test_receive_github_webhook_reacts_to_bot_command(client: TestClient, mock_db):
+    """A bot command webhook triggers a 👍 reaction on the comment."""
+    delivery_id = str(uuid.uuid4())
+    headers = {"X-GitHub-Delivery": delivery_id}
+
+    payload = {
+        "repository": {"full_name": "flathub/test-app"},
+        "sender": {"login": "test-user"},
+        "action": "created",
+        "comment": {
+            "id": 123456789,
+            "body": "please bot, build this",
+            "user": {"login": "test-user"},
+        },
+        "issue": {
+            "number": 42,
+            "user": {"login": "pr-author"},
+            "body": "",
+            "pull_request": {
+                "url": "https://api.github.com/repos/flathub/test-app/pulls/42"
+            },
+        },
+    }
+
+    mock_get_db = create_mock_get_db(mock_db)
+    mock_reaction = AsyncMock(return_value=True)
+
+    with (
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.routes.webhooks.is_eol_only_pr",
+            AsyncMock(return_value=(False, None)),
+        ),
+        patch("app.routes.webhooks.create_pipeline", AsyncMock(return_value=None)),
+        patch("app.routes.webhooks.add_comment_reaction", mock_reaction),
+    ):
+        response = client.post("/api/webhooks/github", json=payload, headers=headers)
+
+    assert response.status_code == 202
+    mock_reaction.assert_awaited_once()
+    args, kwargs = mock_reaction.call_args
+    assert args[0] == "flathub/test-app"
+    assert args[1] == 123456789
+
+
 def test_receive_github_webhook_missing_header(client: TestClient):
     """Test handling of missing GitHub delivery header."""
     response = client.post("/api/webhooks/github", json=SAMPLE_GITHUB_PAYLOAD)
