@@ -12,7 +12,7 @@ dependencies = [
     "psycopg-pool>=3.3.1",
     "fastapi>=0.136.1",
     "pydantic-settings>=2.14.1",
-    "sentry-sdk>=2.59.0",
+    "sentry-sdk>=2.60.0",
     "sqlalchemy>=2.0.40",
     "structlog>=24.1.0",
     "granian>=2.7.4",
@@ -28,10 +28,10 @@ dev = [
     "pre-commit>=4.6.0",
     "pytest>=8.3.5",
     "pytest-asyncio>=0.24.0",
-    "ruff>=0.15.12",
+    "ruff>=0.15.13",
     "pytest-xdist>=3.8.0",
     "granian[reload]>=2.7.4",
-    "ty>=0.0.35",
+    "ty>=0.0.37",
 ]
 
 [tool.mypy]
