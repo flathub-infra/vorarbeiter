@@ -26,6 +26,14 @@ def mock_pipeline():
     )
 
 
+def github_build_job(started_at: datetime, status: str = "in_progress") -> dict:
+    return {
+        "name": "build-x86_64",
+        "status": status,
+        "started_at": started_at.isoformat().replace("+00:00", "Z"),
+    }
+
+
 @pytest.mark.asyncio
 async def test_check_and_update_pipeline_jobs_succeeded_to_committed(
     job_monitor, mock_pipeline
@@ -124,6 +132,265 @@ async def test_check_and_update_pipeline_jobs_wrong_status(job_monitor, mock_pip
 
     assert result is False
     assert mock_pipeline.status == PipelineStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_check_and_update_pipeline_jobs_cancels_timed_out_default_build(
+    job_monitor,
+):
+    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=16)
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.RUNNING,
+        started_at=started_at,
+        created_at=started_at,
+        build_id=123,
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 1},
+        params={"build_type": "default"},
+    )
+
+    job_monitor.github_actions.get_workflow_run_jobs = AsyncMock(
+        return_value=[github_build_job(started_at)]
+    )
+
+    result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+    assert result is True
+    assert pipeline.status == PipelineStatus.CANCELLED
+    assert pipeline.finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_check_and_update_pipeline_jobs_keeps_default_build_inside_margin(
+    job_monitor,
+):
+    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=14)
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.RUNNING,
+        started_at=started_at,
+        created_at=started_at,
+        build_id=123,
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 1},
+        params={"build_type": "default"},
+    )
+
+    job_monitor.github_actions.get_workflow_run_jobs = AsyncMock(
+        return_value=[github_build_job(started_at)]
+    )
+
+    result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+    assert result is False
+    assert pipeline.status == PipelineStatus.RUNNING
+    assert pipeline.finished_at is None
+
+
+@pytest.mark.asyncio
+async def test_check_and_update_pipeline_jobs_cancels_timed_out_extended_build(
+    job_monitor,
+):
+    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=9, minutes=16)
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.RUNNING,
+        started_at=started_at,
+        created_at=started_at,
+        build_id=123,
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 1},
+        params={"build_type": "medium"},
+    )
+
+    job_monitor.github_actions.get_workflow_run_jobs = AsyncMock(
+        return_value=[github_build_job(started_at)]
+    )
+
+    result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+    assert result is True
+    assert pipeline.status == PipelineStatus.CANCELLED
+    assert pipeline.finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_check_and_update_pipeline_jobs_keeps_extended_build_inside_timeout(
+    job_monitor,
+):
+    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=9, minutes=14)
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.RUNNING,
+        started_at=started_at,
+        created_at=started_at,
+        build_id=123,
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 1},
+        params={"build_type": "large"},
+    )
+
+    job_monitor.github_actions.get_workflow_run_jobs = AsyncMock(
+        return_value=[github_build_job(started_at)]
+    )
+
+    result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+    assert result is False
+    assert pipeline.status == PipelineStatus.RUNNING
+    assert pipeline.finished_at is None
+
+
+@pytest.mark.asyncio
+async def test_check_and_update_pipeline_jobs_uses_github_job_start_time(
+    job_monitor,
+):
+    pipeline_started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=16)
+    job_started_at = datetime.now(tz=timezone.utc) - timedelta(minutes=10)
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.RUNNING,
+        started_at=pipeline_started_at,
+        created_at=pipeline_started_at,
+        build_id=123,
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 1},
+        params={"build_type": "default"},
+    )
+
+    job_monitor.github_actions.get_workflow_run_jobs = AsyncMock(
+        return_value=[github_build_job(job_started_at)]
+    )
+
+    result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+    assert result is False
+    assert pipeline.status == PipelineStatus.RUNNING
+    assert pipeline.finished_at is None
+
+
+@pytest.mark.asyncio
+async def test_check_and_update_pipeline_jobs_keeps_running_build_without_run_id(
+    job_monitor,
+):
+    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=16)
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.RUNNING,
+        started_at=started_at,
+        created_at=started_at,
+        build_id=123,
+        params={"build_type": "default"},
+    )
+
+    job_monitor.github_actions.get_workflow_run_jobs = AsyncMock(return_value=[])
+
+    result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+
+    assert result is False
+    assert pipeline.status == PipelineStatus.RUNNING
+    assert pipeline.finished_at is None
+    job_monitor.github_actions.get_workflow_run_jobs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_jobs_cancels_timed_out_running_builds(
+    db_session_maker, run_check_all_active_pipelines
+):
+    session_maker = db_session_maker
+    now = datetime.now(tz=timezone.utc)
+
+    default_expired = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.DefaultExpired",
+        status=PipelineStatus.RUNNING,
+        started_at=now - timedelta(hours=6, minutes=16),
+        created_at=now - timedelta(hours=6, minutes=16),
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 1},
+        params={"build_type": "default"},
+    )
+    extended_active = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.ExtendedActive",
+        status=PipelineStatus.RUNNING,
+        started_at=now - timedelta(hours=9, minutes=14),
+        created_at=now - timedelta(hours=9, minutes=14),
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 2},
+        params={"build_type": "medium"},
+    )
+    extended_expired = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.ExtendedExpired",
+        status=PipelineStatus.RUNNING,
+        started_at=now - timedelta(hours=9, minutes=16),
+        created_at=now - timedelta(hours=9, minutes=16),
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 3},
+        params={"build_type": "large"},
+    )
+    reprocheck_expired = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.Reprocheck",
+        status=PipelineStatus.RUNNING,
+        started_at=now - timedelta(hours=10),
+        created_at=now - timedelta(hours=10),
+        params={"workflow_id": "reprocheck.yml", "build_type": "medium"},
+    )
+
+    async with session_maker() as session:
+        session.add_all(
+            [
+                default_expired,
+                extended_active,
+                extended_expired,
+                reprocheck_expired,
+            ]
+        )
+        await session.commit()
+
+    async def get_workflow_run_jobs(owner, repo, run_id):
+        started_at_by_run_id = {
+            1: now - timedelta(hours=6, minutes=16),
+            2: now - timedelta(hours=9, minutes=14),
+            3: now - timedelta(hours=9, minutes=16),
+        }
+        return [github_build_job(started_at_by_run_id[run_id])]
+
+    async def assert_expired_spot_build_committed():
+        async with session_maker() as session:
+            refreshed = await session.get(Pipeline, extended_expired.id)
+            assert refreshed.status == PipelineStatus.CANCELLED
+        return []
+
+    with (
+        patch(
+            "app.services.github_actions.GitHubActionsService.get_workflow_run_jobs",
+            side_effect=get_workflow_run_jobs,
+        ),
+        patch("app.pipelines.build.BuildPipeline.start_pending_builds") as mock_start,
+    ):
+        mock_start.side_effect = assert_expired_spot_build_committed
+        result = await run_check_all_active_pipelines(session_maker)
+
+    assert result["checked_pipelines"] == 4
+    assert result["updated_pipelines"] == 2
+    mock_start.assert_awaited_once()
+
+    async with session_maker() as session:
+        refreshed_default = await session.get(Pipeline, default_expired.id)
+        refreshed_extended_active = await session.get(Pipeline, extended_active.id)
+        refreshed_extended_expired = await session.get(Pipeline, extended_expired.id)
+        refreshed_reprocheck = await session.get(Pipeline, reprocheck_expired.id)
+
+        assert refreshed_default.status == PipelineStatus.CANCELLED
+        assert refreshed_default.finished_at is not None
+        assert refreshed_extended_active.status == PipelineStatus.RUNNING
+        assert refreshed_extended_active.finished_at is None
+        assert refreshed_extended_expired.status == PipelineStatus.CANCELLED
+        assert refreshed_extended_expired.finished_at is not None
+        assert refreshed_reprocheck.status == PipelineStatus.RUNNING
+        assert refreshed_reprocheck.finished_at is None
 
 
 @pytest.mark.asyncio

@@ -1,12 +1,14 @@
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import structlog
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
+from app.services.github_actions import GitHubActionsService
 from app.utils.flat_manager import (
     JobKind,
     JobResponse,
@@ -39,15 +41,22 @@ JOB_DESCRIPTIONS = {
     },
 }
 
+DEFAULT_BUILD_TIMEOUT = timedelta(hours=6)
+EXTENDED_BUILD_TIMEOUT = timedelta(hours=9)
+BUILD_TIMEOUT_SAFETY_MARGIN = timedelta(minutes=15)
+
 
 class JobMonitor:
     def __init__(self, db: AsyncSession | None = None):
         self.flat_manager = get_flat_manager_client()
+        self.github_actions = GitHubActionsService()
         self.db = db
         self._db_lock = asyncio.Lock()
 
     async def check_all_active_pipelines(self, db: AsyncSession) -> dict[str, int]:
-        cutoff_date = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+        now = datetime.now(tz=timezone.utc)
+        cutoff_date = now - timedelta(hours=24)
+        running_build_cutoff = now - DEFAULT_BUILD_TIMEOUT - BUILD_TIMEOUT_SAFETY_MARGIN
 
         query = select(Pipeline).where(
             or_(
@@ -75,6 +84,17 @@ class JobMonitor:
                 (Pipeline.status == PipelineStatus.PUBLISHING)
                 & Pipeline.update_repo_job_id.is_(None)
                 & Pipeline.flat_manager_repo.in_(["stable", "beta"]),
+                (Pipeline.status == PipelineStatus.RUNNING)
+                & (
+                    (
+                        Pipeline.started_at.isnot(None)
+                        & (Pipeline.started_at < running_build_cutoff)
+                    )
+                    | (
+                        Pipeline.started_at.is_(None)
+                        & (Pipeline.created_at < running_build_cutoff)
+                    )
+                ),
             )
         )
         result = await db.execute(query)
@@ -98,6 +118,17 @@ class JobMonitor:
         results = await asyncio.gather(*(_process(pipeline) for pipeline in pipelines))
         updated_count = sum(1 for result in results if result)
 
+        if any(
+            result
+            and pipeline.status == PipelineStatus.CANCELLED
+            and self._is_spot_build_type((pipeline.params or {}).get("build_type"))
+            for pipeline, result in zip(pipelines, results, strict=True)
+        ):
+            await db.commit()
+            from app.pipelines.build import BuildPipeline
+
+            await BuildPipeline().start_pending_builds()
+
         return {
             "checked_pipelines": len(pipelines),
             "updated_pipelines": updated_count,
@@ -105,6 +136,9 @@ class JobMonitor:
 
     async def check_and_update_pipeline_jobs(self, pipeline: Pipeline) -> bool:
         updated = False
+
+        if pipeline.status == PipelineStatus.RUNNING:
+            return await self._expire_timed_out_running_build(pipeline)
 
         if pipeline.build_id and (
             pipeline.commit_job_id is None or pipeline.publish_job_id is None
@@ -161,6 +195,122 @@ class JobMonitor:
                 updated = True
 
         return updated
+
+    async def _expire_timed_out_running_build(self, pipeline: Pipeline) -> bool:
+        params = pipeline.params or {}
+        if params.get("workflow_id", "build.yml") != "build.yml":
+            return False
+
+        build_type = params.get("build_type") or "default"
+        timeout = (
+            DEFAULT_BUILD_TIMEOUT if build_type == "default" else EXTENDED_BUILD_TIMEOUT
+        )
+        timeout += BUILD_TIMEOUT_SAFETY_MARGIN
+
+        started_at = await self._get_running_build_job_started_at(pipeline)
+        if started_at is None:
+            return False
+
+        now = datetime.now(tz=timezone.utc)
+        if started_at + timeout > now:
+            return False
+
+        pipeline.status = PipelineStatus.CANCELLED
+        pipeline.finished_at = now
+        logger.warning(
+            "Marked timed-out running build as CANCELLED",
+            pipeline_id=str(pipeline.id),
+            build_type=build_type,
+            started_at=started_at.isoformat(),
+            timeout_minutes=int(timeout.total_seconds() // 60),
+        )
+        return True
+
+    async def _get_running_build_job_started_at(
+        self, pipeline: Pipeline
+    ) -> datetime | None:
+        run_info = self._get_github_run_info(pipeline)
+        if run_info is None:
+            return None
+
+        owner, repo, run_id = run_info
+        jobs = await self.github_actions.get_workflow_run_jobs(owner, repo, run_id)
+        if jobs is None:
+            return None
+
+        started_at_values: list[datetime] = []
+        for job in jobs:
+            name = job.get("name")
+            started_at = job.get("started_at")
+            if (
+                job.get("status") == "in_progress"
+                and isinstance(name, str)
+                and name.startswith("build-")
+                and isinstance(started_at, str)
+            ):
+                parsed_started_at = self._parse_github_datetime(started_at)
+                if parsed_started_at is not None:
+                    started_at_values.append(parsed_started_at)
+
+        return min(
+            started_at_values,
+            default=None,
+        )
+
+    @staticmethod
+    def _get_github_run_info(pipeline: Pipeline) -> tuple[str, str, int] | None:
+        provider_data = pipeline.provider_data or {}
+        owner = provider_data.get("owner")
+        repo = provider_data.get("repo")
+        run_id = provider_data.get("run_id")
+
+        if pipeline.log_url:
+            parsed = urlparse(pipeline.log_url)
+            path_parts = parsed.path.strip("/").split("/")
+            if (
+                len(path_parts) >= 5
+                and path_parts[2] == "actions"
+                and path_parts[3] == "runs"
+            ):
+                if not isinstance(owner, str):
+                    owner = path_parts[0]
+                if not isinstance(repo, str):
+                    repo = path_parts[1]
+                run_id = run_id or path_parts[4]
+
+        if not isinstance(owner, str) or not isinstance(repo, str) or run_id is None:
+            return None
+
+        try:
+            run_id_int = int(run_id)
+        except (TypeError, ValueError):
+            return None
+
+        return owner, repo, run_id_int
+
+    @staticmethod
+    def _parse_github_datetime(value: str | None) -> datetime | None:
+        if not value:
+            return None
+
+        try:
+            if value.endswith("Z"):
+                value = value.removesuffix("Z") + "+00:00"
+            return JobMonitor._as_utc(datetime.fromisoformat(value))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _is_spot_build_type(build_type: str | None) -> bool:
+        from app.pipelines.build import BuildPipeline
+
+        return BuildPipeline.is_spot_build_type(build_type)
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     async def _process_succeeded_pipeline(self, pipeline: Pipeline) -> bool:
         if not pipeline.commit_job_id:

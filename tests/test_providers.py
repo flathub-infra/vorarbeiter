@@ -82,3 +82,25 @@ async def test_github_provider_cancel_missing_run_id(github_token, mock_httpx):
 
     mock_httpx.request.assert_not_called()
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_github_provider_get_workflow_run_jobs(github_token, mock_httpx):
+    mock_httpx.set_response(
+        "request",
+        status_code=200,
+        json_data={"jobs": [{"name": "build-x86_64", "status": "in_progress"}]},
+    )
+    provider = GitHubActionsService()
+
+    with mock_httpx.patch():
+        result = await provider.get_workflow_run_jobs("flathub", "actions", 12345)
+
+    mock_httpx.request.assert_called_once()
+    args, _ = mock_httpx.request.call_args
+    assert args[0] == "GET"
+    assert (
+        "https://api.github.com/repos/flathub/actions/actions/runs/12345/jobs"
+        in args[1]
+    )
+    assert result == [{"name": "build-x86_64", "status": "in_progress"}]

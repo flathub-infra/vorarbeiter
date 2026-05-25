@@ -19,7 +19,6 @@ from app.logger import setup_logging
 COMMANDS = (
     "publish",
     "check-jobs",
-    "cleanup-stale",
     "github-tasks-process",
     "github-tasks-cleanup",
     "prune-beta",
@@ -65,20 +64,6 @@ async def check_jobs() -> dict[str, Any]:
     return {
         "status": "completed",
         **result,
-    }
-
-
-async def cleanup_stale() -> dict[str, Any]:
-    from app.database import get_db
-    from app.services import pipeline_service
-
-    async with get_db() as db:
-        cancelled_ids = await pipeline_service.cancel_stale_running_pipelines(db)
-
-    return {
-        "status": "completed",
-        "cancelled_pipelines": len(cancelled_ids),
-        "cancelled_pipeline_ids": cancelled_ids,
     }
 
 
@@ -145,8 +130,6 @@ async def dispatch(command: str) -> dict[str, Any]:
             return await publish_pipelines()
         case "check-jobs":
             return await check_jobs()
-        case "cleanup-stale":
-            return await cleanup_stale()
         case "github-tasks-process":
             return await process_github_tasks()
         case "github-tasks-cleanup":

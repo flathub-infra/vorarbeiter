@@ -101,6 +101,21 @@ class GitHubActionsService:
             return response.json()
         return None
 
+    async def get_workflow_run_jobs(
+        self, owner: str, repo: str, run_id: int
+    ) -> list[dict] | None:
+        client = get_github_actions_client()
+        url = f"{self.base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+        response = await client.request(
+            "get",
+            url,
+            context={"owner": owner, "repo": repo, "run_id": run_id},
+        )
+
+        if response:
+            return response.json().get("jobs", [])
+        return None
+
     async def download_run_logs(self, owner: str, repo: str, run_id: int) -> str | None:
         client = get_github_actions_client()
         url = f"{self.base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/logs"
