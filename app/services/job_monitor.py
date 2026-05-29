@@ -120,7 +120,7 @@ class JobMonitor:
 
         if any(
             result
-            and pipeline.status == PipelineStatus.CANCELLED
+            and pipeline.status not in (PipelineStatus.PENDING, PipelineStatus.RUNNING)
             and self._is_spot_build_type((pipeline.params or {}).get("build_type"))
             for pipeline, result in zip(pipelines, results, strict=True)
         ):
@@ -207,10 +207,54 @@ class JobMonitor:
         )
         timeout += BUILD_TIMEOUT_SAFETY_MARGIN
 
-        started_at = await self._get_running_build_job_started_at(pipeline)
+        run_info = self._get_github_run_info(pipeline)
+        if run_info is None:
+            started_at = self._running_pipeline_started_at(pipeline)
+            return self._cancel_if_running_build_timed_out(
+                pipeline,
+                build_type=build_type,
+                started_at=started_at,
+                timeout=timeout,
+                reason="missing_github_run_info",
+            )
+
+        owner, repo, run_id = run_info
+        jobs = await self.github_actions.get_workflow_run_jobs(owner, repo, run_id)
+        if jobs is None:
+            return False
+
+        started_at = self._get_in_progress_build_job_started_at(jobs)
+        if started_at is None:
+            started_at = self._running_pipeline_started_at(pipeline)
+            return self._cancel_if_running_build_timed_out(
+                pipeline,
+                build_type=build_type,
+                started_at=started_at,
+                timeout=timeout,
+                reason="missing_active_github_build_job",
+            )
+
+        return self._cancel_if_running_build_timed_out(
+            pipeline,
+            build_type=build_type,
+            started_at=started_at,
+            timeout=timeout,
+            reason="github_build_job_timeout",
+        )
+
+    def _cancel_if_running_build_timed_out(
+        self,
+        pipeline: Pipeline,
+        *,
+        build_type: str,
+        started_at: datetime | None,
+        timeout: timedelta,
+        reason: str,
+    ) -> bool:
         if started_at is None:
             return False
 
+        started_at = self._as_utc(started_at)
         now = datetime.now(tz=timezone.utc)
         if started_at + timeout > now:
             return False
@@ -223,21 +267,13 @@ class JobMonitor:
             build_type=build_type,
             started_at=started_at.isoformat(),
             timeout_minutes=int(timeout.total_seconds() // 60),
+            reason=reason,
         )
         return True
 
-    async def _get_running_build_job_started_at(
-        self, pipeline: Pipeline
+    def _get_in_progress_build_job_started_at(
+        self, jobs: list[dict]
     ) -> datetime | None:
-        run_info = self._get_github_run_info(pipeline)
-        if run_info is None:
-            return None
-
-        owner, repo, run_id = run_info
-        jobs = await self.github_actions.get_workflow_run_jobs(owner, repo, run_id)
-        if jobs is None:
-            return None
-
         started_at_values: list[datetime] = []
         for job in jobs:
             name = job.get("name")
@@ -256,6 +292,12 @@ class JobMonitor:
             started_at_values,
             default=None,
         )
+
+    def _running_pipeline_started_at(self, pipeline: Pipeline) -> datetime | None:
+        started_at = pipeline.started_at or pipeline.created_at
+        if started_at is None:
+            return None
+        return self._as_utc(started_at)
 
     @staticmethod
     def _get_github_run_info(pipeline: Pipeline) -> tuple[str, str, int] | None:
