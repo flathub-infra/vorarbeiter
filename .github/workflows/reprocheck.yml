@@ -45,7 +45,7 @@ jobs:
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
 
-          curl -X POST \
+          curl -fsS -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d '{"log_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
@@ -178,7 +178,7 @@ jobs:
               message: $message
             }')
 
-          curl -X POST \
+          curl -fsS -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "$payload" \
