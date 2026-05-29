@@ -1745,6 +1745,20 @@ SAMPLE_ISSUE_BODY_JOB_FAILURE = """The commit job for `test-app` failed in the s
 
 cc @flathub/build-moderation"""
 
+SAMPLE_ISSUE_BODY_VALIDATION_FAILURE = """The build for `test-app` failed validation during publication in the stable repository.
+
+**Build Information:**
+- Commit SHA: abc123456789
+- Build ID: 456
+- Build log: https://github.com/flathub-infra/vorarbeiter/actions/runs/123456789
+
+**Validation Failure:**
+```
+1 out of 1 checks failed (flathub-hooks)
+```
+
+cc @flathub/build-moderation"""
+
 SAMPLE_RETRY_COMMENT_PAYLOAD = {
     "repository": {"full_name": "flathub/test-app"},
     "sender": {"login": "test-actor"},
@@ -1788,6 +1802,26 @@ async def test_parse_failure_issue_job_failure():
     assert result["flat_manager_repo"] == "stable"
     assert result["issue_type"] == "job_failure"
     assert result["job_type"] == "commit"
+
+
+@pytest.mark.asyncio
+async def test_parse_failure_issue_validation_failure():
+    from app.routes.webhooks import parse_failure_issue
+
+    with patch(
+        "app.routes.webhooks.get_workflow_run_title",
+        AsyncMock(return_value="Build from refs/heads/master"),
+    ):
+        result = await parse_failure_issue(
+            SAMPLE_ISSUE_BODY_VALIDATION_FAILURE, "flathub/test-app"
+        )
+
+    assert result is not None
+    assert result["sha"] == "abc123456789"
+    assert result["repo"] == "flathub/test-app"
+    assert result["ref"] == "refs/heads/master"
+    assert result["flat_manager_repo"] == "stable"
+    assert result["issue_type"] == "validation_failure"
 
 
 @pytest.mark.asyncio

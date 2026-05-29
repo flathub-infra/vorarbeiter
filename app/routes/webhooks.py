@@ -38,6 +38,14 @@ STABLE_BUILD_FAILURE_PATTERN = re.compile(
     r"Commit SHA: ([0-9a-fA-F]+)\s*\n"
     r"Build log: (https://github\.com/flathub-infra/vorarbeiter/actions/runs/\d+)"
 )
+VALIDATION_FAILURE_PATTERN = re.compile(
+    r"The build for `.+?` failed validation during publication in the (\w+) repository\.\s*\n\n"
+    r"\*\*Build Information:\*\*\s*\n"
+    r"- Commit SHA: ([0-9a-fA-F]+)\s*\n"
+    r"(?:- Build ID: \d+\s*\n)?"
+    r"- Build log: (https://github\.com/flathub-infra/vorarbeiter/actions/runs/\d+)",
+    re.DOTALL,
+)
 JOB_FAILURE_PATTERN = re.compile(
     r"The (\w+) job for `.+?` failed in the (\w+) repository\.\n\n.*?-? ?Commit SHA: ([0-9a-fA-F]+)",
     re.DOTALL,
@@ -49,36 +57,51 @@ DISABLED_TEST_BUILDS_MSG = (
 )
 
 
+async def parse_build_ref_from_log(build_url: str, default_ref: str) -> str:
+    ref = default_ref
+    run_id = int(build_url.rstrip("/").split("/")[-1])
+
+    title = await get_workflow_run_title(run_id)
+    if title:
+        ref_match = re.search(r"from (refs/heads/\S+)", title)
+        if ref_match:
+            extracted_ref = ref_match.group(1)
+            if extracted_ref in (
+                "refs/heads/master",
+                "refs/heads/beta",
+            ) or extracted_ref.startswith("refs/heads/branch/"):
+                ref = extracted_ref
+
+    return ref
+
+
 async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
     stable_match = STABLE_BUILD_FAILURE_PATTERN.search(issue_body)
     if stable_match:
         sha, build_url = stable_match.groups()
-        run_id = int(build_url.rstrip("/").split("/")[-1])
-
-        ref = "refs/heads/master"
-
-        title = await get_workflow_run_title(run_id)
-        if title:
-            ref_match = re.search(r"from (refs/heads/\S+)", title)
-            if ref_match:
-                extracted_ref = ref_match.group(1)
-                if extracted_ref in (
-                    "refs/heads/master",
-                    "refs/heads/beta",
-                ) or extracted_ref.startswith("refs/heads/branch/"):
-                    ref = extracted_ref
-
-        if ref == "refs/heads/beta":
-            flat_mgr_repo = "beta"
-        else:
-            flat_mgr_repo = "stable"
+        ref = await parse_build_ref_from_log(build_url, "refs/heads/master")
 
         return {
             "sha": sha,
             "repo": git_repo,
             "ref": ref,
-            "flat_manager_repo": flat_mgr_repo,
+            "flat_manager_repo": get_flat_manager_repo(ref),
             "issue_type": "build_failure",
+        }
+
+    validation_match = VALIDATION_FAILURE_PATTERN.search(issue_body)
+    if validation_match:
+        repo_type, sha, build_url = validation_match.groups()
+        default_ref = (
+            "refs/heads/beta" if repo_type.lower() == "beta" else "refs/heads/master"
+        )
+        ref = await parse_build_ref_from_log(build_url, default_ref)
+        return {
+            "sha": sha,
+            "repo": git_repo,
+            "ref": ref,
+            "flat_manager_repo": get_flat_manager_repo(ref),
+            "issue_type": "validation_failure",
         }
 
     job_match = JOB_FAILURE_PATTERN.search(issue_body)
