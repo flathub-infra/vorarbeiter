@@ -63,7 +63,7 @@ jobs:
           echo "::add-mask::$CALLBACK_TOKEN"
 
           curl -fsS --retry-all-errors --retry 5 --retry-delay 10 \
-            --retry-max-time 150 -X POST \
+            --retry-max-time 150 --connect-timeout 60 -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d '{"log_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
@@ -199,7 +199,7 @@ jobs:
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
           curl -fsS --retry-all-errors --retry 5 --retry-delay 10 \
-            --retry-max-time 150 -X POST \
+            --retry-max-time 150 --connect-timeout 60 -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "{\"app_id\": \"$(cat $APP_ID_FILE)\"}" \
@@ -240,7 +240,7 @@ jobs:
               [[ -n "$END_OF_LIFE_REBASE" ]] && JSON_DATA=$(echo "$JSON_DATA" | jq --arg eolr "$END_OF_LIFE_REBASE" '. + {"end_of_life_rebase": $eolr}')
 
               curl -fsS --retry-all-errors --retry 5 --retry-delay 10 \
-                --retry-max-time 150 -X POST \
+                --retry-max-time 150 --connect-timeout 60 -X POST \
                 -H "Content-Type: application/json" \
                 -H "Authorization: Bearer $CALLBACK_TOKEN" \
                 -d "$JSON_DATA" "${{ inputs.callback_url }}/metadata"
@@ -728,7 +728,7 @@ jobs:
           echo "Reporting status: $status"
 
           curl -fsS --retry-all-errors --retry 5 --retry-delay 10 \
-            --retry-max-time 150 -X POST \
+            --retry-max-time 150 --connect-timeout 60 -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "{\"status\": \"${status}\"}" \
