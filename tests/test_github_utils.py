@@ -710,16 +710,23 @@ async def test_set_pr_labels(mock_settings, mock_httpx, replace, expected_method
         )
 
     assert result is True
-    mock_httpx.request.assert_called_once()
-    call_args = mock_httpx.request.call_args
+    assert mock_httpx.request.call_count == 2
+    label_create_call, label_apply_call = mock_httpx.request.call_args_list
 
-    assert call_args[0][0] == expected_method
+    assert label_create_call[0][0] == "POST"
     assert (
-        call_args[0][1]
+        label_create_call[0][1]
+        == "https://api.github.com/repos/flathub/test-app/labels"
+    )
+    assert label_create_call[1]["json"] == {"name": "runtime-update"}
+
+    assert label_apply_call[0][0] == expected_method
+    assert (
+        label_apply_call[0][1]
         == "https://api.github.com/repos/flathub/test-app/issues/42/labels"
     )
-    assert call_args[1]["json"] == {"labels": ["runtime-update"]}
-    assert call_args[1]["headers"]["Authorization"] == "token test-token"
+    assert label_apply_call[1]["json"] == {"labels": ["runtime-update"]}
+    assert label_apply_call[1]["headers"]["Authorization"] == "token test-token"
 
 
 @pytest.mark.asyncio
@@ -740,4 +747,5 @@ async def test_set_pr_labels_multiple_labels(mock_settings, mock_httpx, labels):
         )
 
     assert result is True
+    assert mock_httpx.request.call_count == len(labels) + 1
     assert mock_httpx.request.call_args[1]["json"] == {"labels": labels}

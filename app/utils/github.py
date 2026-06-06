@@ -293,10 +293,26 @@ async def set_pr_labels(
         logger.error("Missing PR number for labelling")
         return False
 
+    client = get_github_client()
+
+    for label in labels:
+        create_resp = await client.request(
+            "post",
+            f"https://api.github.com/repos/{git_repo}/labels",
+            json={"name": label},
+            context={"git_repo": git_repo, "label": label},
+            raise_for_status=False,
+        )
+        if create_resp and create_resp.status_code == 201:
+            logger.info(
+                "Created PR label",
+                git_repo=git_repo,
+                labels=label,
+            )
+
     method = "put" if replace else "post"
     url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/labels"
 
-    client = get_github_client()
     response = await client.request(
         method,
         url,
