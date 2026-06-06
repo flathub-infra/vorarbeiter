@@ -486,6 +486,20 @@ class TestMergeServiceLabelsAndMetadata:
         )
 
     @pytest.mark.asyncio
+    async def test_set_labels_replaces_labels(self):
+        service = MergeService()
+
+        with patch(
+            "app.services.merge.set_pr_labels", new=AsyncMock(return_value=True)
+        ) as mock_set_labels:
+            result = await service._set_labels(123, [])
+
+        assert result is True
+        mock_set_labels.assert_called_once_with(
+            "flathub/flathub", 123, ["ready"], replace=True
+        )
+
+    @pytest.mark.asyncio
     async def test_clear_pr_metadata_uses_provided_metadata(self):
         service = MergeService()
 
