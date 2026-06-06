@@ -12,6 +12,7 @@ from app.utils.github import (
     create_pr_comment,
     update_commit_status,
     get_linter_warning_messages,
+    set_pr_labels,
 )
 
 
@@ -688,3 +689,55 @@ async def test_add_comment_reaction_queues_on_rate_limit(
     assert tasks[0].method == "post"
     assert tasks[0].payload == {"content": "+1"}
     assert "issues/comments/98765/reactions" in tasks[0].url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "replace, expected_method",
+    [
+        (False, "POST"),
+        (True, "PUT"),
+    ],
+)
+async def test_set_pr_labels(mock_settings, mock_httpx, replace, expected_method):
+    mock_httpx.set_response("request")
+    with mock_httpx.patch():
+        result = await set_pr_labels(
+            git_repo="flathub/test-app",
+            pr_number=42,
+            labels=["runtime-update"],
+            replace=replace,
+        )
+
+    assert result is True
+    mock_httpx.request.assert_called_once()
+    call_args = mock_httpx.request.call_args
+
+    assert call_args[0][0] == expected_method
+    assert (
+        call_args[0][1]
+        == "https://api.github.com/repos/flathub/test-app/issues/42/labels"
+    )
+    assert call_args[1]["json"] == {"labels": ["runtime-update"]}
+    assert call_args[1]["headers"]["Authorization"] == "token test-token"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ["runtime-update"],
+        ["runtime-update", "needs-review"],
+    ],
+)
+async def test_set_pr_labels_multiple_labels(mock_settings, mock_httpx, labels):
+    mock_httpx.set_response("request")
+    with mock_httpx.patch():
+        result = await set_pr_labels(
+            git_repo="flathub/test-app",
+            pr_number=42,
+            labels=labels,
+        )
+
+    assert result is True
+    assert mock_httpx.request.call_args[1]["json"] == {"labels": labels}

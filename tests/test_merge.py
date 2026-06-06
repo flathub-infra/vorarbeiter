@@ -475,18 +475,15 @@ class TestMergeServiceLabelsAndMetadata:
     async def test_set_labels_uses_provided_labels(self):
         service = MergeService()
 
-        response = MagicMock()
-        response.status_code = 200
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=response)
-
-        with patch("app.services.merge.get_github_client", return_value=mock_client):
+        with patch(
+            "app.services.merge.set_pr_labels", new=AsyncMock(return_value=True)
+        ) as mock_set_labels:
             result = await service._set_labels(123, ["migrate-app-id"])
 
         assert result is True
-        mock_client.request.assert_called_once()
-        assert mock_client.request.call_args.args[0] == "post"
-        assert mock_client.request.call_args.args[1].endswith("/issues/123/labels")
+        mock_set_labels.assert_called_once_with(
+            "flathub/flathub", 123, ["ready"], replace=False
+        )
 
     @pytest.mark.asyncio
     async def test_clear_pr_metadata_uses_provided_metadata(self):

@@ -24,6 +24,7 @@ from app.schemas.merge import parse_merge_command
 from app.utils.github import (
     GQL_EXCEPTIONS,
     get_github_client,
+    set_pr_labels,
 )
 from app.utils.manifest import detect_appid_from_github
 
@@ -763,26 +764,11 @@ class MergeService:
         return sha_ok, data.get("protected", False) is True
 
     async def _set_labels(self, pr_number: int, current_labels: list[str]) -> bool:
-        client = get_github_client()
+        should_replace = "migrate-app-id" not in current_labels
 
-        if "migrate-app-id" in current_labels:
-            add_response = await client.request(
-                "post",
-                f"https://api.github.com/repos/{FLATHUB_REPO}/issues/{pr_number}/labels",
-                content=json.dumps({"labels": ["ready"]}),
-                context={"pr_number": pr_number},
-                raise_for_status=False,
-            )
-            return add_response is not None and add_response.status_code == 200
-        else:
-            set_response = await client.request(
-                "put",
-                f"https://api.github.com/repos/{FLATHUB_REPO}/issues/{pr_number}/labels",
-                content=json.dumps({"labels": ["ready"]}),
-                context={"pr_number": pr_number},
-                raise_for_status=False,
-            )
-            return set_response is not None and set_response.status_code == 200
+        return await set_pr_labels(
+            FLATHUB_REPO, pr_number, ["ready"], replace=should_replace
+        )
 
     async def _clear_pr_metadata(
         self, pr_number: int, pr_metadata: _PrMetadata

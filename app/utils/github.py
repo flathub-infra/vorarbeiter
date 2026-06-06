@@ -279,6 +279,53 @@ async def update_commit_status(
     return False
 
 
+async def set_pr_labels(
+    git_repo: str,
+    pr_number: int,
+    labels: list[str],
+    replace: bool = False,
+) -> bool:
+
+    if not git_repo:
+        logger.error("Missing git repo for labelling")
+        return False
+    if not pr_number:
+        logger.error("Missing PR number for labelling")
+        return False
+
+    method = "put" if replace else "post"
+    url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/labels"
+
+    client = get_github_client()
+    response = await client.request(
+        method,
+        url,
+        json={"labels": labels},
+        context={"git_repo": git_repo, "pr_number": pr_number},
+        raise_for_status=False,
+    )
+
+    if response and response.status_code == 200:
+        logger.info(
+            "Successfully updated PR labels",
+            git_repo=git_repo,
+            pr_number=pr_number,
+            labels=labels,
+            replace=replace,
+        )
+        return True
+
+    logger.warning(
+        "Failed to update PR labels",
+        git_repo=git_repo,
+        pr_number=pr_number,
+        labels=labels,
+        replace=replace,
+        status_code=response.status_code if response else None,
+    )
+    return False
+
+
 async def create_pr_comment(
     git_repo: str,
     pr_number: int,
