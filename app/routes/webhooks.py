@@ -27,6 +27,7 @@ from app.utils.github import (
     get_workflow_run_title,
     is_issue_edited,
     update_commit_status,
+    set_pr_labels,
 )
 
 logger = structlog.get_logger(__name__)
@@ -709,6 +710,48 @@ async def is_submodule_only_pr(payload: dict[str, Any]) -> bool:
     )
 
 
+_RUNTIME_KEY_REMOVED_RE = re.compile(
+    r'^-\s*"?(runtime|runtime-version|sdk)"?\s*:',
+    re.MULTILINE,
+)
+_RUNTIME_KEY_ADDED_RE = re.compile(
+    r'^\+\s*"?(runtime|runtime-version|sdk)"?\s*:',
+    re.MULTILINE,
+)
+
+
+async def is_runtime_update_pr(payload: dict[str, Any]) -> bool:
+    repo = payload.get("repository", {}).get("full_name")
+    number = payload.get("pull_request", {}).get("number")
+    if not (repo and number):
+        return False
+
+    app_id = repo.split("/", 1)[1]
+
+    files = await get_pr_files(repo, number)
+    if not files:
+        return False
+
+    manifest_extensions = (".yml", ".yaml", ".json")
+
+    for f in files:
+        filename = f.get("filename", "")
+        if not any(filename == f"{app_id}{ext}" for ext in manifest_extensions):
+            continue
+        patch = f.get("patch") or ""
+        removed_keys = set(_RUNTIME_KEY_REMOVED_RE.findall(patch))
+        added_keys = set(_RUNTIME_KEY_ADDED_RE.findall(patch))
+        if removed_keys & added_keys:
+            logger.info(
+                "Detected runtime update in PR",
+                repo=repo,
+                pr_number=number,
+                filename=filename,
+            )
+            return True
+    return False
+
+
 @webhooks_router.post(
     "/github",
     status_code=status.HTTP_202_ACCEPTED,
@@ -870,7 +913,9 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     params: dict[str, Any] = {"repo": event.repository}
     sha = None
 
-    if "pull_request" in payload and payload.get("action") in [
+    payload_action = payload.get("action")
+
+    if "pull_request" in payload and payload_action in [
         "opened",
         "synchronize",
         "reopened",
@@ -913,6 +958,22 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 "pr_target_branch": pr.get("base", {}).get("ref", "master"),
             }
         )
+
+        if payload_action == "opened":
+            try:
+                if await is_runtime_update_pr(payload):
+                    await set_pr_labels(
+                        git_repo=event.repository,
+                        pr_number=pr_number,
+                        labels=["runtime"],
+                    )
+            except Exception as err:
+                logger.warning(
+                    "Failed to check or apply runtime update label",
+                    pr_number=pr_number,
+                    repo=event.repository,
+                    error=str(err),
+                )
 
     elif "commits" in payload and payload.get("ref", ""):
         ref = payload.get("ref", "")

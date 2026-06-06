@@ -2869,3 +2869,150 @@ async def test_create_pipeline_bot_build_stores_target_branch(
 
         _, kwargs = mock_pipeline_service.create_pipeline.call_args
         assert kwargs["params"].get("pr_target_branch") == expected_pr_target_branch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "repo,files,expected",
+    [
+        (
+            "flathub/com.example.bar",
+            [
+                {
+                    "filename": "com.example.bar.yml",
+                    "patch": (
+                        "@@ -1,6 +1,6 @@\n"
+                        " app-id: com.example.bar\n"
+                        " runtime: org.kde.Platform\n"
+                        "-runtime-version: '6.9'\n"
+                        "+runtime-version: '6.10'\n"
+                        " sdk: org.kde.Sdk\n"
+                    ),
+                }
+            ],
+            True,
+        ),
+        (
+            "flathub/com.example.bar",
+            [
+                {
+                    "filename": "com.example.bar.json",
+                    "patch": (
+                        "@@ -1,7 +1,7 @@\n"
+                        " {\n"
+                        '     "id": "com.example.bar",\n'
+                        '     "runtime": "org.kde.Platform",\n'
+                        '-    "runtime-version": "6.9",\n'
+                        '+    "runtime-version": "6.10",\n'
+                        '     "sdk": "org.kde.Sdk",\n'
+                    ),
+                }
+            ],
+            True,
+        ),
+        (
+            "flathub/com.example.bar",
+            [
+                {
+                    "filename": "com.example.bar.yml",
+                    "patch": (
+                        "@@ -1,3 +1,3 @@\n"
+                        " app-id: com.example.bar\n"
+                        "-appstream-compose: true\n"
+                        "+appstream-compose: false\n"
+                    ),
+                }
+            ],
+            False,
+        ),
+        (
+            "flathub/com.example.bar",
+            [
+                {
+                    "filename": "foobarbaz.yml",
+                    "patch": ("-runtime-version: '6.9'\n+runtime-version: '6.10'\n"),
+                }
+            ],
+            False,
+        ),
+    ],
+)
+async def test_is_runtime_update_pr(repo, files, expected):
+    from app.routes.webhooks import is_runtime_update_pr
+
+    payload = {
+        "repository": {"full_name": repo},
+        "pull_request": {"number": 123},
+    }
+
+    with patch(
+        "app.routes.webhooks.get_pr_files",
+        AsyncMock(return_value=files),
+    ):
+        result = await is_runtime_update_pr(payload)
+        assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_labels_runtime_update_pr():
+    event_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+
+    payload = {
+        "repository": {"full_name": "flathub/com.example.bar"},
+        "sender": {"login": "test-actor"},
+        "action": "opened",
+        "pull_request": {
+            "number": 123,
+            "state": "open",
+            "head": {"ref": "feature-branch", "sha": "abcdef123456"},
+            "base": {"ref": "master"},
+        },
+    }
+
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=payload,
+        repository="flathub/com.example.bar",
+        actor="test-actor",
+    )
+
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="com.example.bar",
+        params={},
+        webhook_event_id=event_id,
+        status=PipelineStatus.PENDING,
+    )
+
+    mock_pipeline_service = AsyncMock()
+    mock_pipeline_service.create_pipeline.return_value = mock_pipeline
+    mock_pipeline_service.prepare_pipeline_for_start.return_value = mock_pipeline
+    mock_pipeline_service.supersede_conflicting_test_pipelines.return_value = None
+    mock_pipeline_service.should_queue_test_build.return_value = False
+    mock_pipeline_service.start_pipeline.return_value = mock_pipeline
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_get_db = create_mock_get_db(mock_db)
+
+    with (
+        patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.get_db", mock_get_db),
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()),
+        patch("app.routes.webhooks.is_runtime_update_pr", AsyncMock(return_value=True)),
+        patch("app.routes.webhooks.set_pr_labels", AsyncMock()) as mock_set_labels,
+    ):
+        from app.routes.webhooks import create_pipeline
+
+        result = await create_pipeline(webhook_event)
+
+    assert result == pipeline_id
+    mock_set_labels.assert_awaited_once_with(
+        git_repo="flathub/com.example.bar",
+        pr_number=123,
+        labels=["runtime"],
+    )
