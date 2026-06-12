@@ -7,7 +7,7 @@ import httpxyz as httpx
 import sentry_sdk
 import structlog
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -398,105 +398,166 @@ class BuildPipeline:
         self,
         pipeline_id: uuid.UUID,
     ) -> Pipeline:
+        now = datetime.now(tz=timezone.utc)
+
         async with get_db() as db:
-            pipeline = await db.get(Pipeline, pipeline_id)
-            if not pipeline:
-                raise ValueError(f"Pipeline {pipeline_id} not found")
-
-            if pipeline.status != PipelineStatus.PENDING:
+            claim = await db.execute(
+                update(Pipeline)
+                .where(
+                    Pipeline.id == pipeline_id,
+                    Pipeline.status == PipelineStatus.PENDING,
+                )
+                .values(status=PipelineStatus.RUNNING, started_at=now)
+            )
+            if claim.rowcount == 0:  # ty: ignore[unresolved-attribute]
+                existing = await db.get(Pipeline, pipeline_id)
+                if existing is None:
+                    raise ValueError(f"Pipeline {pipeline_id} not found")
                 raise ValueError(f"Pipeline {pipeline_id} is not in PENDING state")
+            await db.commit()
 
-            pipeline.status = PipelineStatus.RUNNING
-            pipeline.started_at = datetime.now(tz=timezone.utc)
+        created_build_id: int | None = None
+        try:
+            async with get_db() as db:
+                pipeline = await db.get(Pipeline, pipeline_id)
+                if pipeline is None:
+                    raise ValueError(f"Pipeline {pipeline_id} not found")
 
-            params = dict(pipeline.params or {})
-            stored_build_type = params.get("build_type")
-            flat_manager_repo = pipeline.flat_manager_repo
-            if stored_build_type is None or flat_manager_repo is None:
-                build_type, flat_manager_repo = await self._prepare_pipeline_metadata(
-                    db, pipeline
-                )
-            else:
-                build_type = str(stored_build_type)
-            if flat_manager_repo in ["stable", "beta"]:
-                await self._supersede_conflicting_pipelines(
-                    db, pipeline, flat_manager_repo
-                )
+                pipeline.status = PipelineStatus.RUNNING
+                pipeline.started_at = now
 
-            workflow_id = pipeline.params.get("workflow_id", "build.yml")
-
-            requires_flat_manager = workflow_id != "reprocheck.yml"
-
-            build_log_url = f"{settings.base_url}/api/pipelines/{pipeline.id}/log_url"
-
-            upload_token = None
-            if requires_flat_manager:
-                try:
-                    build_data = await self.flat_manager.create_build(
-                        repo=flat_manager_repo, build_log_url=build_log_url
+                params = dict(pipeline.params or {})
+                stored_build_type = params.get("build_type")
+                flat_manager_repo = pipeline.flat_manager_repo
+                if stored_build_type is None or flat_manager_repo is None:
+                    (
+                        build_type,
+                        flat_manager_repo,
+                    ) = await self._prepare_pipeline_metadata(db, pipeline)
+                else:
+                    build_type = str(stored_build_type)
+                if flat_manager_repo in ["stable", "beta"]:
+                    await self._supersede_conflicting_pipelines(
+                        db, pipeline, flat_manager_repo
                     )
 
-                    build_id = build_data.get("id")
-                    if build_id is None:
-                        raise ValueError(
-                            "Failed to get build ID from flat-manager response"
+                workflow_id = pipeline.params.get("workflow_id", "build.yml")
+
+                requires_flat_manager = workflow_id != "reprocheck.yml"
+
+                build_log_url = (
+                    f"{settings.base_url}/api/pipelines/{pipeline.id}/log_url"
+                )
+
+                upload_token = None
+                if requires_flat_manager:
+                    try:
+                        build_data = await self.flat_manager.create_build(
+                            repo=flat_manager_repo, build_log_url=build_log_url
                         )
 
-                    pipeline.build_id = build_id
+                        build_id = build_data.get("id")
+                        if build_id is None:
+                            raise ValueError(
+                                "Failed to get build ID from flat-manager response"
+                            )
 
-                    upload_token = await self.flat_manager.create_token_subset(
-                        build_id=build_id, app_id=pipeline.app_id
+                        created_build_id = build_id
+                        pipeline.build_id = build_id
+
+                        upload_token = await self.flat_manager.create_token_subset(
+                            build_id=build_id, app_id=pipeline.app_id
+                        )
+                    except Exception as e:
+                        raise ValueError(
+                            f"Failed to create build in flat-manager: {str(e)}"
+                        )
+
+                inputs = {
+                    "app_id": pipeline.app_id,
+                    "git_ref": pipeline.params.get("ref", "master"),
+                    "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
+                    "callback_token": pipeline.callback_token,
+                    "build_type": build_type,
+                    "spot": "true"
+                    if pipeline.params.get("use_spot", True)
+                    else "false",
+                    "pr_target_branch": pipeline.params.get(
+                        "pr_target_branch", "master"
+                    ),
+                }
+
+                if requires_flat_manager:
+                    assert pipeline.build_id is not None
+                    inputs.update(
+                        {
+                            "build_url": self.flat_manager.get_build_url(
+                                pipeline.build_id
+                            ),
+                            "flat_manager_repo": flat_manager_repo,
+                            "flat_manager_token": upload_token,
+                        }
                     )
-                except Exception as e:
-                    raise ValueError(
-                        f"Failed to create build in flat-manager: {str(e)}"
-                    )
 
-            inputs = {
-                "app_id": pipeline.app_id,
-                "git_ref": pipeline.params.get("ref", "master"),
-                "callback_url": f"{settings.base_url}/api/pipelines/{pipeline.id}/callback",
-                "callback_token": pipeline.callback_token,
-                "build_type": build_type,
-                "spot": "true" if pipeline.params.get("use_spot", True) else "false",
-                "pr_target_branch": pipeline.params.get("pr_target_branch", "master"),
-            }
+                if workflow_id == "reprocheck.yml":
+                    build_pipeline_id = pipeline.params.get("build_pipeline_id")
+                    if build_pipeline_id:
+                        inputs["build_pipeline_id"] = build_pipeline_id
 
-            if requires_flat_manager:
-                assert pipeline.build_id is not None
-                inputs.update(
-                    {
-                        "build_url": self.flat_manager.get_build_url(pipeline.build_id),
-                        "flat_manager_repo": flat_manager_repo,
-                        "flat_manager_token": upload_token,
-                    }
+                job_data = {
+                    "app_id": pipeline.app_id,
+                    "job_type": "build",
+                    "params": {
+                        "owner": "flathub-infra",
+                        "repo": "vorarbeiter",
+                        "workflow_id": workflow_id,
+                        "ref": "main",
+                        "inputs": inputs,
+                    },
+                }
+
+                provider_result = await self.provider.dispatch(
+                    str(pipeline.id), str(pipeline.id), job_data
                 )
 
-            if workflow_id == "reprocheck.yml":
-                build_pipeline_id = pipeline.params.get("build_pipeline_id")
-                if build_pipeline_id:
-                    inputs["build_pipeline_id"] = build_pipeline_id
+                pipeline.provider_data = provider_result
 
-            job_data = {
-                "app_id": pipeline.app_id,
-                "job_type": "build",
-                "params": {
-                    "owner": "flathub-infra",
-                    "repo": "vorarbeiter",
-                    "workflow_id": workflow_id,
-                    "ref": "main",
-                    "inputs": inputs,
-                },
-            }
+                await db.commit()
+                return pipeline
+        except Exception:
+            try:
+                async with get_db() as fail_db:
+                    fail_pipeline = await fail_db.get(Pipeline, pipeline_id)
+                    if fail_pipeline is not None:
+                        fail_pipeline.status = PipelineStatus.FAILED
+                        fail_pipeline.finished_at = datetime.now(tz=timezone.utc)
+            except Exception as mark_err:
+                logger.error(
+                    "Failed to mark pipeline as FAILED after start_pipeline error",
+                    pipeline_id=str(pipeline_id),
+                    error=str(mark_err),
+                )
+                try:
+                    sentry_sdk.capture_exception(mark_err)
+                except Exception:
+                    pass
 
-            provider_result = await self.provider.dispatch(
-                str(pipeline.id), str(pipeline.id), job_data
-            )
+            if created_build_id is not None:
+                try:
+                    await self.flat_manager.purge(created_build_id)
+                except Exception as purge_err:
+                    logger.warning(
+                        "Failed to purge flat-manager build after start_pipeline failure",
+                        build_id=created_build_id,
+                        pipeline_id=str(pipeline_id),
+                        error=str(purge_err),
+                    )
+                    try:
+                        sentry_sdk.capture_exception(purge_err)
+                    except Exception:
+                        pass
 
-            pipeline.provider_data = provider_result
-
-            await db.commit()
-            return pipeline
+            raise
 
     async def start_pending_builds(self) -> list[uuid.UUID]:
         query = """

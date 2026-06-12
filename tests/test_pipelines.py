@@ -203,7 +203,7 @@ async def test_start_pipeline_branch_mapping(
     )
     assert mock_pipeline.provider_data == {"dispatch_result": "ok"}
 
-    mock_db_session.commit.assert_called_once()
+    assert mock_db_session.commit.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -2113,3 +2113,120 @@ async def test_supersede_skips_when_test_pipeline_has_no_ref():
     )
 
     mock_db_session.execute.assert_not_awaited()
+
+
+def _create_realistic_get_db(db_session_maker):
+    @asynccontextmanager
+    async def mock_get_db(*, use_replica=False):
+        async with db_session_maker() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    return mock_get_db
+
+
+@pytest.mark.asyncio
+async def test_start_pipeline_atomic_claim_prevents_double_dispatch(
+    db_session_maker,
+):
+    pipeline_id = uuid.uuid4()
+    async with db_session_maker() as session:
+        session.add(
+            Pipeline(
+                id=pipeline_id,
+                app_id="org.example.app",
+                params={"branch": "main", "build_type": "medium"},
+                status=PipelineStatus.PENDING,
+                flat_manager_repo="test",
+                provider_data={},
+                callback_token="test-token",
+            )
+        )
+        await session.commit()
+
+    mock_flat_manager = MagicMock()
+    mock_flat_manager.create_build = AsyncMock(return_value={"id": 99999})
+    mock_flat_manager.create_token_subset = AsyncMock(return_value="upload-token")
+    mock_flat_manager.get_build_url = MagicMock(
+        return_value="https://flat-manager/build/99999"
+    )
+    mock_flat_manager.purge = AsyncMock()
+
+    mock_provider = AsyncMock(spec=GitHubActionsService)
+    mock_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
+
+    build_pipeline = BuildPipeline()
+    build_pipeline.flat_manager = mock_flat_manager
+    build_pipeline.provider = mock_provider
+
+    with patch(
+        "app.pipelines.build.get_db", _create_realistic_get_db(db_session_maker)
+    ):
+        result1 = await build_pipeline.start_pipeline(pipeline_id)
+        assert result1.status == PipelineStatus.RUNNING
+
+        with pytest.raises(ValueError, match="is not in PENDING state"):
+            await build_pipeline.start_pipeline(pipeline_id)
+
+    assert mock_provider.dispatch.await_count == 1
+    assert mock_flat_manager.create_build.await_count == 1
+    mock_flat_manager.purge.assert_not_awaited()
+
+    async with db_session_maker() as session:
+        pipeline = await session.get(Pipeline, pipeline_id)
+        assert pipeline is not None
+        assert pipeline.status == PipelineStatus.RUNNING
+        assert pipeline.started_at is not None
+
+
+@pytest.mark.asyncio
+async def test_start_pipeline_failure_marks_failed_and_purges_build(
+    db_session_maker,
+):
+    pipeline_id = uuid.uuid4()
+    async with db_session_maker() as session:
+        session.add(
+            Pipeline(
+                id=pipeline_id,
+                app_id="org.example.app",
+                params={"branch": "main", "build_type": "medium"},
+                status=PipelineStatus.PENDING,
+                flat_manager_repo="test",
+                provider_data={},
+                callback_token="test-token",
+            )
+        )
+        await session.commit()
+
+    mock_flat_manager = MagicMock()
+    mock_flat_manager.create_build = AsyncMock(return_value={"id": 99999})
+    mock_flat_manager.create_token_subset = AsyncMock(return_value="upload-token")
+    mock_flat_manager.get_build_url = MagicMock(
+        return_value="https://flat-manager/build/99999"
+    )
+    mock_flat_manager.purge = AsyncMock()
+
+    mock_provider = AsyncMock(spec=GitHubActionsService)
+    mock_provider.dispatch = AsyncMock(side_effect=RuntimeError("dispatch failed"))
+
+    build_pipeline = BuildPipeline()
+    build_pipeline.flat_manager = mock_flat_manager
+    build_pipeline.provider = mock_provider
+
+    with patch(
+        "app.pipelines.build.get_db", _create_realistic_get_db(db_session_maker)
+    ):
+        with pytest.raises(RuntimeError, match="dispatch failed"):
+            await build_pipeline.start_pipeline(pipeline_id)
+
+    mock_flat_manager.purge.assert_awaited_once_with(99999)
+
+    async with db_session_maker() as session:
+        pipeline = await session.get(Pipeline, pipeline_id)
+        assert pipeline is not None
+        assert pipeline.status == PipelineStatus.FAILED
+        assert pipeline.finished_at is not None
