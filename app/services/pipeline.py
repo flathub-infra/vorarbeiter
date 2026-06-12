@@ -35,7 +35,7 @@ class PipelineService:
         target_repo: str | None = None,
         limit: int = 10,
     ) -> list[Pipeline]:
-        from sqlalchemy import String, cast, or_
+        from sqlalchemy import or_
 
         limit = min(max(1, limit), 100)
 
@@ -47,13 +47,13 @@ class PipelineService:
         if pipeline_type == PipelineType.BUILD:
             stmt = stmt.where(
                 or_(
-                    cast(Pipeline.params["workflow_id"], String) != "reprocheck.yml",
+                    Pipeline.params["workflow_id"].as_string() != "reprocheck.yml",
                     Pipeline.params["workflow_id"].is_(None),
                 )
             )
         elif pipeline_type == PipelineType.REPROCHECK:
             stmt = stmt.where(
-                cast(Pipeline.params["workflow_id"], String) == "reprocheck.yml"
+                Pipeline.params["workflow_id"].as_string() == "reprocheck.yml"
             )
 
         if status:
@@ -67,7 +67,7 @@ class PipelineService:
             }
             status_code = status_code_map[reprocheck_status]
             stmt = stmt.where(
-                cast(Pipeline.params["reprocheck_result"]["status_code"], String)
+                Pipeline.params["reprocheck_result"]["status_code"].as_string()
                 == status_code
             )
 

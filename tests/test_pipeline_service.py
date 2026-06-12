@@ -309,3 +309,52 @@ def test_pipeline_to_summary_build_type_no_workflow_id(pipeline_service):
     summary = pipeline_service.pipeline_to_summary(pipeline)
 
     assert summary.type == PipelineType.BUILD
+
+
+@pytest.mark.asyncio
+async def test_list_pipelines_with_filters_compiles_to_pg_text_extract(
+    pipeline_service,
+):
+    """Regression: workflow_id / reprocheck_result.status_code JSON filters
+    must use the ``->>`` (text) operator on PostgreSQL, not ``->`` (which
+    keeps the JSON quotes and never matches a bare string).
+    """
+    from sqlalchemy.dialects import postgresql
+    from app.schemas.pipelines import ReprocheckStatus
+
+    captured: list = []
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_db = AsyncMock(spec=AsyncSession)
+
+    async def capture(stmt, *a, **kw):
+        captured.append(stmt)
+        return mock_result
+
+    mock_db.execute.side_effect = capture
+
+    await pipeline_service.list_pipelines_with_filters(
+        mock_db, pipeline_type=PipelineType.REPROCHECK
+    )
+    await pipeline_service.list_pipelines_with_filters(
+        mock_db,
+        pipeline_type=PipelineType.BUILD,
+        reprocheck_status=ReprocheckStatus.REPRODUCIBLE,
+    )
+
+    assert len(captured) == 2
+    reprocheck_compiled = str(
+        captured[0].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "params ->> 'workflow_id'" in reprocheck_compiled, reprocheck_compiled
+
+    status_compiled = str(
+        captured[1].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "params ->> 'workflow_id'" in status_compiled, status_compiled
+    assert "'reprocheck_result') ->> 'status_code'" in status_compiled, status_compiled

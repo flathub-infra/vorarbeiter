@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import String, and_, case, cast, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.config import settings
@@ -119,7 +119,7 @@ async def get_recent_pipelines(
             select(Pipeline)
             .where(
                 or_(
-                    cast(Pipeline.params["workflow_id"], String) != '"reprocheck.yml"',
+                    Pipeline.params["workflow_id"].as_string() != "reprocheck.yml",
                     Pipeline.params["workflow_id"].is_(None),
                 )
             )
@@ -192,7 +192,7 @@ async def get_app_builds(
             .where(Pipeline.flat_manager_repo == target_repo)
             .where(
                 or_(
-                    cast(Pipeline.params["workflow_id"], String) != '"reprocheck.yml"',
+                    Pipeline.params["workflow_id"].as_string() != "reprocheck.yml",
                     Pipeline.params["workflow_id"].is_(None),
                 )
             )
@@ -255,7 +255,7 @@ async def get_reproducibility_data(
             .where(Pipeline.status == PipelineStatus.PUBLISHED)
             .where(
                 or_(
-                    cast(Pipeline.params["workflow_id"], String) != '"reprocheck.yml"',
+                    Pipeline.params["workflow_id"].as_string() != "reprocheck.yml",
                     Pipeline.params["workflow_id"].is_(None),
                 )
             )
