@@ -234,28 +234,106 @@ async def test_get_build_info_missing_state(publishing_service):
         assert "Missing state information" in str(exc_info.value)
 
 
-def test_update_job_ids(publishing_service):
+@pytest.mark.asyncio
+async def test_process_candidate_pipeline_backfills_job_ids(publishing_service):
     pipeline = Pipeline(
-        id=uuid.uuid4(), commit_job_id=None, publish_job_id=None, params={}
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.COMMITTED,
+        flat_manager_repo="stable",
+        build_id=123,
+        commit_job_id=None,
+        publish_job_id=None,
+        params={},
     )
-    build_data = {"commit_job_id": 123, "publish_job_id": 456}
+    build_info = {
+        "build": {
+            "repo_state": 1,
+            "published_state": 0,
+            "commit_job_id": 111,
+            "publish_job_id": 222,
+        },
+        "checks": [],
+    }
+    result = PublishResult()
 
-    publishing_service._update_job_ids(pipeline, build_data)
+    with patch.object(publishing_service.flat_manager, "get_build_info") as mock_get:
+        mock_get.return_value = build_info
+        await publishing_service._process_candidate_pipeline(
+            pipeline, "org.test.App", "stable", result, datetime.now()
+        )
 
-    assert pipeline.commit_job_id == 123
-    assert pipeline.publish_job_id == 456
+    assert pipeline.commit_job_id == 111
+    assert pipeline.publish_job_id == 222
 
 
-def test_update_job_ids_partial(publishing_service):
+@pytest.mark.asyncio
+async def test_process_candidate_pipeline_backfills_job_ids_partial(publishing_service):
     pipeline = Pipeline(
-        id=uuid.uuid4(), commit_job_id=789, publish_job_id=None, params={}
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.COMMITTED,
+        flat_manager_repo="stable",
+        build_id=123,
+        commit_job_id=789,
+        publish_job_id=None,
+        params={},
     )
-    build_data = {"commit_job_id": 123, "publish_job_id": 456}
+    build_info = {
+        "build": {
+            "repo_state": 1,
+            "published_state": 0,
+            "commit_job_id": 111,
+            "publish_job_id": 222,
+        },
+        "checks": [],
+    }
+    result = PublishResult()
 
-    publishing_service._update_job_ids(pipeline, build_data)
+    with patch.object(publishing_service.flat_manager, "get_build_info") as mock_get:
+        mock_get.return_value = build_info
+        await publishing_service._process_candidate_pipeline(
+            pipeline, "org.test.App", "stable", result, datetime.now()
+        )
 
     assert pipeline.commit_job_id == 789
-    assert pipeline.publish_job_id == 456
+    assert pipeline.publish_job_id == 222
+
+
+@pytest.mark.asyncio
+async def test_publish_pipelines_backfills_missing_job_ids(publishing_service, mock_db):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.COMMITTED,
+        flat_manager_repo="stable",
+        build_id=123,
+        commit_job_id=None,
+        publish_job_id=None,
+        started_at=datetime.now(),
+        params={},
+    )
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [pipeline]
+    mock_db.execute.return_value = mock_result
+
+    with patch.object(
+        publishing_service.flat_manager, "get_build_info"
+    ) as mock_get_info:
+        mock_get_info.return_value = {
+            "build": {
+                "repo_state": 1,
+                "published_state": 0,
+                "commit_job_id": 555,
+                "publish_job_id": 666,
+            },
+            "checks": [],
+        }
+
+        await publishing_service.publish_pipelines(mock_db)
+
+    assert pipeline.commit_job_id == 555
+    assert pipeline.publish_job_id == 666
 
 
 @pytest.mark.asyncio

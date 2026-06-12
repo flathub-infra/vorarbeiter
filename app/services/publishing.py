@@ -192,7 +192,7 @@ class PublishingService:
             if build_info is None:
                 return
 
-            self._update_job_ids(pipeline, build_info)
+            self._update_job_ids(pipeline, build_info.get("build", {}))
             await self._handle_build_state(pipeline, build_info, result, now)
 
         except Exception as e:
