@@ -426,6 +426,57 @@ def test_receive_github_webhook_dispatches_merge_for_created_pr_comment(
     mock_create_task.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_receive_github_webhook_retains_merge_task_reference():
+    """Regression: a stored strong reference must keep the fire-and-forget
+    merge task alive (event loop only weak-refs tasks otherwise)."""
+    import asyncio
+    from app.routes import webhooks as webhooks_module
+    from httpxyz import ASGITransport, AsyncClient
+
+    delivery_id = str(uuid.uuid4())
+    headers = {"X-GitHub-Delivery": delivery_id}
+    handle_started = asyncio.Event()
+    handle_unblock = asyncio.Event()
+
+    async def blocking_handle(_payload):
+        handle_started.set()
+        await handle_unblock.wait()
+
+    before = set(webhooks_module._background_tasks)
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.services.merge_service.handle_merge_command",
+            new=blocking_handle,
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                "/api/webhooks/github",
+                json=SAMPLE_FLATHUB_MERGE_PAYLOAD,
+                headers=headers,
+            )
+
+        assert response.status_code == 202
+
+        # The task must be tracked the moment the response returns.
+        new_tasks = set(webhooks_module._background_tasks) - before
+        assert len(new_tasks) == 1
+        (task,) = new_tasks
+        assert not task.done()
+
+        await handle_started.wait()
+        handle_unblock.set()
+        await task
+
+    # done_callback must remove the task from the set.
+    assert task not in webhooks_module._background_tasks
+
+
 def test_receive_github_webhook_ignores_edited_merge_comment(client: TestClient):
     delivery_id = str(uuid.uuid4())
     headers = {"X-GitHub-Delivery": delivery_id}
