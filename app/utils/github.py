@@ -768,7 +768,7 @@ async def get_check_run_annotations(
             if annotations_response and annotations_response.status_code == 200:
                 annotations.extend(
                     {
-                        "message": a.get("message"),
+                        "message": a.get("message") or "",
                         "annotation_level": a.get("annotation_level"),
                     }
                     for a in annotations_response.json()

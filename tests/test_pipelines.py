@@ -331,6 +331,58 @@ async def test_handle_status_callback_failure_reclassified_as_cancelled(
 
 
 @pytest.mark.asyncio
+async def test_handle_status_callback_failure_reclassified_with_null_message_annotation(
+    build_pipeline, mock_db, sample_pipeline
+):
+    """Regression: a cancelled run whose annotations include one with
+    ``message: None`` (as returned by GitHub) must still reclassify FAILED →
+    CANCELLED rather than crash inside ``check_run_was_cancelled`` and fall
+    through to the except-Exception branch. Patches at the GitHub HTTP layer
+    so the real ``get_check_run_annotations`` normalizes the null message."""
+    from unittest.mock import MagicMock
+
+    sample_pipeline.provider_data = {
+        "owner": "flathub-infra",
+        "repo": "actions",
+        "run_id": "12345",
+        "workflow_id": "build.yml",
+    }
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+
+    jobs_response = MagicMock()
+    jobs_response.json.return_value = {
+        "jobs": [{"id": 1, "check_run_url": "https://api.github.com/check/1"}]
+    }
+    annotations_response = MagicMock()
+    annotations_response.status_code = 200
+    annotations_response.json.return_value = [
+        {"message": None, "annotation_level": "failure"},
+        {"message": "The operation was canceled.", "annotation_level": "failure"},
+    ]
+
+    mock_client = MagicMock()
+    mock_client.request = AsyncMock(side_effect=[jobs_response, annotations_response])
+
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch(
+            "app.services.github_actions.GitHubActionsService.get_workflow_run_details"
+        ) as mock_get_details,
+        patch("app.utils.github.get_github_client", return_value=mock_client),
+    ):
+        mock_get_details.return_value = {"run_attempt": 1}
+
+        pipeline, updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "failure"}
+        )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    assert pipeline.finished_at is not None
+    assert updates["pipeline_status"] == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_handle_status_callback_failure_cancellation_check_error(
     build_pipeline, mock_db, sample_pipeline
 ):

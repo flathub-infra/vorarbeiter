@@ -461,3 +461,64 @@ async def test_check_run_was_cancelled_retry_via_logs_only(
         assert result is True
         mock_get_details.assert_called_once_with("flathub", "actions", 12345)
         mock_get_annotations.assert_called_once_with("flathub", "actions", 12345)
+
+
+@pytest.mark.asyncio
+async def test_get_check_run_annotations_normalizes_null_message():
+    """Regression: GitHub may return annotations with ``message: null``;
+    they must be normalized to empty strings so downstream ``.startswith(...)``
+    calls do not crash."""
+    from unittest.mock import AsyncMock, MagicMock
+    from app.utils import github as github_module
+
+    jobs_response = MagicMock()
+    jobs_response.json.return_value = {
+        "jobs": [{"id": 1, "check_run_url": "https://api.github.com/check/1"}]
+    }
+    annotations_response = MagicMock()
+    annotations_response.status_code = 200
+    annotations_response.json.return_value = [
+        {"message": None, "annotation_level": "failure"},
+        {"message": "The operation was canceled.", "annotation_level": "failure"},
+    ]
+
+    mock_client = MagicMock()
+    mock_client.request = AsyncMock(side_effect=[jobs_response, annotations_response])
+
+    with patch.object(github_module, "get_github_client", return_value=mock_client):
+        result = await github_module.get_check_run_annotations(
+            "flathub", "actions", 12345
+        )
+
+    assert result == [
+        {"message": "", "annotation_level": "failure"},
+        {"message": "The operation was canceled.", "annotation_level": "failure"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_check_run_was_cancelled_handles_null_message_annotation(
+    github_actions_service, sample_provider_data
+):
+    """Regression: a cancelled run whose first annotation has ``message: null``
+    must still classify as cancelled — no exception, no FAILED reclassification."""
+    annotations_with_null = [
+        {"message": "", "annotation_level": "failure"},
+        {"message": "The operation was canceled.", "annotation_level": "failure"},
+    ]
+    with (
+        patch.object(
+            github_actions_service, "get_workflow_run_details"
+        ) as mock_get_details,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
+    ):
+        mock_get_details.return_value = {"run_attempt": 1}
+        mock_get_annotations.return_value = annotations_with_null
+
+        result = await github_actions_service.check_run_was_cancelled(
+            sample_provider_data
+        )
+
+    assert result is True
