@@ -1302,6 +1302,32 @@ def test_pipeline_status_callback_rejected_for_cancelled(mock_get_db, sample_pip
     assert "Pipeline status already finalized" in response.json()["detail"]
 
 
+def test_pipeline_status_callback_rejected_for_superseded(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.status = PipelineStatus.SUPERSEDED
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        data = {"status": "success"}
+        headers = {"Authorization": "Bearer test_token_12345"}
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/status", json=data, headers=headers
+        )
+
+    assert response.status_code == 409
+    assert "Pipeline status already finalized" in response.json()["detail"]
+    assert sample_pipeline.status == PipelineStatus.SUPERSEDED
+
+
 def test_pipeline_status_callback_missing_status(mock_get_db, sample_pipeline):
     test_client = TestClient(app)
 

@@ -121,6 +121,7 @@ async def _validate_and_prepare_callback(
         PipelineStatus.SUCCEEDED,
         PipelineStatus.PUBLISHED,
         PipelineStatus.CANCELLED,
+        PipelineStatus.SUPERSEDED,
     ]:
         raise ValueError("Pipeline status already finalized")
 
