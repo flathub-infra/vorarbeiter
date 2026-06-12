@@ -297,6 +297,12 @@ class MergeService:
                 return
 
             merge_request.repo_html_url = repo_html_url
+            async with get_db() as db:
+                await db.execute(
+                    update(MergeRequest)
+                    .where(MergeRequest.id == merge_request.id)
+                    .values(repo_html_url=repo_html_url)
+                )
 
         try:
             await self._dispatch_merge_workflow(merge_request)

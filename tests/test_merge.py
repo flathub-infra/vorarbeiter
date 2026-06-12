@@ -688,6 +688,59 @@ class TestMergeServiceProcess:
             )
 
     @pytest.mark.asyncio
+    async def test_process_persists_repo_html_url(self, db_session_maker):
+        """Regression: ``repo_html_url`` set after ``_create_repo`` succeeds
+        must be persisted to the DB, not just held in memory on a detached
+        ORM instance."""
+        service = MergeService()
+        merge_id = uuid.uuid4()
+
+        mock_get_db = create_realistic_get_db(db_session_maker)
+
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda: mock_get_db()),
+            patch.object(service, "_is_authorized", new=AsyncMock(return_value=True)),
+            patch.object(
+                service,
+                "_get_pr_details",
+                new=AsyncMock(return_value=_pr_details()),
+            ),
+            patch(
+                "app.services.merge.detect_appid_from_github",
+                new=AsyncMock(return_value=("org.example.App.yml", "org.example.App")),
+            ),
+            patch.object(
+                service,
+                "_has_active_merge_request",
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                service,
+                "_check_repo_exists",
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                service,
+                "_create_repo",
+                new=AsyncMock(
+                    return_value="https://github.com/flathub/org.example.App"
+                ),
+            ),
+            patch.object(service, "_dispatch_merge_workflow", new=AsyncMock()),
+            patch.object(uuid, "uuid4", side_effect=[merge_id]),
+        ):
+            await service._process_merge(
+                comment_body=f"/merge head={'a' * 40}",
+                pr_number=123,
+                comment_author="reviewer",
+            )
+
+        async with db_session_maker() as session:
+            mr = await session.get(MergeRequest, merge_id)
+            assert mr is not None
+            assert mr.repo_html_url == "https://github.com/flathub/org.example.App"
+
+    @pytest.mark.asyncio
     async def test_process_repo_creation_failure_marks_failed(self, db_session_maker):
         service = MergeService()
         merge_id = uuid.uuid4()
@@ -1316,6 +1369,80 @@ class TestMergeCallback:
             123,
             "❌ Merge failed: git push workflow reported failure.",
         )
+
+    @pytest.mark.asyncio
+    async def test_callback_success_close_comment_uses_stored_repo_url(
+        self, db_session_maker
+    ):
+        """Regression: after `_process_merge` persists the real GitHub
+        repository URL, the callback's finalization step must pass that stored
+        URL to `_close_and_lock_pr` (rather than the `https://github.com/
+        flathub/{appid}` fallback used when the column is NULL)."""
+        service = MergeService()
+        merge_id = uuid.uuid4()
+        # Distinct from the fallback (https://github.com/flathub/{appid}) so a
+        # silent fallback would visibly differ from the stored URL.
+        stored_url = "https://github.com/flathub/org.example.App-renamed"
+
+        async with db_session_maker() as session:
+            session.add(
+                MergeRequest(
+                    id=merge_id,
+                    pr_number=123,
+                    app_id="org.example.App",
+                    target_branch="master",
+                    pr_head_sha="a" * 40,
+                    collaborators=["user1"],
+                    status=MergeStatus.PUSHING,
+                    callback_token="correct_token",
+                    comment_author="reviewer",
+                    fork_url="https://github.com/user/repo.git",
+                    fork_branch="main",
+                    repo_html_url=stored_url,
+                )
+            )
+            await session.commit()
+
+        mock_get_db = create_realistic_get_db(db_session_maker)
+
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda: mock_get_db()),
+            patch.object(
+                service,
+                "_get_pr_details",
+                new=AsyncMock(return_value=_pr_details()),
+            ),
+            patch.object(
+                service, "_remove_collaborator", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                service,
+                "_set_all_branch_protections",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                service, "_add_collaborators", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                service,
+                "_verify_branch_state",
+                new=AsyncMock(return_value=(True, True)),
+            ),
+            patch.object(service, "_set_labels", new=AsyncMock(return_value=True)),
+            patch.object(
+                service, "_clear_pr_metadata", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                service,
+                "_close_and_lock_pr",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_close,
+            patch.object(service, "_post_comment", new=AsyncMock()),
+        ):
+            await service.handle_callback(merge_id, "correct_token", "success")
+
+        mock_close.assert_called_once_with(123, stored_url)
 
 
 class TestMergeCallbackRoute:
