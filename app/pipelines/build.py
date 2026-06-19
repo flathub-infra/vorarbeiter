@@ -56,6 +56,7 @@ app_build_types = {
     "com.collaboraoffice.Office": "large",
     "org.freedesktop.Sdk.Extension.llvm22": "large",
     "org.kicad.KiCad": "large",
+    "fi.csc.Elmer": "large",
 }
 
 FAST_BUILD_P90_THRESHOLD_MINUTES = 20.0
