@@ -264,7 +264,7 @@ validate-build:
 
     lint_args=(--gha-format --exceptions --exceptions-repo "$exceptions_repo")
 
-    if [ "$should_janitor" == "yes" ]; then
+    if [[ "$BUILD_ARCH" == "x86_64" && "$should_janitor" == "yes" ]]; then
         lint_args+=(--janitor-exceptions)
     fi
 

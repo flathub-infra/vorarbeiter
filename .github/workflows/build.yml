@@ -606,6 +606,7 @@ jobs:
             -e GITHUB_TOKEN \
             -e REF \
             -e PR_TARGET_BRANCH \
+            -e BUILD_ARCH \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-build
 
