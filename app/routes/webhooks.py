@@ -825,6 +825,18 @@ async def receive_github_webhook(
 
     if (
         repo_name == "flathub/flathub"
+        and payload.get("action") == "opened"
+        and "pull_request" in payload
+    ):
+        pr_number = payload.get("pull_request", {}).get("number")
+        if pr_number:
+            await create_pr_comment(
+                git_repo=repo_name, pr_number=pr_number, comment="/review"
+            )
+            return {"message": "Triggered submission checker on new submission open."}
+
+    if (
+        repo_name == "flathub/flathub"
         and payload.get("action") == "created"
         and payload.get("issue", {}).get("pull_request")
         and "comment" in payload
