@@ -828,8 +828,10 @@ async def receive_github_webhook(
         and payload.get("action") == "opened"
         and "pull_request" in payload
     ):
-        pr_number = payload.get("pull_request", {}).get("number")
-        if pr_number:
+        pr = payload.get("pull_request", {})
+        pr_number = pr.get("number")
+        pr_target_br = pr.get("base", {}).get("ref")
+        if pr_number and pr_target_br == "new-pr":
             await create_pr_comment(
                 git_repo=repo_name, pr_number=pr_number, comment="/review"
             )
