@@ -23,6 +23,7 @@ from app.utils.github import (
     add_issue_comment,
     close_github_issue,
     create_pr_comment,
+    get_github_actions_client,
     get_github_client,
     get_workflow_run_title,
     is_issue_edited,
@@ -832,8 +833,13 @@ async def receive_github_webhook(
         pr_number = pr.get("number")
         pr_target_br = pr.get("base", {}).get("ref")
         if pr_number and pr_target_br == "new-pr":
-            await create_pr_comment(
-                git_repo=repo_name, pr_number=pr_number, comment="/review"
+            await get_github_actions_client().request(
+                "post",
+                "https://api.github.com/repos/flathub/flathub/actions/workflows/pr-check.yml/dispatches",
+                content=json.dumps(
+                    {"ref": "master", "inputs": {"pr_number": str(pr_number)}}
+                ),
+                context={"git_repo": repo_name, "pr_number": pr_number},
             )
             return {"message": "Triggered submission checker on new submission open."}
 

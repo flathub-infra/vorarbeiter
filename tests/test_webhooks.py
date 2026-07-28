@@ -400,6 +400,48 @@ def test_webhook_with_invalid_signature(client: TestClient):
         settings.github_webhook_secret = original_secret
 
 
+def test_receive_github_webhook_dispatches_submission_checker_for_new_pr(
+    client: TestClient,
+):
+    delivery_id = str(uuid.uuid4())
+    headers = {"X-GitHub-Delivery": delivery_id}
+    payload = {
+        "repository": {"full_name": "flathub/flathub"},
+        "sender": {"login": "test-submitter"},
+        "action": "opened",
+        "pull_request": {
+            "number": 42,
+            "base": {"ref": "new-pr"},
+        },
+    }
+    mock_client = MagicMock()
+    mock_client.request = AsyncMock(return_value=MagicMock())
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.routes.webhooks.get_github_actions_client",
+            return_value=mock_client,
+        ),
+    ):
+        response = client.post(
+            "/api/webhooks/github",
+            json=payload,
+            headers=headers,
+        )
+
+    assert response.status_code == 202
+    assert response.json()["message"] == "Triggered submission checker on new submission open."
+    mock_client.request.assert_awaited_once_with(
+        "post",
+        "https://api.github.com/repos/flathub/flathub/actions/workflows/pr-check.yml/dispatches",
+        content=json.dumps(
+            {"ref": "master", "inputs": {"pr_number": "42"}}
+        ),
+        context={"git_repo": "flathub/flathub", "pr_number": 42},
+    )
+
+
 def test_receive_github_webhook_dispatches_merge_for_created_pr_comment(
     client: TestClient,
 ):
