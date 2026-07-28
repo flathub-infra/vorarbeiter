@@ -3,7 +3,7 @@ import zipfile
 from io import BytesIO
 from typing import Any
 
-import httpxyz as httpx
+import httpx2 as httpx
 import structlog
 
 from app.utils.github import get_check_run_annotations, get_github_actions_client

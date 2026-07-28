@@ -101,7 +101,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
 
     with (
         patch("app.pipelines.build.get_db", mock_get_db),
-        patch("httpx.AsyncClient", return_value=mock_httpx_client),
+        patch("httpx2.AsyncClient", return_value=mock_httpx_client),
         patch("app.pipelines.build.get_app_p90_build_time", return_value=None),
     ):
         build_pipeline.flat_manager.client = mock_httpx_client
@@ -120,7 +120,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
 @patch("app.pipelines.build.get_app_p90_build_time", return_value=None)
 @patch("app.pipelines.build.get_db")
 @patch("app.services.github_actions_service")
-@patch("httpx.AsyncClient")
+@patch("httpx2.AsyncClient")
 @pytest.mark.parametrize(
     "source_branch, expected_branch, expected_flat_manager_repo",
     [
@@ -591,7 +591,7 @@ async def test_start_pipeline_stores_default_build_type():
 
     with (
         patch("app.pipelines.build.get_db") as mock_get_db,
-        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("httpx2.AsyncClient") as mock_httpx_client,
         patch("app.pipelines.build.get_app_p90_build_time") as mock_p90,
     ):
         mock_p90.return_value = None
@@ -635,7 +635,7 @@ async def test_start_pipeline_stores_hardcoded_build_type():
 
     with (
         patch("app.pipelines.build.get_db") as mock_get_db,
-        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("httpx2.AsyncClient") as mock_httpx_client,
     ):
         mock_get_db.return_value.__aenter__.return_value = mock_db_session
         mock_httpx_client.return_value = mock_httpx_instance
@@ -676,7 +676,7 @@ async def test_start_pipeline_stores_parameter_build_type():
 
     with (
         patch("app.pipelines.build.get_db") as mock_get_db,
-        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("httpx2.AsyncClient") as mock_httpx_client,
         patch("app.pipelines.build.get_app_p90_build_time") as mock_p90,
     ):
         mock_p90.return_value = None
@@ -720,7 +720,7 @@ async def test_start_pipeline_reuses_stored_metadata():
 
     with (
         patch("app.pipelines.build.get_db") as mock_get_db,
-        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("httpx2.AsyncClient") as mock_httpx_client,
         patch("app.pipelines.build.determine_build_type") as mock_determine,
         patch("app.pipelines.build.get_flat_manager_repo") as mock_repo_lookup,
     ):
@@ -740,7 +740,7 @@ async def test_start_pipeline_reuses_stored_metadata():
 @pytest.mark.asyncio
 @patch("app.pipelines.build.get_app_p90_build_time")
 @patch("app.pipelines.build.get_db")
-@patch("httpx.AsyncClient")
+@patch("httpx2.AsyncClient")
 @pytest.mark.parametrize(
     "p90_value, expected_build_type",
     [
@@ -1564,7 +1564,7 @@ async def test_supersedes_running_pipeline_on_start():
 
     with (
         patch("app.pipelines.build.get_db") as mock_get_db,
-        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("httpx2.AsyncClient") as mock_httpx_client,
         patch("app.pipelines.build.GitHubActionsService") as mock_github_actions_class,
     ):
         mock_get_db.return_value.__aenter__.return_value = mock_db_session
@@ -1637,7 +1637,7 @@ async def test_does_not_supersede_test_repo_pipelines():
 
     with (
         patch("app.pipelines.build.get_db") as mock_get_db,
-        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("httpx2.AsyncClient") as mock_httpx_client,
     ):
         mock_get_db.return_value.__aenter__.return_value = mock_db_session
         mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
@@ -1705,7 +1705,7 @@ async def test_supersedes_pending_pipeline_without_build_id():
 
     with (
         patch("app.pipelines.build.get_db") as mock_get_db,
-        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("httpx2.AsyncClient") as mock_httpx_client,
     ):
         mock_get_db.return_value.__aenter__.return_value = mock_db_session
         mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance

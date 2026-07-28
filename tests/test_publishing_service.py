@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpxyz as httpx
+import httpx2 as httpx
 import pytest
 
 from app.models import Pipeline, PipelineStatus

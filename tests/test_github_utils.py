@@ -1,6 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpxyz as httpx
+import httpx2 as httpx
 import pytest
 
 import app.utils.github as github_module

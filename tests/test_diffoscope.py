@@ -2,7 +2,7 @@ import io
 import zipfile
 from unittest.mock import AsyncMock, patch
 
-import httpxyz as httpx
+import httpx2 as httpx
 import pytest
 
 from app.services.diffoscope import (
@@ -85,7 +85,7 @@ class TestFetchDiffoscopeReport:
 
         with (
             patch("app.services.diffoscope._cache", DiffoscopeCache()),
-            patch("httpx.AsyncClient") as mock_client,
+            patch("httpx2.AsyncClient") as mock_client,
         ):
             mock_instance = AsyncMock()
             mock_instance.get.return_value = mock_response
@@ -110,7 +110,7 @@ class TestFetchDiffoscopeReport:
 
         with (
             patch("app.services.diffoscope._cache", DiffoscopeCache()),
-            patch("httpx.AsyncClient") as mock_client,
+            patch("httpx2.AsyncClient") as mock_client,
         ):
             mock_instance = AsyncMock()
             mock_instance.get.return_value = mock_response
@@ -129,7 +129,7 @@ class TestFetchDiffoscopeReport:
     async def test_fetch_http_error(self):
         with (
             patch("app.services.diffoscope._cache", DiffoscopeCache()),
-            patch("httpx.AsyncClient") as mock_client,
+            patch("httpx2.AsyncClient") as mock_client,
         ):
             mock_instance = AsyncMock()
             mock_instance.get.side_effect = httpx.HTTPStatusError(
@@ -152,7 +152,7 @@ class TestFetchDiffoscopeReport:
 
         with (
             patch("app.services.diffoscope._cache", DiffoscopeCache()),
-            patch("httpx.AsyncClient") as mock_client,
+            patch("httpx2.AsyncClient") as mock_client,
         ):
             mock_instance = AsyncMock()
             mock_instance.get.return_value = mock_response

@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import httpxyz as httpx
+import httpx2 as httpx
 import structlog
 
 if TYPE_CHECKING:

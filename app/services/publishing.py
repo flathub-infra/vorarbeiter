@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
-import httpxyz as httpx
+import httpx2 as httpx
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

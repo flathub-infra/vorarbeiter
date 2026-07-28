@@ -1,7 +1,7 @@
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpxyz as httpx
+import httpx2 as httpx
 import pytest
 
 from app.status_banner import _CACHE_TTL, StatusBannerCache, get_status_banner

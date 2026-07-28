@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
 import pytest
-from httpxyz import HTTPStatusError, NetworkError, TimeoutException
+from httpx2 import HTTPStatusError, NetworkError, TimeoutException
 
 from app.utils.flat_manager import FlatManagerClient, JobKind, JobStatus
 

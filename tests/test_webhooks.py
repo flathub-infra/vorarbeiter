@@ -5,7 +5,7 @@ import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
-import httpxyz as httpx
+import httpx2 as httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -700,7 +700,7 @@ async def test_is_submodule_only_pr(mock_files_response, expected):
     mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
     mock_client_instance.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+    with patch("httpx2.AsyncClient", return_value=mock_client_instance):
         result = await is_submodule_only_pr(payload)
         assert result == expected
 

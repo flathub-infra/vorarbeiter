@@ -99,7 +99,7 @@ def create_mock_get_db(mock_session):
 
 
 class MockHttpxClient:
-    """Mock for httpx.AsyncClient that handles async context manager boilerplate."""
+    """Mock for httpx2.AsyncClient that handles async context manager boilerplate."""
 
     def __init__(self):
         self._client = AsyncMock()
@@ -136,8 +136,8 @@ class MockHttpxClient:
         return response
 
     @contextmanager
-    def patch(self, target: str = "httpx.AsyncClient"):
-        """Patch httpx.AsyncClient with this mock."""
+    def patch(self, target: str = "httpx2.AsyncClient"):
+        """Patch httpx2.AsyncClient with this mock."""
         with patch(target) as mock_class:
             mock_class.return_value = self._client
             mock_class.return_value.__aenter__.return_value = self._client
@@ -146,5 +146,5 @@ class MockHttpxClient:
 
 @pytest.fixture
 def mock_httpx():
-    """Provides a mock httpx.AsyncClient for tests."""
+    """Provides a mock httpx2.AsyncClient for tests."""
     return MockHttpxClient()

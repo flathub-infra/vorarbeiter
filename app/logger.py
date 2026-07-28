@@ -48,7 +48,7 @@ def setup_logging() -> None:
         "_granian",
         "granian.access",
         "fastapi",
-        "httpxyz",
+        "httpx2",
         "gql",
     ]:
         logger = logging.getLogger(logger_name)
