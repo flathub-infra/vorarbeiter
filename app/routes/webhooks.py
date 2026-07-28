@@ -24,7 +24,6 @@ from app.utils.github import (
     add_issue_comment,
     close_github_issue,
     create_pr_comment,
-    get_github_actions_client,
     get_github_client,
     get_workflow_run_title,
     is_issue_edited,
@@ -841,7 +840,7 @@ async def receive_github_webhook(
         pr_number = pr.get("number")
         pr_target_br = pr.get("base", {}).get("ref")
         if pr_number and pr_target_br == "new-pr":
-            await get_github_actions_client().request(
+            await get_github_client().request(
                 "post",
                 "https://api.github.com/repos/flathub/flathub/actions/workflows/pr-check.yml/dispatches",
                 content=json.dumps(

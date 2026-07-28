@@ -422,7 +422,7 @@ def test_receive_github_webhook_dispatches_submission_checker_for_new_pr(
     with (
         patch("app.routes.webhooks.settings.github_webhook_secret", ""),
         patch(
-            "app.routes.webhooks.get_github_actions_client",
+            "app.routes.webhooks.get_github_client",
             return_value=mock_client,
         ),
     ):
