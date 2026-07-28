@@ -28,10 +28,10 @@ dev = [
     "pre-commit>=4.6.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "ruff>=0.16.0",
+    "ruff==0.16.0",
     "pytest-xdist>=3.8.0",
     "granian[reload]>=2.7.9",
-    "ty>=0.0.63",
+    "ty==0.0.63",
 ]
 
 [tool.mypy]

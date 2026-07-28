@@ -1,6 +1,6 @@
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
-from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,

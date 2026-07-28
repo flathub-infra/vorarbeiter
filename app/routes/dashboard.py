@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -28,9 +28,9 @@ def format_time(dt: datetime | None) -> str:
     if dt is None:
         return "-"
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
 
     diff = now - dt
     seconds = diff.total_seconds()
@@ -152,14 +152,18 @@ async def get_recent_pipelines(
 
         if date_from:
             try:
-                from_date = datetime.strptime(date_from, "%Y-%m-%dT%H:%M")
+                from_date = datetime.strptime(date_from, "%Y-%m-%dT%H:%M").replace(
+                    tzinfo=UTC
+                )
                 query = query.where(Pipeline.started_at >= from_date)
             except ValueError:
                 pass
 
         if date_to:
             try:
-                to_date = datetime.strptime(date_to, "%Y-%m-%dT%H:%M")
+                to_date = datetime.strptime(date_to, "%Y-%m-%dT%H:%M").replace(
+                    tzinfo=UTC
+                )
                 query = query.where(Pipeline.started_at <= to_date)
             except ValueError:
                 pass
@@ -169,7 +173,7 @@ async def get_recent_pipelines(
 
 
 class ReprocheckInfo:
-    __slots__ = ("status_code", "result_url", "repro_pipeline_id")
+    __slots__ = ("repro_pipeline_id", "result_url", "status_code")
 
     def __init__(
         self,
@@ -313,23 +317,22 @@ async def get_reproducibility_data(
                 repro_pipeline_id=repro.id if repro else None,
             )
 
-            if status_filter:
-                if (
+            if status_filter and (
+                (
                     status_filter == "reproducible"
                     and status_code != REPROCHECK_REPRODUCIBLE
-                ):
-                    continue
-                elif (
+                )
+                or (
                     status_filter == "unreproducible"
                     and status_code != REPROCHECK_UNREPRODUCIBLE
-                ):
-                    continue
-                elif (
+                )
+                or (
                     status_filter == "failed" and status_code != REPROCHECK_BUILD_FAILED
-                ):
-                    continue
-                elif status_filter == "none" and status_code is not None:
-                    continue
+                )
+                or status_filter == "none"
+                and status_code is not None
+            ):
+                continue
 
             if status_code == REPROCHECK_REPRODUCIBLE:
                 reproducible.append(entry)

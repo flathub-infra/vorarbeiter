@@ -147,9 +147,7 @@ class FlatManagerClient:
 
     def get_build_url(self, build_id: int | str) -> str:
         # Handle case where build_id is already a full URL
-        if isinstance(build_id, str) and (
-            build_id.startswith("http://") or build_id.startswith("https://")
-        ):
+        if isinstance(build_id, str) and build_id.startswith(("http://", "https://")):
             path_parts = urlparse(build_id).path.rstrip("/").split("/")
             if path_parts:
                 numeric_id = path_parts[-1]

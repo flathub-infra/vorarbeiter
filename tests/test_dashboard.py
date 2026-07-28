@@ -1,12 +1,12 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 from app.models import Pipeline, PipelineStatus
 
 
 def make_pipeline(**overrides):
-    now = datetime.now()
+    now = datetime.now(UTC)
     defaults = {
         "id": uuid.uuid4(),
         "app_id": "org.test.App",

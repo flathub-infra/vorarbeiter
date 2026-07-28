@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpxyz as httpx
@@ -16,7 +16,7 @@ def publishing_service():
 
 @pytest.fixture
 def mock_pipelines():
-    now = datetime.now()
+    now = datetime.now(UTC)
     return [
         Pipeline(
             id=uuid.uuid4(),
@@ -54,29 +54,31 @@ async def test_publish_pipelines_success(publishing_service, mock_db, mock_pipel
     mock_result.scalars.return_value.all.return_value = mock_pipelines
     mock_db.execute.return_value = mock_result
 
-    with patch.object(
-        publishing_service.flat_manager, "get_build_info"
-    ) as mock_get_info:
-        with patch.object(publishing_service.flat_manager, "publish") as mock_publish:
-            with patch.object(publishing_service.flat_manager, "purge") as mock_purge:
-                mock_get_info.return_value = {
-                    "build": {
-                        "repo_state": 2,
-                        "published_state": 0,
-                        "commit_job_id": 123,
-                        "publish_job_id": 456,
-                    }
-                }
+    with (
+        patch.object(
+            publishing_service.flat_manager, "get_build_info"
+        ) as mock_get_info,
+        patch.object(publishing_service.flat_manager, "publish") as mock_publish,
+        patch.object(publishing_service.flat_manager, "purge") as mock_purge,
+    ):
+        mock_get_info.return_value = {
+            "build": {
+                "repo_state": 2,
+                "published_state": 0,
+                "commit_job_id": 123,
+                "publish_job_id": 456,
+            }
+        }
 
-                result = await publishing_service.publish_pipelines(mock_db)
+        result = await publishing_service.publish_pipelines(mock_db)
 
-                assert len(result.published) == 2
-                assert len(result.superseded) == 1
-                assert len(result.errors) == 0
+        assert len(result.published) == 2
+        assert len(result.superseded) == 1
+        assert len(result.errors) == 0
 
-                assert mock_publish.call_count == 2
-                assert mock_purge.call_count == 1
-                mock_db.commit.assert_called_once()
+        assert mock_publish.call_count == 2
+        assert mock_purge.call_count == 1
+        mock_db.commit.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -193,7 +195,7 @@ async def test_process_candidate_pipeline_no_build_id(publishing_service):
     result = PublishResult()
 
     await publishing_service._process_candidate_pipeline(
-        pipeline, "org.test.App", "stable", result, datetime.now()
+        pipeline, "org.test.App", "stable", result, datetime.now(UTC)
     )
 
     assert len(result.errors) == 1
@@ -271,7 +273,7 @@ async def test_handle_build_state_already_published(publishing_service):
         "checks": [],
     }
     result = PublishResult()
-    now = datetime.now()
+    now = datetime.now(UTC)
 
     await publishing_service._handle_build_state(pipeline, build_info, result, now)
 
@@ -309,7 +311,7 @@ async def test_handle_build_state_failed(publishing_service):
         "checks": checks,
     }
     result = PublishResult()
-    now = datetime.now()
+    now = datetime.now(UTC)
 
     with patch.object(
         publishing_service, "_create_validation_failure_issue", new_callable=AsyncMock
@@ -363,7 +365,7 @@ async def test_handle_build_state_uploading(publishing_service):
     result = PublishResult()
 
     await publishing_service._handle_build_state(
-        pipeline, build_info, result, datetime.now()
+        pipeline, build_info, result, datetime.now(UTC)
     )
 
     # Should skip processing since repo_state is 0 (Uploading)
@@ -384,7 +386,7 @@ async def test_handle_build_state_ready(publishing_service):
         "checks": [],
     }
     result = PublishResult()
-    now = datetime.now()
+    now = datetime.now(UTC)
 
     with patch.object(publishing_service.flat_manager, "publish") as mock_publish:
         await publishing_service._handle_build_state(pipeline, build_info, result, now)
@@ -411,7 +413,7 @@ async def test_handle_build_state_processing(publishing_service):
         result = PublishResult()
 
         await publishing_service._handle_build_state(
-            pipeline, build_info, result, datetime.now()
+            pipeline, build_info, result, datetime.now(UTC)
         )
 
         assert len(result.published) == 0
@@ -436,7 +438,7 @@ async def test_try_publish_build_error(publishing_service):
             response=MagicMock(status_code=400, text="Bad request"),
         )
 
-        await publishing_service._try_publish_build(pipeline, result, datetime.now())
+        await publishing_service._try_publish_build(pipeline, result, datetime.now(UTC))
 
         assert len(result.errors) == 1
         assert "HTTP 400" in result.errors[0]["error"]
@@ -452,7 +454,7 @@ async def test_try_publish_build_success(publishing_service):
         params={},
     )
     result = PublishResult()
-    now = datetime.now()
+    now = datetime.now(UTC)
 
     with patch.object(publishing_service.flat_manager, "publish") as mock_publish:
         await publishing_service._try_publish_build(pipeline, result, now)

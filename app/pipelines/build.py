@@ -1,7 +1,7 @@
 import secrets
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 import httpxyz as httpx
 import sentry_sdk
@@ -26,17 +26,17 @@ logger = structlog.get_logger(__name__)
 
 
 class CallbackData(BaseModel):
-    status: Optional[str] = None
-    log_url: Optional[str] = None
-    app_id: Optional[str] = None
-    end_of_life: Optional[str] = None
-    end_of_life_rebase: Optional[str] = None
-    build_pipeline_id: Optional[str] = None
-    status_code: Optional[str] = None
-    timestamp: Optional[str] = None
-    result_url: Optional[str] = None
-    message: Optional[str] = None
-    cost: Optional[float] = None
+    status: str | None = None
+    log_url: str | None = None
+    app_id: str | None = None
+    end_of_life: str | None = None
+    end_of_life_rebase: str | None = None
+    build_pipeline_id: str | None = None
+    status_code: str | None = None
+    timestamp: str | None = None
+    result_url: str | None = None
+    message: str | None = None
+    cost: float | None = None
 
 
 app_build_types = {
@@ -148,7 +148,7 @@ async def cancel_pipeline(
                 pipeline_id=str(pipeline_id),
             )
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 "Failed to purge build for cancelled pipeline",
                 build_id=build_id,
                 pipeline_id=str(pipeline_id),
@@ -166,7 +166,7 @@ async def cancel_pipeline(
                 pipeline_id=str(pipeline_id),
             )
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 "Failed to cancel GitHub Actions run",
                 run_id=run_id,
                 pipeline_id=str(pipeline_id),
@@ -232,7 +232,7 @@ class BuildPipeline:
 
                 return True
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 f"Failed to fetch {job_type} job ID",
                 pipeline_id=str(pipeline.id),
                 error=str(e),
@@ -407,7 +407,7 @@ class BuildPipeline:
                 raise ValueError(f"Pipeline {pipeline_id} is not in PENDING state")
 
             pipeline.status = PipelineStatus.RUNNING
-            pipeline.started_at = datetime.now(tz=timezone.utc)
+            pipeline.started_at = datetime.now(tz=UTC)
 
             params = dict(pipeline.params or {})
             stored_build_type = params.get("build_type")
@@ -448,9 +448,12 @@ class BuildPipeline:
                         build_id=build_id, app_id=pipeline.app_id
                     )
                 except Exception as e:
-                    raise ValueError(
-                        f"Failed to create build in flat-manager: {str(e)}"
+                    logger.exception(
+                        "Failed to create build in flat-manager",
+                        pipeline_id=str(pipeline.id),
+                        error=str(e),
                     )
+                    raise ValueError(f"Failed to create build in flat-manager: {e!s}")
 
             inputs = {
                 "app_id": pipeline.app_id,
@@ -543,10 +546,10 @@ class BuildPipeline:
                     pipeline_id=str(pending_pipeline_id),
                 )
             except Exception as e:
-                logger.error(
+                logger.exception(
                     "Failed to start queued pipeline",
-                    pipeline_id=str(pending_pipeline_id),
                     error=str(e),
+                    pipeline_id=str(pending_pipeline_id),
                 )
 
         return started_pipeline_ids
@@ -633,7 +636,7 @@ class BuildPipeline:
                             pipeline_id=str(pipeline_id),
                         )
                     except Exception as e:
-                        logger.warning(
+                        logger.exception(
                             "Failed to cancel GitHub Actions run for cancelled pipeline",
                             run_id=run_id,
                             pipeline_id=str(pipeline_id),
@@ -654,7 +657,7 @@ class BuildPipeline:
         from app.services.callback import StatusCallbackValidator
 
         async with get_db() as db:
-            pipeline, parsed_data, status_value = await _validate_and_prepare_callback(
+            pipeline, _parsed_data, status_value = await _validate_and_prepare_callback(
                 StatusCallbackValidator, callback_data, pipeline_id, db
             )
 
@@ -663,7 +666,7 @@ class BuildPipeline:
             match status_value:
                 case "success":
                     pipeline.status = PipelineStatus.SUCCEEDED
-                    pipeline.finished_at = datetime.now(tz=timezone.utc)
+                    pipeline.finished_at = datetime.now(tz=UTC)
                 case "failure":
                     github_actions = GitHubActionsService()
                     try:
@@ -680,16 +683,16 @@ class BuildPipeline:
                         else:
                             pipeline.status = PipelineStatus.FAILED
                     except Exception as e:
-                        logger.warning(
+                        logger.exception(
                             "Failed to check if build was cancelled, treating as failed",
                             pipeline_id=str(pipeline_id),
                             error=str(e),
                         )
                         pipeline.status = PipelineStatus.FAILED
-                    pipeline.finished_at = datetime.now(tz=timezone.utc)
+                    pipeline.finished_at = datetime.now(tz=UTC)
                 case "cancelled":
                     pipeline.status = PipelineStatus.CANCELLED
-                    pipeline.finished_at = datetime.now(tz=timezone.utc)
+                    pipeline.finished_at = datetime.now(tz=UTC)
 
             await db.commit()
 
@@ -720,7 +723,7 @@ class BuildPipeline:
                     await self.start_pending_builds()
                     return pipeline, updates
                 except Exception as e:
-                    logger.error(
+                    logger.exception(
                         "Failed to auto-retry cancelled build",
                         pipeline_id=str(pipeline_id),
                         error=str(e),
@@ -763,7 +766,7 @@ class BuildPipeline:
                             response_text=e.response.text,
                         )
                     except Exception as e:
-                        logger.error(
+                        logger.exception(
                             "Unexpected error while committing build",
                             build_id=pipeline.build_id,
                             pipeline_id=str(pipeline_id),
@@ -817,13 +820,13 @@ class BuildPipeline:
             match status_value:
                 case "success":
                     pipeline.status = PipelineStatus.SUCCEEDED
-                    pipeline.finished_at = datetime.now(tz=timezone.utc)
+                    pipeline.finished_at = datetime.now(tz=UTC)
                 case "failure":
                     pipeline.status = PipelineStatus.FAILED
-                    pipeline.finished_at = datetime.now(tz=timezone.utc)
+                    pipeline.finished_at = datetime.now(tz=UTC)
                 case "cancelled":
                     pipeline.status = PipelineStatus.CANCELLED
-                    pipeline.finished_at = datetime.now(tz=timezone.utc)
+                    pipeline.finished_at = datetime.now(tz=UTC)
 
             await db.flush()
 
@@ -913,9 +916,11 @@ class BuildPipeline:
                             },
                         )
                     except Exception:
-                        pass
+                        logger.exception(
+                            "Failed to report invalid reprocheck pipeline ID"
+                        )
                 except Exception as e:
-                    logger.error(
+                    logger.exception(
                         "Failed to update original pipeline with reprocheck ID",
                         build_pipeline_id=build_pipeline_id_value,
                         reprocheck_pipeline_id=str(pipeline.id),
@@ -932,7 +937,7 @@ class BuildPipeline:
                             },
                         )
                     except Exception:
-                        pass
+                        logger.exception("Failed to report reprocheck pipeline ID")
 
             if settings.ff_reprocheck_issues:
                 try:
@@ -943,7 +948,7 @@ class BuildPipeline:
                     notification_service = ReprocheckNotificationService()
                     await notification_service.handle_reprocheck_result(db, pipeline)
                 except Exception as e:
-                    logger.warning(
+                    logger.exception(
                         "Failed to process reprocheck notification",
                         pipeline_id=str(pipeline.id),
                         error=str(e),
@@ -1019,7 +1024,7 @@ class BuildPipeline:
             )
 
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Failed to dispatch reprocheck workflow",
                 pipeline_id=str(pipeline.id),
                 update_repo_job_id=pipeline.update_repo_job_id,

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,7 +31,7 @@ def mock_pipeline():
         commit_job_id=12345,
         flat_manager_repo="stable",
         log_url="https://example.com/logs/123",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -499,38 +499,44 @@ async def test_create_stable_build_failure_issue_exception(
 
 @pytest.mark.asyncio
 async def test_handle_build_completion_success(github_notifier, mock_pipeline):
-    with patch.object(github_notifier, "notify_build_status") as mock_status:
-        with patch.object(github_notifier, "notify_pr_build_complete") as mock_pr:
-            await github_notifier.handle_build_completion(mock_pipeline, "success")
+    with (
+        patch.object(github_notifier, "notify_build_status") as mock_status,
+        patch.object(github_notifier, "notify_pr_build_complete") as mock_pr,
+    ):
+        await github_notifier.handle_build_completion(mock_pipeline, "success")
 
-            mock_status.assert_called_once_with(mock_pipeline, "committing")
-            mock_pr.assert_not_called()
+        mock_status.assert_called_once_with(mock_pipeline, "committing")
+        mock_pr.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_handle_build_completion_failure_stable(github_notifier, mock_pipeline):
-    with patch.object(github_notifier, "notify_build_status") as mock_status:
-        with patch.object(
+    with (
+        patch.object(github_notifier, "notify_build_status") as mock_status,
+        patch.object(
             github_notifier, "create_stable_build_failure_issue"
-        ) as mock_issue:
-            with patch.object(github_notifier, "notify_pr_build_complete") as mock_pr:
-                await github_notifier.handle_build_completion(mock_pipeline, "failure")
+        ) as mock_issue,
+        patch.object(github_notifier, "notify_pr_build_complete") as mock_pr,
+    ):
+        await github_notifier.handle_build_completion(mock_pipeline, "failure")
 
-                mock_status.assert_called_once_with(mock_pipeline, "failure")
-                mock_issue.assert_called_once_with(mock_pipeline)
-                mock_pr.assert_called_once_with(mock_pipeline, "failure")
+        mock_status.assert_called_once_with(mock_pipeline, "failure")
+        mock_issue.assert_called_once_with(mock_pipeline)
+        mock_pr.assert_called_once_with(mock_pipeline, "failure")
 
 
 @pytest.mark.asyncio
 async def test_handle_build_completion_no_pr(github_notifier, mock_pipeline):
     mock_pipeline.params = {"sha": "abc123", "repo": "flathub/test"}
 
-    with patch.object(github_notifier, "notify_build_status") as mock_status:
-        with patch.object(github_notifier, "notify_pr_build_complete") as mock_pr:
-            await github_notifier.handle_build_completion(mock_pipeline, "success")
+    with (
+        patch.object(github_notifier, "notify_build_status") as mock_status,
+        patch.object(github_notifier, "notify_pr_build_complete") as mock_pr,
+    ):
+        await github_notifier.handle_build_completion(mock_pipeline, "success")
 
-            mock_status.assert_called_once_with(mock_pipeline, "success")
-            mock_pr.assert_not_called()
+        mock_status.assert_called_once_with(mock_pipeline, "success")
+        mock_pr.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -554,14 +560,16 @@ async def test_handle_build_completion_cancelled_medium_build(
 ):
     mock_pipeline.params = {"build_type": "medium"}
 
-    with patch.object(github_notifier, "notify_build_status") as mock_status:
-        with patch.object(
+    with (
+        patch.object(github_notifier, "notify_build_status") as mock_status,
+        patch.object(
             github_notifier, "create_stable_build_failure_issue"
-        ) as mock_issue:
-            await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
+        ) as mock_issue,
+    ):
+        await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
 
-            mock_status.assert_called_once_with(mock_pipeline, "cancelled")
-            mock_issue.assert_not_called()
+        mock_status.assert_called_once_with(mock_pipeline, "cancelled")
+        mock_issue.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -570,26 +578,30 @@ async def test_handle_build_completion_cancelled_large_build(
 ):
     mock_pipeline.params = {"build_type": "large"}
 
-    with patch.object(github_notifier, "notify_build_status") as mock_status:
-        with patch.object(
+    with (
+        patch.object(github_notifier, "notify_build_status") as mock_status,
+        patch.object(
             github_notifier, "create_stable_build_failure_issue"
-        ) as mock_issue:
-            await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
+        ) as mock_issue,
+    ):
+        await github_notifier.handle_build_completion(mock_pipeline, "cancelled")
 
-            mock_status.assert_called_once_with(mock_pipeline, "cancelled")
-            mock_issue.assert_not_called()
+        mock_status.assert_called_once_with(mock_pipeline, "cancelled")
+        mock_issue.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_handle_build_started(github_notifier, mock_pipeline):
     log_url = "https://example.com/new-log"
 
-    with patch.object(github_notifier, "notify_build_started") as mock_started:
-        with patch.object(github_notifier, "notify_pr_build_started") as mock_pr:
-            await github_notifier.handle_build_started(mock_pipeline, log_url)
+    with (
+        patch.object(github_notifier, "notify_build_started") as mock_started,
+        patch.object(github_notifier, "notify_pr_build_started") as mock_pr,
+    ):
+        await github_notifier.handle_build_started(mock_pipeline, log_url)
 
-            mock_started.assert_called_once_with(mock_pipeline, log_url)
-            mock_pr.assert_called_once_with(mock_pipeline, log_url)
+        mock_started.assert_called_once_with(mock_pipeline, log_url)
+        mock_pr.assert_called_once_with(mock_pipeline, log_url)
 
 
 @pytest.mark.asyncio
@@ -597,12 +609,14 @@ async def test_handle_build_started_no_pr(github_notifier, mock_pipeline):
     mock_pipeline.params = {"sha": "abc123", "repo": "flathub/test"}
     log_url = "https://example.com/new-log"
 
-    with patch.object(github_notifier, "notify_build_started") as mock_started:
-        with patch.object(github_notifier, "notify_pr_build_started") as mock_pr:
-            await github_notifier.handle_build_started(mock_pipeline, log_url)
+    with (
+        patch.object(github_notifier, "notify_build_started") as mock_started,
+        patch.object(github_notifier, "notify_pr_build_started") as mock_pr,
+    ):
+        await github_notifier.handle_build_started(mock_pipeline, log_url)
 
-            mock_started.assert_called_once_with(mock_pipeline, log_url)
-            mock_pr.assert_not_called()
+        mock_started.assert_called_once_with(mock_pipeline, log_url)
+        mock_pr.assert_not_called()
 
 
 @pytest.mark.asyncio

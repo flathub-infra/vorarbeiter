@@ -1,0 +1,5 @@
+[lint]
+logger-objects = ["structlog.get_logger"]
+
+[lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]

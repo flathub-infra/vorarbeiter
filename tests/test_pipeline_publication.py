@@ -1,6 +1,6 @@
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import patch
-from datetime import datetime
 
 import pytest
 
@@ -24,7 +24,7 @@ def stable_pipeline():
         build_id=123,
         update_repo_job_id=456,
         callback_token="test_token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -41,7 +41,7 @@ def beta_pipeline():
         build_id=123,
         update_repo_job_id=456,
         callback_token="test_token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -59,7 +59,7 @@ def stable_pipeline_with_reprocheck():
         build_id=123,
         update_repo_job_id=456,
         callback_token="test_token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -109,7 +109,7 @@ async def test_dispatch_reprocheck_workflow_creates_pipeline_and_dispatches(
         app_id=stable_pipeline.app_id,
         callback_token="reprocheck_token",
         params={"workflow_id": "reprocheck.yml"},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -154,8 +154,8 @@ async def test_dispatch_reprocheck_workflow_handles_errors_gracefully(
         await build_pipeline._dispatch_reprocheck_workflow(stable_pipeline)
 
         # Should log error
-        mock_logger.error.assert_called_once()
-        error_call = mock_logger.error.call_args
+        mock_logger.exception.assert_called_once()
+        error_call = mock_logger.exception.call_args
         assert "Failed to dispatch reprocheck workflow" in str(error_call)
         assert str(stable_pipeline.id) in str(error_call)
         assert str(stable_pipeline.update_repo_job_id) in str(error_call)

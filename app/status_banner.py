@@ -1,4 +1,5 @@
 import time
+
 import httpxyz as httpx
 import structlog
 
@@ -65,7 +66,7 @@ async def get_status_banner(
             r.raise_for_status()
             data = r.json()
     except Exception as e:
-        logger.warning(
+        logger.exception(
             "Failed to fetch fresh statuspage feed, using cached data",
             error=str(e),
             cache_age_seconds=int(now - cache.timestamp) if cache.timestamp else None,

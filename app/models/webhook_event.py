@@ -1,15 +1,15 @@
 import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
-from typing import Any
+from typing import Any, ClassVar
 
-from sqlalchemy import DateTime, String, Boolean, JSON, func
+from sqlalchemy import JSON, Boolean, DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import mapped_column, DeclarativeBase, Mapped
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
-    type_annotation_map = {
+    type_annotation_map: ClassVar[dict[Any, Any]] = {
         datetime: DateTime(timezone=True),
         uuid.UUID: UUID(as_uuid=True),
     }

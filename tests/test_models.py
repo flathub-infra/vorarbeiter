@@ -1,11 +1,11 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 
 
 def test_pipeline_model_creation():
-    now = datetime.now()
+    now = datetime.now(UTC)
     pipeline = Pipeline(
         app_id="org.flathub.Test",
         params={"commit": "abc123"},
@@ -38,7 +38,7 @@ def test_pipeline_model_with_manual_trigger():
 
 def test_pipeline_model_with_full_parameters():
     """Test Pipeline model creation with all parameters."""
-    now = datetime.now()
+    now = datetime.now(UTC)
     webhook_id = uuid.uuid4()
 
     pipeline = Pipeline(
@@ -64,7 +64,7 @@ def test_pipeline_model_with_full_parameters():
 
 def test_pipeline_model_with_provider_fields():
     """Test Pipeline model with provider data field."""
-    now = datetime.now()
+    now = datetime.now(UTC)
 
     pipeline = Pipeline(
         app_id="org.flathub.Test",

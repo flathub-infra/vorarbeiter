@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -174,7 +174,7 @@ async def test_check_jobs_includes_published_pipelines(
 ):
     session_maker = db_session_maker
 
-    now = datetime.now()
+    now = datetime.now(UTC)
 
     published_pipeline_with_publish = Pipeline(
         id=uuid.uuid4(),

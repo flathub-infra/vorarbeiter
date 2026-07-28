@@ -1,6 +1,6 @@
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,7 +24,7 @@ def mock_provider():
 def build_pipeline(mock_provider):
     with patch("app.services.github_actions_service", mock_provider):
         pipeline = BuildPipeline()
-        pipeline.start_pending_builds = AsyncMock(return_value=[])  # ty: ignore[invalid-assignment]
+        pipeline.start_pending_builds = AsyncMock(return_value=[])
         return pipeline
 
 
@@ -35,7 +35,7 @@ def sample_pipeline():
         app_id="org.flathub.Test",
         status=PipelineStatus.PENDING,
         params={"branch": "main"},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
         callback_token="test_token_12345",
@@ -57,10 +57,11 @@ async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch("app.pipelines.build.Pipeline", return_value=test_pipeline):
-            result = await build_pipeline.create_pipeline(app_id, params)
-
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch("app.pipelines.build.Pipeline", return_value=test_pipeline),
+    ):
+        result = await build_pipeline.create_pipeline(app_id, params)
     assert mock_db.add.called
     assert mock_db.flush.called
     assert result.app_id == app_id
@@ -98,11 +99,13 @@ async def test_start_pipeline(build_pipeline, mock_db):
     mock_httpx_client = AsyncMock()
     mock_httpx_client.request = AsyncMock(return_value=mock_httpx_response)
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch("httpx.AsyncClient", return_value=mock_httpx_client):
-            with patch("app.pipelines.build.get_app_p90_build_time", return_value=None):
-                build_pipeline.flat_manager.client = mock_httpx_client
-                result = await build_pipeline.start_pipeline(pipeline_id)
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch("httpx.AsyncClient", return_value=mock_httpx_client),
+        patch("app.pipelines.build.get_app_p90_build_time", return_value=None),
+    ):
+        build_pipeline.flat_manager.client = mock_httpx_client
+        result = await build_pipeline.start_pipeline(pipeline_id)
 
     assert result.status == PipelineStatus.RUNNING
     assert build_pipeline.provider.dispatch.called
@@ -195,7 +198,7 @@ async def test_start_pipeline_branch_mapping(
     assert token_data["prefix"] == [app_id]
 
     mock_github_provider.dispatch.assert_awaited_once()
-    call_args, call_kwargs = mock_github_provider.dispatch.call_args
+    call_args, _call_kwargs = mock_github_provider.dispatch.call_args
     dispatched_job_data = call_args[2]
     assert (
         dispatched_job_data["params"]["inputs"]["flat_manager_repo"]
@@ -213,7 +216,7 @@ async def test_handle_status_callback_success(build_pipeline, mock_db, sample_pi
     mock_get_db = create_mock_get_db(mock_db)
 
     with patch("app.pipelines.build.get_db", mock_get_db):
-        pipeline, updates = await build_pipeline.handle_status_callback(
+        pipeline, _updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "success"}
         )
 
@@ -229,7 +232,7 @@ async def test_handle_status_callback_success_drains_oldest_pending_pipeline():
         app_id="org.flathub.Completed",
         status=PipelineStatus.RUNNING,
         params={"workflow_id": "build.yml"},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         provider_data={},
         callback_token="callback-token",
     )
@@ -265,7 +268,7 @@ async def test_handle_status_callback_success_drains_oldest_pending_pipeline():
         started_pipeline.id = pipeline_id
         return started_pipeline
 
-    build_pipeline.start_pipeline = AsyncMock(side_effect=_start_pipeline)  # ty: ignore[invalid-assignment]
+    build_pipeline.start_pipeline = AsyncMock(side_effect=_start_pipeline)
 
     with (
         patch("app.pipelines.build.get_db", sequenced_get_db),
@@ -279,8 +282,7 @@ async def test_handle_status_callback_success_drains_oldest_pending_pipeline():
     assert pipeline.status == PipelineStatus.SUCCEEDED
     assert updates["pipeline_status"] == "success"
     started_ids = [
-        call.args[0]
-        for call in build_pipeline.start_pipeline.await_args_list  # ty: ignore[unresolved-attribute]
+        call.args[0] for call in build_pipeline.start_pipeline.await_args_list
     ]
     assert started_ids == [oldest_pending_id, newer_pending_id]
     pending_query = str(pending_db.execute.await_args.args[0])  # ty: ignore[unresolved-attribute]
@@ -294,14 +296,16 @@ async def test_handle_status_callback_failure(build_pipeline, mock_db, sample_pi
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch(
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
-        ) as mock_check_cancelled:
-            mock_check_cancelled.return_value = False
-            pipeline, updates = await build_pipeline.handle_status_callback(
-                sample_pipeline.id, {"status": "failure"}
-            )
+        ) as mock_check_cancelled,
+    ):
+        mock_check_cancelled.return_value = False
+        pipeline, _updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "failure"}
+        )
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at is not None
@@ -316,14 +320,16 @@ async def test_handle_status_callback_failure_reclassified_as_cancelled(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch(
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
-        ) as mock_check_cancelled:
-            mock_check_cancelled.return_value = True  # Simulate cancellation detected
-            pipeline, updates = await build_pipeline.handle_status_callback(
-                sample_pipeline.id, {"status": "failure"}
-            )
+        ) as mock_check_cancelled,
+    ):
+        mock_check_cancelled.return_value = True  # Simulate cancellation detected
+        pipeline, updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "failure"}
+        )
 
     assert pipeline.status == PipelineStatus.CANCELLED
     assert pipeline.finished_at is not None
@@ -339,14 +345,16 @@ async def test_handle_status_callback_failure_cancellation_check_error(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch(
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
-        ) as mock_check_cancelled:
-            mock_check_cancelled.side_effect = Exception("API error")
-            pipeline, updates = await build_pipeline.handle_status_callback(
-                sample_pipeline.id, {"status": "failure"}
-            )
+        ) as mock_check_cancelled,
+    ):
+        mock_check_cancelled.side_effect = Exception("API error")
+        pipeline, updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "failure"}
+        )
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at is not None
@@ -433,8 +441,8 @@ def test_list_pipelines_endpoint(mock_get_db):
             flat_manager_repo="stable",
             triggered_by=PipelineTrigger.MANUAL,
             build_id=123,
-            created_at=datetime.now(),
-            started_at=datetime.now(),
+            created_at=datetime.now(UTC),
+            started_at=datetime.now(UTC),
             finished_at=None,
             published_at=None,
             repro_pipeline_id=None,
@@ -446,9 +454,9 @@ def test_list_pipelines_endpoint(mock_get_db):
             flat_manager_repo="beta",
             triggered_by=PipelineTrigger.WEBHOOK,
             build_id=456,
-            created_at=datetime.now(),
-            started_at=datetime.now(),
-            finished_at=datetime.now(),
+            created_at=datetime.now(UTC),
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
             published_at=None,
             repro_pipeline_id=uuid.uuid4(),
         ),
@@ -581,20 +589,22 @@ async def test_start_pipeline_stores_default_build_type():
     mock_github_provider = AsyncMock(spec=GitHubActionsService)
     mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
 
-    with patch("app.pipelines.build.get_db") as mock_get_db:
-        with patch("httpx.AsyncClient") as mock_httpx_client:
-            with patch("app.pipelines.build.get_app_p90_build_time") as mock_p90:
-                mock_p90.return_value = None
-                mock_get_db.return_value.__aenter__.return_value = mock_db_session
-                mock_httpx_client.return_value = mock_httpx_instance
+    with (
+        patch("app.pipelines.build.get_db") as mock_get_db,
+        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("app.pipelines.build.get_app_p90_build_time") as mock_p90,
+    ):
+        mock_p90.return_value = None
+        mock_get_db.return_value.__aenter__.return_value = mock_db_session
+        mock_httpx_client.return_value = mock_httpx_instance
 
-                build_pipeline = BuildPipeline()
-                build_pipeline.provider = mock_github_provider
+        build_pipeline = BuildPipeline()
+        build_pipeline.provider = mock_github_provider
 
-                await build_pipeline.start_pipeline(pipeline_id)
+        await build_pipeline.start_pipeline(pipeline_id)
 
-                assert mock_pipeline.params["build_type"] == "medium"
-                mock_p90.assert_called_once_with(mock_db_session, "org.example.app")
+        assert mock_pipeline.params["build_type"] == "medium"
+        mock_p90.assert_called_once_with(mock_db_session, "org.example.app")
 
 
 @pytest.mark.asyncio
@@ -623,17 +633,19 @@ async def test_start_pipeline_stores_hardcoded_build_type():
     mock_github_provider = AsyncMock(spec=GitHubActionsService)
     mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
 
-    with patch("app.pipelines.build.get_db") as mock_get_db:
-        with patch("httpx.AsyncClient") as mock_httpx_client:
-            mock_get_db.return_value.__aenter__.return_value = mock_db_session
-            mock_httpx_client.return_value = mock_httpx_instance
+    with (
+        patch("app.pipelines.build.get_db") as mock_get_db,
+        patch("httpx.AsyncClient") as mock_httpx_client,
+    ):
+        mock_get_db.return_value.__aenter__.return_value = mock_db_session
+        mock_httpx_client.return_value = mock_httpx_instance
 
-            build_pipeline = BuildPipeline()
-            build_pipeline.provider = mock_github_provider
+        build_pipeline = BuildPipeline()
+        build_pipeline.provider = mock_github_provider
 
-            await build_pipeline.start_pipeline(pipeline_id)
+        await build_pipeline.start_pipeline(pipeline_id)
 
-            assert mock_pipeline.params["build_type"] == "large"
+        assert mock_pipeline.params["build_type"] == "large"
 
 
 @pytest.mark.asyncio
@@ -662,19 +674,21 @@ async def test_start_pipeline_stores_parameter_build_type():
     mock_github_provider = AsyncMock(spec=GitHubActionsService)
     mock_github_provider.dispatch = AsyncMock(return_value={"dispatch_result": "ok"})
 
-    with patch("app.pipelines.build.get_db") as mock_get_db:
-        with patch("httpx.AsyncClient") as mock_httpx_client:
-            with patch("app.pipelines.build.get_app_p90_build_time") as mock_p90:
-                mock_p90.return_value = None
-                mock_get_db.return_value.__aenter__.return_value = mock_db_session
-                mock_httpx_client.return_value = mock_httpx_instance
+    with (
+        patch("app.pipelines.build.get_db") as mock_get_db,
+        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("app.pipelines.build.get_app_p90_build_time") as mock_p90,
+    ):
+        mock_p90.return_value = None
+        mock_get_db.return_value.__aenter__.return_value = mock_db_session
+        mock_httpx_client.return_value = mock_httpx_instance
 
-                build_pipeline = BuildPipeline()
-                build_pipeline.provider = mock_github_provider
+        build_pipeline = BuildPipeline()
+        build_pipeline.provider = mock_github_provider
 
-                await build_pipeline.start_pipeline(pipeline_id)
+        await build_pipeline.start_pipeline(pipeline_id)
 
-                assert mock_pipeline.params["build_type"] == "medium"
+        assert mock_pipeline.params["build_type"] == "medium"
 
 
 @pytest.mark.asyncio
@@ -793,33 +807,37 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch(
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
-        ) as mock_check_cancelled:
-            mock_check_cancelled.return_value = True
-            with patch.object(
+        ) as mock_check_cancelled,
+    ):
+        mock_check_cancelled.return_value = True
+        with (
+            patch.object(
                 build_pipeline, "create_pipeline", new_callable=AsyncMock
-            ) as mock_create:
-                with patch.object(
-                    build_pipeline, "start_pipeline", new_callable=AsyncMock
-                ) as mock_start:
-                    retry_pipeline = Pipeline(
-                        id=uuid.uuid4(),
-                        app_id="org.flathub.Test",
-                        status=PipelineStatus.PENDING,
-                        params={"branch": "main", "auto_retried": True},
-                        created_at=datetime.now(),
-                        triggered_by=PipelineTrigger.MANUAL,
-                        provider_data={},
-                        callback_token="test_token",
-                    )
-                    mock_create.return_value = retry_pipeline
-                    mock_start.return_value = retry_pipeline
+            ) as mock_create,
+            patch.object(
+                build_pipeline, "start_pipeline", new_callable=AsyncMock
+            ) as mock_start,
+        ):
+            retry_pipeline = Pipeline(
+                id=uuid.uuid4(),
+                app_id="org.flathub.Test",
+                status=PipelineStatus.PENDING,
+                params={"branch": "main", "auto_retried": True},
+                created_at=datetime.now(UTC),
+                triggered_by=PipelineTrigger.MANUAL,
+                provider_data={},
+                callback_token="test_token",
+            )
+            mock_create.return_value = retry_pipeline
+            mock_start.return_value = retry_pipeline
 
-                    pipeline, updates = await build_pipeline.handle_status_callback(
-                        sample_pipeline.id, {"status": "failure"}
-                    )
+            pipeline, _updates = await build_pipeline.handle_status_callback(
+                sample_pipeline.id, {"status": "failure"}
+            )
 
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_called_once()
@@ -840,33 +858,37 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch(
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
-        ) as mock_check_cancelled:
-            mock_check_cancelled.return_value = True
-            with patch.object(
+        ) as mock_check_cancelled,
+    ):
+        mock_check_cancelled.return_value = True
+        with (
+            patch.object(
                 build_pipeline, "create_pipeline", new_callable=AsyncMock
-            ) as mock_create:
-                with patch.object(
-                    build_pipeline, "start_pipeline", new_callable=AsyncMock
-                ) as mock_start:
-                    retry_pipeline = Pipeline(
-                        id=uuid.uuid4(),
-                        app_id="org.flathub.Test",
-                        status=PipelineStatus.PENDING,
-                        params={"branch": "main", "auto_retried": True},
-                        created_at=datetime.now(),
-                        triggered_by=PipelineTrigger.MANUAL,
-                        provider_data={},
-                        callback_token="test_token",
-                    )
-                    mock_create.return_value = retry_pipeline
-                    mock_start.return_value = retry_pipeline
+            ) as mock_create,
+            patch.object(
+                build_pipeline, "start_pipeline", new_callable=AsyncMock
+            ) as mock_start,
+        ):
+            retry_pipeline = Pipeline(
+                id=uuid.uuid4(),
+                app_id="org.flathub.Test",
+                status=PipelineStatus.PENDING,
+                params={"branch": "main", "auto_retried": True},
+                created_at=datetime.now(UTC),
+                triggered_by=PipelineTrigger.MANUAL,
+                provider_data={},
+                callback_token="test_token",
+            )
+            mock_create.return_value = retry_pipeline
+            mock_start.return_value = retry_pipeline
 
-                    pipeline, updates = await build_pipeline.handle_status_callback(
-                        sample_pipeline.id, {"status": "failure"}
-                    )
+            pipeline, _updates = await build_pipeline.handle_status_callback(
+                sample_pipeline.id, {"status": "failure"}
+            )
 
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_called_once()
@@ -885,17 +907,19 @@ async def test_handle_status_callback_no_auto_retry_test_cancelled(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch(
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
-        ) as mock_check_cancelled:
-            mock_check_cancelled.return_value = True
-            with patch.object(
-                build_pipeline, "create_pipeline", new_callable=AsyncMock
-            ) as mock_create:
-                pipeline, updates = await build_pipeline.handle_status_callback(
-                    sample_pipeline.id, {"status": "failure"}
-                )
+        ) as mock_check_cancelled,
+    ):
+        mock_check_cancelled.return_value = True
+        with patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create:
+            pipeline, _updates = await build_pipeline.handle_status_callback(
+                sample_pipeline.id, {"status": "failure"}
+            )
 
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_not_called()
@@ -913,17 +937,19 @@ async def test_handle_status_callback_no_auto_retry_already_retried(
 
     mock_get_db = create_mock_get_db(mock_db)
 
-    with patch("app.pipelines.build.get_db", mock_get_db):
-        with patch(
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
-        ) as mock_check_cancelled:
-            mock_check_cancelled.return_value = True
-            with patch.object(
-                build_pipeline, "create_pipeline", new_callable=AsyncMock
-            ) as mock_create:
-                pipeline, updates = await build_pipeline.handle_status_callback(
-                    sample_pipeline.id, {"status": "failure"}
-                )
+        ) as mock_check_cancelled,
+    ):
+        mock_check_cancelled.return_value = True
+        with patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create:
+            pipeline, _updates = await build_pipeline.handle_status_callback(
+                sample_pipeline.id, {"status": "failure"}
+            )
 
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_not_called()
@@ -1286,7 +1312,7 @@ def test_pipeline_reprocheck_callback_success(mock_get_db, sample_pipeline):
         status=PipelineStatus.RUNNING,
         params={"workflow_id": "reprocheck.yml"},
         callback_token="reprocheck_token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -1297,7 +1323,7 @@ def test_pipeline_reprocheck_callback_success(mock_get_db, sample_pipeline):
         status=PipelineStatus.PUBLISHED,
         params={},
         callback_token="original_token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -1536,24 +1562,20 @@ async def test_supersedes_running_pipeline_on_start():
 
     mock_github_actions_cancel = AsyncMock()
 
-    with patch("app.pipelines.build.get_db") as mock_get_db:
-        with patch("httpx.AsyncClient") as mock_httpx_client:
-            with patch(
-                "app.pipelines.build.GitHubActionsService"
-            ) as mock_github_actions_class:
-                mock_get_db.return_value.__aenter__.return_value = mock_db_session
-                mock_httpx_client.return_value.__aenter__.return_value = (
-                    mock_httpx_instance
-                )
-                mock_github_actions_class.return_value.cancel = (
-                    mock_github_actions_cancel
-                )
+    with (
+        patch("app.pipelines.build.get_db") as mock_get_db,
+        patch("httpx.AsyncClient") as mock_httpx_client,
+        patch("app.pipelines.build.GitHubActionsService") as mock_github_actions_class,
+    ):
+        mock_get_db.return_value.__aenter__.return_value = mock_db_session
+        mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+        mock_github_actions_class.return_value.cancel = mock_github_actions_cancel
 
-                build_pipeline = BuildPipeline()
-                build_pipeline.provider = mock_github_provider
-                build_pipeline.flat_manager = mock_flat_manager
+        build_pipeline = BuildPipeline()
+        build_pipeline.provider = mock_github_provider
+        build_pipeline.flat_manager = mock_flat_manager
 
-                await build_pipeline.start_pipeline(new_pipeline_id)
+        await build_pipeline.start_pipeline(new_pipeline_id)
 
     assert old_pipeline.status == PipelineStatus.SUPERSEDED
     mock_flat_manager.purge.assert_called_once_with(111)
@@ -1613,16 +1635,18 @@ async def test_does_not_supersede_test_repo_pipelines():
     )
     mock_flat_manager.purge = AsyncMock()
 
-    with patch("app.pipelines.build.get_db") as mock_get_db:
-        with patch("httpx.AsyncClient") as mock_httpx_client:
-            mock_get_db.return_value.__aenter__.return_value = mock_db_session
-            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+    with (
+        patch("app.pipelines.build.get_db") as mock_get_db,
+        patch("httpx.AsyncClient") as mock_httpx_client,
+    ):
+        mock_get_db.return_value.__aenter__.return_value = mock_db_session
+        mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
 
-            build_pipeline = BuildPipeline()
-            build_pipeline.provider = mock_github_provider
-            build_pipeline.flat_manager = mock_flat_manager
+        build_pipeline = BuildPipeline()
+        build_pipeline.provider = mock_github_provider
+        build_pipeline.flat_manager = mock_flat_manager
 
-            await build_pipeline.start_pipeline(new_pipeline_id)
+        await build_pipeline.start_pipeline(new_pipeline_id)
 
     assert old_pipeline.status == PipelineStatus.RUNNING
     mock_flat_manager.purge.assert_not_called()
@@ -1679,16 +1703,18 @@ async def test_supersedes_pending_pipeline_without_build_id():
     )
     mock_flat_manager.purge = AsyncMock()
 
-    with patch("app.pipelines.build.get_db") as mock_get_db:
-        with patch("httpx.AsyncClient") as mock_httpx_client:
-            mock_get_db.return_value.__aenter__.return_value = mock_db_session
-            mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
+    with (
+        patch("app.pipelines.build.get_db") as mock_get_db,
+        patch("httpx.AsyncClient") as mock_httpx_client,
+    ):
+        mock_get_db.return_value.__aenter__.return_value = mock_db_session
+        mock_httpx_client.return_value.__aenter__.return_value = mock_httpx_instance
 
-            build_pipeline = BuildPipeline()
-            build_pipeline.provider = mock_github_provider
-            build_pipeline.flat_manager = mock_flat_manager
+        build_pipeline = BuildPipeline()
+        build_pipeline.provider = mock_github_provider
+        build_pipeline.flat_manager = mock_flat_manager
 
-            await build_pipeline.start_pipeline(new_pipeline_id)
+        await build_pipeline.start_pipeline(new_pipeline_id)
 
     assert old_pipeline.status == PipelineStatus.SUPERSEDED
     mock_flat_manager.purge.assert_not_called()
@@ -1826,7 +1852,7 @@ async def test_start_pending_builds_respects_capacity():
         started.id = pipeline_id
         return started
 
-    build_pipeline.start_pipeline = AsyncMock(side_effect=_start_pipeline)  # ty: ignore[invalid-assignment]
+    build_pipeline.start_pipeline = AsyncMock(side_effect=_start_pipeline)
 
     with (
         patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)),
@@ -1835,7 +1861,7 @@ async def test_start_pending_builds_respects_capacity():
         started_ids = await build_pipeline.start_pending_builds()
 
     assert started_ids == [pending_pipeline_id_1]
-    build_pipeline.start_pipeline.assert_awaited_once_with(pending_pipeline_id_1)  # ty: ignore[unresolved-attribute]
+    build_pipeline.start_pipeline.assert_awaited_once_with(pending_pipeline_id_1)
     pending_query_params = mock_db_session.execute.await_args_list[1].args[1]
     assert pending_query_params["limit"] == 1
 
@@ -1861,7 +1887,7 @@ async def test_start_pending_builds_unlimited():
         started.id = pipeline_id
         return started
 
-    build_pipeline.start_pipeline = AsyncMock(side_effect=_start_pipeline)  # ty: ignore[invalid-assignment]
+    build_pipeline.start_pipeline = AsyncMock(side_effect=_start_pipeline)
 
     with (
         patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)),
@@ -1870,7 +1896,7 @@ async def test_start_pending_builds_unlimited():
         started_ids = await build_pipeline.start_pending_builds()
 
     assert started_ids == [pending_pipeline_id_1, pending_pipeline_id_2]
-    assert build_pipeline.start_pipeline.await_count == 2  # ty: ignore[unresolved-attribute]
+    assert build_pipeline.start_pipeline.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -1899,19 +1925,19 @@ async def test_supersede_conflicting_test_pipelines(
     mock_db_session.get.return_value = pipeline
 
     build_pipeline = BuildPipeline()
-    build_pipeline._supersede_conflicting_pipelines = AsyncMock()  # ty: ignore[invalid-assignment]
+    build_pipeline._supersede_conflicting_pipelines = AsyncMock()
 
     with patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)):
         await build_pipeline.supersede_conflicting_test_pipelines(pipeline_id)
 
     if should_supersede:
-        build_pipeline._supersede_conflicting_pipelines.assert_awaited_once_with(  # ty: ignore[unresolved-attribute]
+        build_pipeline._supersede_conflicting_pipelines.assert_awaited_once_with(
             db=mock_db_session,
             pipeline=pipeline,
             flat_manager_repo="test",
         )
     else:
-        build_pipeline._supersede_conflicting_pipelines.assert_not_awaited()  # ty: ignore[unresolved-attribute]
+        build_pipeline._supersede_conflicting_pipelines.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1944,7 +1970,7 @@ async def test_should_queue_test_build(
     mock_db_session.get.return_value = pipeline
 
     build_pipeline = BuildPipeline()
-    build_pipeline._can_start_test_spot_build = AsyncMock(return_value=can_start)  # ty: ignore[invalid-assignment]
+    build_pipeline._can_start_test_spot_build = AsyncMock(return_value=can_start)
 
     with patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)):
         result = await build_pipeline.should_queue_test_build(pipeline_id)
@@ -1952,11 +1978,11 @@ async def test_should_queue_test_build(
     assert result is expected
 
     if flat_manager_repo == "test" and build_type in ("medium", "large"):
-        build_pipeline._can_start_test_spot_build.assert_awaited_once_with(  # ty: ignore[unresolved-attribute]
+        build_pipeline._can_start_test_spot_build.assert_awaited_once_with(
             mock_db_session
         )
     else:
-        build_pipeline._can_start_test_spot_build.assert_not_awaited()  # ty: ignore[unresolved-attribute]
+        build_pipeline._can_start_test_spot_build.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1968,7 +1994,7 @@ async def test_start_pending_builds_at_zero_capacity():
     mock_db_session.execute = AsyncMock(return_value=count_result)
 
     build_pipeline = BuildPipeline()
-    build_pipeline.start_pipeline = AsyncMock()  # ty: ignore[invalid-assignment]
+    build_pipeline.start_pipeline = AsyncMock()
 
     with (
         patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)),
@@ -1977,7 +2003,7 @@ async def test_start_pending_builds_at_zero_capacity():
         started_ids = await build_pipeline.start_pending_builds()
 
     assert started_ids == []
-    build_pipeline.start_pipeline.assert_not_awaited()  # ty: ignore[unresolved-attribute]
+    build_pipeline.start_pipeline.assert_not_awaited()
     assert mock_db_session.execute.await_count == 1
 
 
@@ -1999,7 +2025,7 @@ async def test_start_pending_builds_handles_non_value_error():
     started_pipeline_2.id = pending_id_2
 
     build_pipeline = BuildPipeline()
-    build_pipeline.start_pipeline = AsyncMock(  # ty: ignore[invalid-assignment]
+    build_pipeline.start_pipeline = AsyncMock(
         side_effect=[RuntimeError("flat-manager down"), started_pipeline_2]
     )
 
@@ -2010,7 +2036,7 @@ async def test_start_pending_builds_handles_non_value_error():
         started_ids = await build_pipeline.start_pending_builds()
 
     assert started_ids == [pending_id_2]
-    assert build_pipeline.start_pipeline.await_count == 2  # ty: ignore[unresolved-attribute]
+    assert build_pipeline.start_pipeline.await_count == 2
 
 
 @pytest.mark.asyncio

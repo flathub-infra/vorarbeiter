@@ -203,12 +203,14 @@ async def test_check_and_update_no_fetch_if_ids_present(job_monitor):
         params={},
     )
 
-    with patch.object(job_monitor.flat_manager, "get_build_info") as mock_get_info:
-        with patch.object(job_monitor.flat_manager, "get_job") as mock_get_job:
-            mock_get_job.return_value = {"status": 1}  # STARTED
+    with (
+        patch.object(job_monitor.flat_manager, "get_build_info") as mock_get_info,
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+    ):
+        mock_get_job.return_value = {"status": 1}  # STARTED
 
-            result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
+        result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
-            assert result is False
-            mock_get_info.assert_not_called()
-            mock_get_job.assert_called_once_with(789)
+        assert result is False
+        mock_get_info.assert_not_called()
+        mock_get_job.assert_called_once_with(789)

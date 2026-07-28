@@ -1,10 +1,10 @@
 import time
-
-import pytest
-import httpxyz as httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.status_banner import get_status_banner, StatusBannerCache, _CACHE_TTL
+import httpxyz as httpx
+import pytest
+
+from app.status_banner import _CACHE_TTL, StatusBannerCache, get_status_banner
 
 
 def make_response(data: dict, status_code: int = 200):

@@ -83,20 +83,22 @@ class TestFetchDiffoscopeReport:
         mock_response.content = zip_content
         mock_response.raise_for_status = lambda: None
 
-        with patch("app.services.diffoscope._cache", DiffoscopeCache()):
-            with patch("httpx.AsyncClient") as mock_client:
-                mock_instance = AsyncMock()
-                mock_instance.get.return_value = mock_response
-                mock_instance.__aenter__.return_value = mock_instance
-                mock_instance.__aexit__.return_value = None
-                mock_client.return_value = mock_instance
+        with (
+            patch("app.services.diffoscope._cache", DiffoscopeCache()),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.get.return_value = mock_response
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
 
-                result = await fetch_diffoscope_report("https://example.com/test.zip")
+            result = await fetch_diffoscope_report("https://example.com/test.zip")
 
-                assert result is not None
-                assert b"common.css" in result.html
-                assert b"color: red" in result.css
-                assert result.icon.startswith(b"\x89PNG")
+            assert result is not None
+            assert b"common.css" in result.html
+            assert b"color: red" in result.css
+            assert result.icon.startswith(b"\x89PNG")
 
     @pytest.mark.asyncio
     async def test_fetch_uses_cache(self):
@@ -106,37 +108,41 @@ class TestFetchDiffoscopeReport:
         mock_response.content = zip_content
         mock_response.raise_for_status = lambda: None
 
-        with patch("app.services.diffoscope._cache", DiffoscopeCache()):
-            with patch("httpx.AsyncClient") as mock_client:
-                mock_instance = AsyncMock()
-                mock_instance.get.return_value = mock_response
-                mock_instance.__aenter__.return_value = mock_instance
-                mock_instance.__aexit__.return_value = None
-                mock_client.return_value = mock_instance
+        with (
+            patch("app.services.diffoscope._cache", DiffoscopeCache()),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.get.return_value = mock_response
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
 
-                url = "https://example.com/test.zip"
-                result1 = await fetch_diffoscope_report(url)
-                result2 = await fetch_diffoscope_report(url)
+            url = "https://example.com/test.zip"
+            result1 = await fetch_diffoscope_report(url)
+            result2 = await fetch_diffoscope_report(url)
 
-                assert mock_instance.get.call_count == 1
-                assert result1 == result2
+            assert mock_instance.get.call_count == 1
+            assert result1 == result2
 
     @pytest.mark.asyncio
     async def test_fetch_http_error(self):
-        with patch("app.services.diffoscope._cache", DiffoscopeCache()):
-            with patch("httpx.AsyncClient") as mock_client:
-                mock_instance = AsyncMock()
-                mock_instance.get.side_effect = httpx.HTTPStatusError(
-                    "Not Found",
-                    request=AsyncMock(),
-                    response=AsyncMock(status_code=404),
-                )
-                mock_instance.__aenter__.return_value = mock_instance
-                mock_instance.__aexit__.return_value = None
-                mock_client.return_value = mock_instance
+        with (
+            patch("app.services.diffoscope._cache", DiffoscopeCache()),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.get.side_effect = httpx.HTTPStatusError(
+                "Not Found",
+                request=AsyncMock(),
+                response=AsyncMock(status_code=404),
+            )
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
 
-                result = await fetch_diffoscope_report("https://example.com/test.zip")
-                assert result is None
+            result = await fetch_diffoscope_report("https://example.com/test.zip")
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_fetch_invalid_zip(self):
@@ -144,16 +150,18 @@ class TestFetchDiffoscopeReport:
         mock_response.content = b"not a zip file"
         mock_response.raise_for_status = lambda: None
 
-        with patch("app.services.diffoscope._cache", DiffoscopeCache()):
-            with patch("httpx.AsyncClient") as mock_client:
-                mock_instance = AsyncMock()
-                mock_instance.get.return_value = mock_response
-                mock_instance.__aenter__.return_value = mock_instance
-                mock_instance.__aexit__.return_value = None
-                mock_client.return_value = mock_instance
+        with (
+            patch("app.services.diffoscope._cache", DiffoscopeCache()),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.get.return_value = mock_response
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
 
-                result = await fetch_diffoscope_report("https://example.com/test.zip")
-                assert result is None
+            result = await fetch_diffoscope_report("https://example.com/test.zip")
+            assert result is None
 
 
 class TestRewriteAssetPaths:

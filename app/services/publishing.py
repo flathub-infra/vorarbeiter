@@ -1,9 +1,8 @@
+from datetime import UTC, datetime
 from typing import Any
 
-import structlog
-from datetime import datetime, timezone
-
 import httpxyz as httpx
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,7 +37,7 @@ class PublishingService:
                 pipeline, repo_state_reason, checks
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Failed to create GitHub issue for validation failure",
                 pipeline_id=str(pipeline.id),
                 build_id=pipeline.build_id,
@@ -49,7 +48,7 @@ class PublishingService:
         logger.info("Starting pipeline publishing process")
 
         result = PublishResult()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
 
         pipelines = await self._get_publishable_pipelines(db)
         pipeline_groups = self._group_pipelines_for_publishing(pipelines)
@@ -109,7 +108,9 @@ class PublishingService:
     ) -> None:
         sorted_pipelines = sorted(
             group,
-            key=lambda p: p.started_at if p.started_at else datetime.min,
+            key=lambda p: (
+                p.started_at if p.started_at else datetime.min.replace(tzinfo=UTC)
+            ),
             reverse=True,
         )
 
@@ -157,7 +158,7 @@ class PublishingService:
                 response_text=e.response.text,
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Unexpected error purging build for superseded pipeline",
                 build_id=build_id,
                 pipeline_id=pipeline_id,
@@ -196,6 +197,11 @@ class PublishingService:
             await self._handle_build_state(pipeline, build_info, result, now)
 
         except Exception as e:
+            logger.exception(
+                "Unexpected error processing candidate pipeline",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
             self._handle_build_error(pipeline, e, result)
 
     async def _get_build_info(self, pipeline: Pipeline) -> dict[str, Any] | None:
@@ -376,7 +382,7 @@ class PublishingService:
                 }
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Unexpected error while publishing build",
                 build_id=pipeline.build_id,
                 pipeline_id=str(pipeline.id),
@@ -385,7 +391,7 @@ class PublishingService:
             result.errors.append(
                 {
                     "pipeline_id": str(pipeline.id),
-                    "error": f"Unexpected error during publish: {str(e)}",
+                    "error": f"Unexpected error during publish: {e!s}",
                 }
             )
 

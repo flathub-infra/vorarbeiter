@@ -1,7 +1,8 @@
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import httpxyz as httpx
 import structlog
@@ -9,17 +10,18 @@ import structlog
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
-from gql import gql, Client
-from gql.transport.requests import RequestsHTTPTransport
+from gql import Client, gql
 from gql.transport.exceptions import (
+    TransportAlreadyConnected,
+    TransportClosed,
+    TransportError,
+    TransportProtocolError,
     TransportQueryError,
     TransportServerError,
-    TransportProtocolError,
-    TransportError,
-    TransportClosed,
-    TransportAlreadyConnected,
 )
+from gql.transport.requests import RequestsHTTPTransport
+
+from app.config import settings
 
 GQL_EXCEPTIONS = (
     TransportQueryError,
@@ -58,7 +60,7 @@ class GitHubAPIClient:
         try:
             body = response.json()
             return "rate limit" in body.get("message", "").lower()
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return False
 
     def _get_rate_limit_wait_time(self, response: httpx.Response) -> float:
@@ -181,7 +183,9 @@ class GitHubAPIClient:
                         error_type="server_error" if should_queue else "client_error",
                     )
                 except Exception as e:
-                    logger.error("Unexpected error", url=url, error=str(e), **context)
+                    logger.exception(
+                        "Unexpected error", url=url, error=str(e), **context
+                    )
                     return GitHubAPIResult(response=None, should_queue=False)
 
         return GitHubAPIResult(
@@ -683,21 +687,19 @@ async def is_issue_edited(git_repo: str, issue_number: int) -> bool | None:
         return False
 
     except GQL_EXCEPTIONS as err:
-        logger.error(
+        logger.exception(
             "GraphQL exception while checking issue edit status",
             git_repo=git_repo,
             issue_number=issue_number,
             error=str(err),
-            exc_info=True,
         )
         return None
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Unexpected error checking issue edit status",
             git_repo=git_repo,
             issue_number=issue_number,
             error=str(e),
-            exc_info=True,
         )
         return None
 

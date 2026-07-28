@@ -1,10 +1,10 @@
 import json
 import zipfile
-import structlog
 from io import BytesIO
 from typing import Any
 
 import httpxyz as httpx
+import structlog
 
 from app.utils.github import get_check_run_annotations, get_github_actions_client
 
@@ -142,7 +142,7 @@ class GitHubActionsService:
 
             return log_content
         except Exception as e:
-            logger.error("Error extracting logs", error=str(e))
+            logger.exception("Error extracting logs", error=str(e))
             return None
 
     async def check_run_was_cancelled(self, provider_data: dict[str, Any]) -> bool:

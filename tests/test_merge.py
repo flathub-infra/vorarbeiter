@@ -1239,9 +1239,11 @@ class TestMergeCallback:
 
         mock_get_db = create_realistic_get_db(db_session_maker)
 
-        with patch("app.services.merge.get_db", side_effect=lambda: mock_get_db()):
-            with pytest.raises(MergeNotFoundError):
-                await service.handle_callback(merge_id, "token", "success")
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda: mock_get_db()),
+            pytest.raises(MergeNotFoundError),
+        ):
+            await service.handle_callback(merge_id, "token", "success")
 
     @pytest.mark.asyncio
     async def test_callback_wrong_state_raises_conflict(self, db_session_maker):
@@ -1268,9 +1270,11 @@ class TestMergeCallback:
 
         mock_get_db = create_realistic_get_db(db_session_maker)
 
-        with patch("app.services.merge.get_db", side_effect=lambda: mock_get_db()):
-            with pytest.raises(MergeCallbackConflictError):
-                await service.handle_callback(merge_id, "correct_token", "success")
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda: mock_get_db()),
+            pytest.raises(MergeCallbackConflictError),
+        ):
+            await service.handle_callback(merge_id, "correct_token", "success")
 
     @pytest.mark.asyncio
     async def test_callback_failure_marks_failed(self, db_session_maker):

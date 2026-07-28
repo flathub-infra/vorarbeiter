@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 
 import structlog
 
@@ -12,7 +13,6 @@ from app.utils.github import (
     get_linter_warning_messages,
     update_commit_status,
 )
-from typing import Any
 
 logger = structlog.get_logger(__name__)
 
@@ -141,7 +141,7 @@ class GitHubNotifier:
                 pipeline_id=str(pipeline.id),
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Error creating 'Started' PR comment",
                 pipeline_id=str(pipeline.id),
                 error=str(e),
@@ -254,7 +254,7 @@ class GitHubNotifier:
                 pipeline_id=str(pipeline.id),
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Error creating final PR comment",
                 pipeline_id=str(pipeline.id),
                 error=str(e),
@@ -311,7 +311,7 @@ class GitHubNotifier:
                     issue_url=issue_url,
                 )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Failed to create GitHub issue for failed stable build",
                 pipeline_id=str(pipeline.id),
                 error=str(e),
@@ -374,7 +374,7 @@ class GitHubNotifier:
                     issue_url=issue_url,
                 )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 failure_log_message,
                 pipeline_id=str(pipeline.id),
                 error=str(e),

@@ -1,4 +1,5 @@
 import base64
+import binascii
 import json
 import os
 from typing import Any
@@ -8,9 +9,9 @@ import structlog
 import yaml
 
 gi.require_version("Json", "1.0")
-from gi.repository import GLib, Json  # noqa: E402  # ty: ignore[unresolved-import]
+from gi.repository import GLib, Json  # ty: ignore[unresolved-import]
 
-from app.utils.github import GitHubAPIClient  # noqa: E402
+from app.utils.github import GitHubAPIClient
 
 logger = structlog.get_logger(__name__)
 
@@ -104,7 +105,7 @@ async def detect_appid_from_github(
         content_b64 = file_data.get("content", "")
         try:
             content = base64.b64decode(content_b64).decode("utf-8")
-        except Exception:
+        except (binascii.Error, UnicodeDecodeError, ValueError):
             logger.error("Failed to decode file content", filename=filename)
             continue
 

@@ -1,7 +1,8 @@
-import pytest
 import zipfile
 from io import BytesIO
 from unittest.mock import patch
+
+import pytest
 
 from app.services.github_actions import GitHubActionsService
 

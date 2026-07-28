@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -16,7 +16,7 @@ def sample_pipeline():
         status=PipelineStatus.RUNNING,
         params={"branch": "main"},
         triggered_by=PipelineTrigger.MANUAL,
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -41,7 +41,7 @@ def test_job_creation_minimal():
 def test_job_creation_with_all_fields():
     job_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
-    now = datetime.now()
+    now = datetime.now(UTC)
 
     job = Job(
         id=job_id,
@@ -135,9 +135,9 @@ def test_job_with_complex_result():
     )
 
     assert job.result == result
-    assert job.result["status"] == "success"  # ty: ignore[not-subscriptable]
-    assert len(job.result["output"]["artifacts"]) == 2  # ty: ignore[not-subscriptable]
-    assert job.result["metrics"]["duration_seconds"] == 300  # ty: ignore[not-subscriptable]
+    assert job.result["status"] == "success"
+    assert len(job.result["output"]["artifacts"]) == 2
+    assert job.result["metrics"]["duration_seconds"] == 300
 
 
 def test_job_status_transitions():
@@ -152,12 +152,12 @@ def test_job_status_transitions():
     assert job.status == JobStatus.PENDING
 
     job.status = JobStatus.RUNNING
-    job.started_at = datetime.now()
+    job.started_at = datetime.now(UTC)
     assert job.status == JobStatus.RUNNING
     assert job.started_at is not None
 
     job.status = JobStatus.COMPLETE
-    job.finished_at = datetime.now()
+    job.finished_at = datetime.now(UTC)
     job.result = {"status": "success"}
     assert job.status == JobStatus.COMPLETE
     assert job.finished_at is not None
@@ -250,7 +250,7 @@ async def test_job_persistence(db_session_maker):
             position=1,
             provider_data={"environment": "production"},
             status=JobStatus.RUNNING,
-            started_at=datetime.now(),
+            started_at=datetime.now(UTC),
             pipeline_id=pipeline.id,
         )
 
@@ -334,8 +334,8 @@ def test_job_with_null_result():
 
 
 def test_job_timestamps():
-    now = datetime.now()
-    later = datetime.now()
+    now = datetime.now(UTC)
+    later = datetime.now(UTC)
 
     job = Job(
         job_type="build",

@@ -1,21 +1,22 @@
-import pytest
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-import pytest_asyncio
 from contextlib import asynccontextmanager, contextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import pytest_asyncio
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # Force SQLite for tests
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 
-from app.main import app
-from app.config import settings
-from app.database import engine as app_engine
-from app.models import Base
-from app.services.job_monitor import JobMonitor
 import app.utils.flat_manager as flat_manager_module
 import app.utils.github as github_module
+from app.config import settings
+from app.database import engine as app_engine
+from app.main import app
+from app.models import Base
+from app.services.job_monitor import JobMonitor
 
 
 @pytest.fixture(scope="session", autouse=True)

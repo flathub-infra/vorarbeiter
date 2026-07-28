@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import structlog
@@ -17,13 +17,13 @@ class GitHubTaskService:
         self, attempt_count: int, retry_after: float | None = None
     ) -> datetime:
         if retry_after and retry_after > 0:
-            return datetime.now(timezone.utc) + timedelta(seconds=retry_after)
+            return datetime.now(UTC) + timedelta(seconds=retry_after)
 
         base_delay = 60
         max_delay = 3600
         delay = min(base_delay * (2**attempt_count), max_delay)
 
-        return datetime.now(timezone.utc) + timedelta(seconds=delay)
+        return datetime.now(UTC) + timedelta(seconds=delay)
 
     async def queue_task(
         self,
@@ -59,7 +59,7 @@ class GitHubTaskService:
         return task
 
     async def process_pending_tasks(self, db: AsyncSession, limit: int = 50) -> int:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         stmt = (
             select(GitHubTask)
@@ -91,7 +91,7 @@ class GitHubTaskService:
 
                 if result.response:
                     task.status = GitHubTaskStatus.COMPLETED
-                    task.completed_at = datetime.now(timezone.utc)
+                    task.completed_at = datetime.now(UTC)
                     logger.info(
                         "GitHub task completed successfully",
                         task_id=str(task.id),
@@ -103,6 +103,11 @@ class GitHubTaskService:
                     )
 
             except Exception as e:
+                logger.exception(
+                    "GitHub task processing failed",
+                    task_id=str(task.id),
+                    error=str(e),
+                )
                 self._handle_task_failure(task, str(e))
 
             processed += 1
@@ -116,7 +121,7 @@ class GitHubTaskService:
 
         if task.attempt_count >= task.max_attempts:
             task.status = GitHubTaskStatus.FAILED
-            task.completed_at = datetime.now(timezone.utc)
+            task.completed_at = datetime.now(UTC)
             logger.error(
                 "GitHub task failed permanently",
                 task_id=str(task.id),
@@ -141,7 +146,7 @@ class GitHubTaskService:
             )
 
     async def cleanup_old_tasks(self, db: AsyncSession, days: int = 7) -> int:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
 
         stmt = delete(GitHubTask).where(
             GitHubTask.status.in_(

@@ -1,9 +1,10 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.config import settings
-from app.database import get_db, writer_engine, reader_engine
+from app.database import get_db, reader_engine, writer_engine
 
 
 @pytest.mark.asyncio
@@ -51,40 +52,34 @@ async def test_get_db_replica_true_with_replica_url():
             mock_writer_engine = AsyncMock(spec=AsyncEngine)
             mock_reader_engine = AsyncMock(spec=AsyncEngine)
 
-            with patch("app.database.writer_engine", mock_writer_engine):
-                with patch("app.database.reader_engine", mock_reader_engine):
-                    with patch(
-                        "app.database.AsyncReaderSessionLocal"
-                    ) as mock_reader_factory:
-                        with patch(
-                            "app.database.AsyncWriterSessionLocal"
-                        ) as mock_writer_factory:
-                            # Setup mock sessions
-                            mock_reader_session = AsyncMock(spec=AsyncSession)
-                            mock_reader_session.bind = mock_reader_engine
-                            mock_reader_factory.return_value.__aenter__.return_value = (
-                                mock_reader_session
-                            )
-                            mock_reader_factory.return_value.__aexit__.return_value = (
-                                None
-                            )
+            with (
+                patch("app.database.writer_engine", mock_writer_engine),
+                patch("app.database.reader_engine", mock_reader_engine),
+                patch("app.database.AsyncReaderSessionLocal") as mock_reader_factory,
+                patch("app.database.AsyncWriterSessionLocal") as mock_writer_factory,
+            ):
+                # Setup mock sessions
+                mock_reader_session = AsyncMock(spec=AsyncSession)
+                mock_reader_session.bind = mock_reader_engine
+                mock_reader_factory.return_value.__aenter__.return_value = (
+                    mock_reader_session
+                )
+                mock_reader_factory.return_value.__aexit__.return_value = None
 
-                            mock_writer_session = AsyncMock(spec=AsyncSession)
-                            mock_writer_session.bind = mock_writer_engine
-                            mock_writer_factory.return_value.__aenter__.return_value = (
-                                mock_writer_session
-                            )
-                            mock_writer_factory.return_value.__aexit__.return_value = (
-                                None
-                            )
+                mock_writer_session = AsyncMock(spec=AsyncSession)
+                mock_writer_session.bind = mock_writer_engine
+                mock_writer_factory.return_value.__aenter__.return_value = (
+                    mock_writer_session
+                )
+                mock_writer_factory.return_value.__aexit__.return_value = None
 
-                            # Test replica usage
-                            async with get_db(use_replica=True):
-                                assert mock_reader_factory.called
+                # Test replica usage
+                async with get_db(use_replica=True):
+                    assert mock_reader_factory.called
 
-                            # Test writer usage
-                            async with get_db(use_replica=False):
-                                assert mock_writer_factory.called
+                # Test writer usage
+                async with get_db(use_replica=False):
+                    assert mock_writer_factory.called
         finally:
             # Restore original engines
             app.database.writer_engine = original_writer

@@ -1,10 +1,12 @@
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+
+from app.models import Pipeline, PipelineStatus
 from app.services.github_notifier import GitHubNotifier
 from app.services.job_monitor import JobMonitor
-from app.models import Pipeline, PipelineStatus
 from app.utils.flat_manager import JobStatus
-import uuid
 
 
 @pytest.fixture
@@ -48,19 +50,21 @@ async def test_job_monitor_commit_job_success(mock_pipeline):
 
     mock_job_response = {"status": JobStatus.ENDED, "kind": 0, "results": ""}
 
-    with patch.object(
-        job_monitor.flat_manager, "get_job", return_value=mock_job_response
-    ):
-        with patch.object(
+    with (
+        patch.object(
+            job_monitor.flat_manager, "get_job", return_value=mock_job_response
+        ),
+        patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
-        ) as mock_notify_completed:
-            result = await job_monitor._process_succeeded_pipeline(mock_pipeline)
+        ) as mock_notify_completed,
+    ):
+        result = await job_monitor._process_succeeded_pipeline(mock_pipeline)
 
-            assert result is True
-            assert mock_pipeline.status == PipelineStatus.COMMITTED
-            mock_notify_completed.assert_called_once_with(
-                mock_pipeline, "commit", 12345, success=True
-            )
+        assert result is True
+        assert mock_pipeline.status == PipelineStatus.COMMITTED
+        mock_notify_completed.assert_called_once_with(
+            mock_pipeline, "commit", 12345, success=True
+        )
 
 
 @pytest.mark.asyncio
@@ -69,19 +73,21 @@ async def test_job_monitor_commit_job_failure(mock_pipeline):
 
     mock_job_response = {"status": JobStatus.BROKEN, "kind": 0, "results": ""}
 
-    with patch.object(
-        job_monitor.flat_manager, "get_job", return_value=mock_job_response
-    ):
-        with patch.object(
+    with (
+        patch.object(
+            job_monitor.flat_manager, "get_job", return_value=mock_job_response
+        ),
+        patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
-        ) as mock_notify_completed:
-            result = await job_monitor._process_succeeded_pipeline(mock_pipeline)
+        ) as mock_notify_completed,
+    ):
+        result = await job_monitor._process_succeeded_pipeline(mock_pipeline)
 
-            assert result is True
-            assert mock_pipeline.status == PipelineStatus.FAILED
-            mock_notify_completed.assert_called_once_with(
-                mock_pipeline, "commit", 12345, success=False
-            )
+        assert result is True
+        assert mock_pipeline.status == PipelineStatus.FAILED
+        mock_notify_completed.assert_called_once_with(
+            mock_pipeline, "commit", 12345, success=False
+        )
 
 
 @pytest.mark.asyncio
@@ -95,26 +101,26 @@ async def test_job_monitor_publish_job_with_update_repo(mock_pipeline):
         "results": '{"update-repo-job": 12347}',
     }
 
-    with patch.object(
-        job_monitor.flat_manager, "get_job", return_value=mock_job_response
-    ):
-        with patch.object(
+    with (
+        patch.object(
+            job_monitor.flat_manager, "get_job", return_value=mock_job_response
+        ),
+        patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
-        ) as mock_notify_completed:
-            with patch.object(
-                job_monitor, "_notify_flat_manager_job_started"
-            ) as mock_notify_started:
-                result = await job_monitor._process_publish_job(mock_pipeline)
+        ) as mock_notify_completed,
+        patch.object(
+            job_monitor, "_notify_flat_manager_job_started"
+        ) as mock_notify_started,
+    ):
+        result = await job_monitor._process_publish_job(mock_pipeline)
 
-                assert result is True
-                assert mock_pipeline.status == PipelineStatus.PUBLISHING
-                assert mock_pipeline.update_repo_job_id == 12347
-                mock_notify_completed.assert_called_once_with(
-                    mock_pipeline, "publish", 12346, success=True
-                )
-                mock_notify_started.assert_called_once_with(
-                    mock_pipeline, "update-repo", 12347
-                )
+        assert result is True
+        assert mock_pipeline.status == PipelineStatus.PUBLISHING
+        assert mock_pipeline.update_repo_job_id == 12347
+        mock_notify_completed.assert_called_once_with(
+            mock_pipeline, "publish", 12346, success=True
+        )
+        mock_notify_started.assert_called_once_with(mock_pipeline, "update-repo", 12347)
 
 
 @pytest.mark.asyncio
@@ -128,20 +134,22 @@ async def test_job_monitor_update_repo_job_success(mock_pipeline):
         "results": "",
     }
 
-    with patch.object(
-        job_monitor.flat_manager, "get_job", return_value=mock_job_response
-    ):
-        with patch.object(
+    with (
+        patch.object(
+            job_monitor.flat_manager, "get_job", return_value=mock_job_response
+        ),
+        patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
-        ) as mock_notify_completed:
-            result = await job_monitor._process_update_repo_job(mock_pipeline)
+        ) as mock_notify_completed,
+    ):
+        result = await job_monitor._process_update_repo_job(mock_pipeline)
 
-            assert result is True
-            assert mock_pipeline.status == PipelineStatus.PUBLISHED
-            assert mock_pipeline.published_at is not None
-            mock_notify_completed.assert_called_once_with(
-                mock_pipeline, "update-repo", 12347, success=True
-            )
+        assert result is True
+        assert mock_pipeline.status == PipelineStatus.PUBLISHED
+        assert mock_pipeline.published_at is not None
+        mock_notify_completed.assert_called_once_with(
+            mock_pipeline, "update-repo", 12347, success=True
+        )
 
 
 @pytest.mark.asyncio
@@ -169,7 +177,7 @@ async def test_build_pipeline_sets_initial_commit_status():
         "app.pipelines.build.get_flat_manager_client", return_value=mock_fm_instance
     ):
         build_pipeline = BuildPipeline()
-        build_pipeline.start_pending_builds = AsyncMock(return_value=[])  # ty: ignore[invalid-assignment]
+        build_pipeline.start_pending_builds = AsyncMock(return_value=[])
 
         with patch("app.pipelines.build.get_db") as mock_get_db:
             mock_db = AsyncMock()

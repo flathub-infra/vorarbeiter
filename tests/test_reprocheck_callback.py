@@ -1,6 +1,6 @@
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
-from datetime import datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,7 @@ def original_pipeline():
         build_id=123,
         update_repo_job_id=456,
         callback_token="original_token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -44,7 +44,7 @@ def reprocheck_pipeline(original_pipeline):
             "build_pipeline_id": str(original_pipeline.id),
         },
         callback_token="reprocheck_token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -187,7 +187,7 @@ async def test_reprocheck_callback_without_build_pipeline_id_skips_update(
         status=PipelineStatus.RUNNING,
         params={"workflow_id": "reprocheck.yml"},
         callback_token="token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -216,7 +216,7 @@ async def test_reprocheck_callback_ignores_non_repro_pipeline(build_pipeline, mo
         status=PipelineStatus.RUNNING,
         params={"workflow_id": "build.yml"},
         callback_token="token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )

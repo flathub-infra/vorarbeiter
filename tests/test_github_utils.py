@@ -10,9 +10,9 @@ from app.utils.github import (
     close_github_issue,
     create_github_issue,
     create_pr_comment,
-    update_commit_status,
     get_linter_warning_messages,
     set_pr_labels,
+    update_commit_status,
 )
 
 
@@ -541,6 +541,7 @@ async def test_rate_limit_wait_time_from_retry_after(mock_settings):
 @pytest.mark.asyncio
 async def test_rate_limit_wait_time_from_reset_header(mock_settings):
     import time
+
     from app.utils.github import GitHubAPIClient
 
     client = GitHubAPIClient("test-token")
@@ -664,6 +665,7 @@ async def test_add_comment_reaction_queues_on_rate_limit(
     mock_settings, mock_httpx, db_session_maker
 ):
     from sqlalchemy import select
+
     from app.models.github_task import GitHubTask
 
     rate_limit_response = mock_httpx.set_response(

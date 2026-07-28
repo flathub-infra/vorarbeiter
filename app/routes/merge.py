@@ -30,7 +30,7 @@ async def merge_callback(merge_id: uuid.UUID, request: Request):
 
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON body",

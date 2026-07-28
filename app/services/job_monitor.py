@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 import structlog
@@ -54,7 +54,7 @@ class JobMonitor:
         self._db_lock = asyncio.Lock()
 
     async def check_all_active_pipelines(self, db: AsyncSession) -> dict[str, int]:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         cutoff_date = now - timedelta(hours=24)
         running_build_cutoff = now - DEFAULT_BUILD_TIMEOUT - BUILD_TIMEOUT_SAFETY_MARGIN
 
@@ -108,7 +108,7 @@ class JobMonitor:
                 try:
                     return await self.check_and_update_pipeline_jobs(pipeline)
                 except Exception as e:
-                    logger.warning(
+                    logger.exception(
                         "Error processing pipeline in check-jobs",
                         pipeline_id=str(pipeline.id),
                         error=str(e),
@@ -140,11 +140,12 @@ class JobMonitor:
         if pipeline.status == PipelineStatus.RUNNING:
             return await self._expire_timed_out_running_build(pipeline)
 
-        if pipeline.build_id and (
-            pipeline.commit_job_id is None or pipeline.publish_job_id is None
+        if (
+            pipeline.build_id
+            and (pipeline.commit_job_id is None or pipeline.publish_job_id is None)
+            and await self._fetch_missing_job_ids(pipeline)
         ):
-            if await self._fetch_missing_job_ids(pipeline):
-                updated = True
+            updated = True
 
         if pipeline.status == PipelineStatus.SUCCEEDED and pipeline.commit_job_id:
             if await self._process_succeeded_pipeline(pipeline):
@@ -171,7 +172,7 @@ class JobMonitor:
             if await self._attempt_update_repo_recovery(pipeline):
                 updated = True
             elif pipeline.created_at and pipeline.created_at < datetime.now(
-                tz=timezone.utc
+                tz=UTC
             ) - timedelta(hours=48):
                 pipeline.status = PipelineStatus.FAILED
                 logger.warning(
@@ -184,15 +185,17 @@ class JobMonitor:
                     github_notifier = GitHubNotifier()
                     await github_notifier.notify_build_status(pipeline, "failure")
                 except Exception as e:
-                    logger.error(
+                    logger.exception(
                         "Failed to send recovery expiry notification",
                         pipeline_id=str(pipeline.id),
                         error=str(e),
                     )
                 updated = True
-        elif pipeline.status == PipelineStatus.PUBLISHED:
-            if await self._check_published_pipeline_jobs(pipeline):
-                updated = True
+        elif (
+            pipeline.status == PipelineStatus.PUBLISHED
+            and await self._check_published_pipeline_jobs(pipeline)
+        ):
+            updated = True
 
         return updated
 
@@ -255,7 +258,7 @@ class JobMonitor:
             return False
 
         started_at = self._as_utc(started_at)
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         if started_at + timeout > now:
             return False
 
@@ -351,8 +354,8 @@ class JobMonitor:
     @staticmethod
     def _as_utc(value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     async def _process_succeeded_pipeline(self, pipeline: Pipeline) -> bool:
         if not pipeline.commit_job_id:
@@ -397,7 +400,7 @@ class JobMonitor:
                             pipeline, "commit_failure"
                         )
                     except Exception as e:
-                        logger.error(
+                        logger.exception(
                             "Failed to send commit failure notification",
                             pipeline_id=str(pipeline.id),
                             error=str(e),
@@ -413,7 +416,7 @@ class JobMonitor:
                 return False
 
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 "Failed to check commit job status",
                 pipeline_id=str(pipeline.id),
                 commit_job_id=pipeline.commit_job_id,
@@ -426,7 +429,7 @@ class JobMonitor:
             job_response = await self.flat_manager.get_job(job_id)
             return JobStatus(job_response["status"])
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 "Failed to check job status",
                 job_id=job_id,
                 error=str(e),
@@ -457,7 +460,7 @@ class JobMonitor:
 
             return (job_status, job_response)
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 f"Failed to check {job_type} job status",
                 pipeline_id=str(pipeline.id),
                 **{job_id_field_name: job_id},
@@ -569,11 +572,11 @@ class JobMonitor:
         if result is None:
             return False
 
-        job_status, job_response = result
+        job_status, _job_response = result
 
         if job_status == JobStatus.ENDED:
             pipeline.status = PipelineStatus.PUBLISHED
-            pipeline.published_at = datetime.now(tz=timezone.utc)
+            pipeline.published_at = datetime.now(tz=UTC)
             logger.info(
                 "Update-repo job completed, pipeline published",
                 pipeline_id=str(pipeline.id),
@@ -589,7 +592,7 @@ class JobMonitor:
             try:
                 await build_pipeline.handle_publication(pipeline)
             except Exception as e:
-                logger.error(
+                logger.exception(
                     "Error in post-publication handling",
                     pipeline_id=str(pipeline.id),
                     error=str(e),
@@ -617,7 +620,7 @@ class JobMonitor:
         if not self.db:
             return False
 
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=48)
+        cutoff = datetime.now(tz=UTC) - timedelta(hours=48)
         query = (
             select(Pipeline)
             .where(
@@ -639,7 +642,7 @@ class JobMonitor:
 
         pipeline.update_repo_job_id = peer.update_repo_job_id
         pipeline.status = PipelineStatus.PUBLISHED
-        pipeline.published_at = datetime.now(tz=timezone.utc)
+        pipeline.published_at = datetime.now(tz=UTC)
         logger.info(
             "Recovered pipeline via peer update-repo success",
             pipeline_id=str(pipeline.id),
@@ -657,7 +660,7 @@ class JobMonitor:
         try:
             await build_pipeline.handle_publication(pipeline)
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Error in post-publication handling during recovery",
                 pipeline_id=str(pipeline.id),
                 error=str(e),
@@ -705,7 +708,7 @@ class JobMonitor:
 
             return updated
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 "Failed to fetch job IDs from flat-manager",
                 pipeline_id=str(pipeline.id),
                 build_id=pipeline.build_id,
@@ -726,7 +729,7 @@ class JobMonitor:
                 pipeline, flat_manager_client=flat_manager
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Failed to send committed notification",
                 pipeline_id=str(pipeline.id),
                 error=str(e),
@@ -757,7 +760,7 @@ class JobMonitor:
                 pipeline, job_type, job_id, state, description
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 f"Failed to notify {job_type} job {error_action}",
                 pipeline_id=str(pipeline.id),
                 job_id=job_id,
@@ -790,7 +793,7 @@ class JobMonitor:
             if job_status == JobStatus.NEW:
                 await self._notify_flat_manager_job_new(pipeline, job_type, job_id)
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 f"Failed to check {job_type} job status for NEW notification",
                 pipeline_id=str(pipeline.id),
                 job_id=job_id,
@@ -843,7 +846,7 @@ class JobMonitor:
                 )
                 return True
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 f"Failed to check {job_type} job status for published pipeline",
                 pipeline_id=str(pipeline.id),
                 job_id=job_id,
@@ -855,20 +858,27 @@ class JobMonitor:
         """Check and report any unreported job statuses for PUBLISHED pipelines."""
         updated = False
 
-        if pipeline.publish_job_id and pipeline.flat_manager_repo in ["beta", "stable"]:
-            if await self._report_published_job_status(
+        if (
+            pipeline.publish_job_id
+            and pipeline.flat_manager_repo in ["beta", "stable"]
+            and await self._report_published_job_status(
                 pipeline, pipeline.publish_job_id, "publish"
-            ):
-                updated = True
+            )
+        ):
+            updated = True
 
-        if pipeline.update_repo_job_id and pipeline.flat_manager_repo in [
-            "beta",
-            "stable",
-        ]:
-            if await self._report_published_job_status(
+        if (
+            pipeline.update_repo_job_id
+            and pipeline.flat_manager_repo
+            in [
+                "beta",
+                "stable",
+            ]
+            and await self._report_published_job_status(
                 pipeline, pipeline.update_repo_job_id, "update-repo"
-            ):
-                updated = True
+            )
+        ):
+            updated = True
 
         return updated
 
@@ -905,7 +915,7 @@ class JobMonitor:
                 pipeline, job_type, job_id, dict(job_response)
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 f"Failed to create GitHub issue for {job_type} job failure",
                 pipeline_id=str(pipeline.id),
                 job_id=job_id,

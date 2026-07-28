@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -138,7 +138,7 @@ async def test_check_and_update_pipeline_jobs_wrong_status(job_monitor, mock_pip
 async def test_check_and_update_pipeline_jobs_cancels_timed_out_default_build(
     job_monitor,
 ):
-    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=16)
+    started_at = datetime.now(tz=UTC) - timedelta(hours=6, minutes=16)
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -165,7 +165,7 @@ async def test_check_and_update_pipeline_jobs_cancels_timed_out_default_build(
 async def test_check_and_update_pipeline_jobs_keeps_default_build_inside_margin(
     job_monitor,
 ):
-    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=14)
+    started_at = datetime.now(tz=UTC) - timedelta(hours=6, minutes=14)
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -192,7 +192,7 @@ async def test_check_and_update_pipeline_jobs_keeps_default_build_inside_margin(
 async def test_check_and_update_pipeline_jobs_cancels_timed_out_extended_build(
     job_monitor,
 ):
-    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=9, minutes=16)
+    started_at = datetime.now(tz=UTC) - timedelta(hours=9, minutes=16)
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -219,7 +219,7 @@ async def test_check_and_update_pipeline_jobs_cancels_timed_out_extended_build(
 async def test_check_and_update_pipeline_jobs_keeps_extended_build_inside_timeout(
     job_monitor,
 ):
-    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=9, minutes=14)
+    started_at = datetime.now(tz=UTC) - timedelta(hours=9, minutes=14)
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -246,8 +246,8 @@ async def test_check_and_update_pipeline_jobs_keeps_extended_build_inside_timeou
 async def test_check_and_update_pipeline_jobs_uses_github_job_start_time(
     job_monitor,
 ):
-    pipeline_started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=16)
-    job_started_at = datetime.now(tz=timezone.utc) - timedelta(minutes=10)
+    pipeline_started_at = datetime.now(tz=UTC) - timedelta(hours=6, minutes=16)
+    job_started_at = datetime.now(tz=UTC) - timedelta(minutes=10)
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -274,7 +274,7 @@ async def test_check_and_update_pipeline_jobs_uses_github_job_start_time(
 async def test_check_and_update_pipeline_jobs_cancels_timed_out_build_without_run_id(
     job_monitor,
 ):
-    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=16)
+    started_at = datetime.now(tz=UTC) - timedelta(hours=6, minutes=16)
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -299,7 +299,7 @@ async def test_check_and_update_pipeline_jobs_cancels_timed_out_build_without_ru
 async def test_check_and_update_pipeline_jobs_keeps_build_without_run_id_inside_timeout(
     job_monitor,
 ):
-    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=14)
+    started_at = datetime.now(tz=UTC) - timedelta(hours=6, minutes=14)
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -324,7 +324,7 @@ async def test_check_and_update_pipeline_jobs_keeps_build_without_run_id_inside_
 async def test_check_and_update_pipeline_jobs_cancels_without_active_github_job(
     job_monitor,
 ):
-    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=16)
+    started_at = datetime.now(tz=UTC) - timedelta(hours=6, minutes=16)
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -351,7 +351,7 @@ async def test_check_and_update_pipeline_jobs_cancels_without_active_github_job(
 async def test_check_and_update_pipeline_jobs_keeps_running_when_github_jobs_unavailable(
     job_monitor,
 ):
-    started_at = datetime.now(tz=timezone.utc) - timedelta(hours=6, minutes=16)
+    started_at = datetime.now(tz=UTC) - timedelta(hours=6, minutes=16)
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
@@ -377,7 +377,7 @@ async def test_check_jobs_cancels_timed_out_running_builds(
     db_session_maker, run_check_all_active_pipelines
 ):
     session_maker = db_session_maker
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
 
     default_expired = Pipeline(
         id=uuid.uuid4(),
@@ -981,7 +981,7 @@ async def test_create_job_failure_issue_exception(job_monitor, mock_pipeline):
 @pytest.mark.asyncio
 async def test_update_repo_recovery_succeeds_with_peer(db_session_maker):
     async with db_session_maker() as db:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         peer = Pipeline(
             id=uuid.uuid4(),
             app_id="org.other.App",
@@ -1030,7 +1030,7 @@ async def test_update_repo_recovery_succeeds_with_peer(db_session_maker):
 @pytest.mark.asyncio
 async def test_update_repo_recovery_prefers_most_recent_peer(db_session_maker):
     async with db_session_maker() as db:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         older_peer = Pipeline(
             id=uuid.uuid4(),
             app_id="org.older.App",
@@ -1097,7 +1097,7 @@ async def test_update_repo_recovery_skipped_no_peer(db_session_maker):
             flat_manager_repo="stable",
             update_repo_job_id=None,
             build_id=123,
-            created_at=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
             params={},
         )
         db.add(pipeline)
@@ -1113,7 +1113,7 @@ async def test_update_repo_recovery_skipped_no_peer(db_session_maker):
 @pytest.mark.asyncio
 async def test_update_repo_recovery_skipped_stale_peer(db_session_maker):
     async with db_session_maker() as db:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         peer = Pipeline(
             id=uuid.uuid4(),
             app_id="org.other.App",
@@ -1153,7 +1153,7 @@ async def test_update_repo_recovery_skipped_different_repo(db_session_maker):
             status=PipelineStatus.PUBLISHED,
             flat_manager_repo="beta",
             update_repo_job_id=88888,
-            published_at=datetime.now(tz=timezone.utc) - timedelta(hours=1),
+            published_at=datetime.now(tz=UTC) - timedelta(hours=1),
             params={},
         )
         pipeline = Pipeline(
@@ -1163,7 +1163,7 @@ async def test_update_repo_recovery_skipped_different_repo(db_session_maker):
             flat_manager_repo="stable",
             update_repo_job_id=None,
             build_id=123,
-            created_at=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
             params={},
         )
         db.add_all([peer, pipeline])
@@ -1186,7 +1186,7 @@ async def test_update_repo_recovery_expiry(db_session_maker):
             flat_manager_repo="stable",
             update_repo_job_id=None,
             build_id=123,
-            created_at=datetime.now(tz=timezone.utc) - timedelta(hours=49),
+            created_at=datetime.now(tz=UTC) - timedelta(hours=49),
             params={},
         )
         db.add(pipeline)

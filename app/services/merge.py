@@ -3,7 +3,7 @@ import json
 import secrets
 import uuid
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import structlog
@@ -359,7 +359,7 @@ class MergeService:
             update_values: dict[str, Any] = {"status": target_status}
             if target_status == MergeStatus.FAILED:
                 update_values["error"] = MERGE_ERROR_GIT_PUSH_FAILED
-                update_values["completed_at"] = datetime.now(timezone.utc)
+                update_values["completed_at"] = datetime.now(UTC)
 
             result = cast(
                 CursorResult[Any],
@@ -490,7 +490,7 @@ class MergeService:
             if mr:
                 mr.status = MergeStatus.FAILED if error_msg else MergeStatus.COMPLETED
                 mr.error = error_msg
-                mr.completed_at = datetime.now(timezone.utc)
+                mr.completed_at = datetime.now(UTC)
                 await db.commit()
 
     async def _is_authorized(self, username: str) -> bool:
@@ -892,5 +892,5 @@ class MergeService:
                 mr.error = error
                 if repo_html_url and not mr.repo_html_url:
                     mr.repo_html_url = repo_html_url
-                mr.completed_at = datetime.now(timezone.utc)
+                mr.completed_at = datetime.now(UTC)
                 await db.commit()

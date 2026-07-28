@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,7 +25,7 @@ def mock_pipeline():
         triggered_by=PipelineTrigger.MANUAL,
         build_id=123,
         flat_manager_repo="stable",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         repro_pipeline_id=uuid.uuid4(),
     )
 
@@ -269,7 +269,7 @@ def test_pipeline_to_summary_reprocheck_type(pipeline_service):
         params={"workflow_id": "reprocheck.yml"},
         triggered_by=PipelineTrigger.MANUAL,
         flat_manager_repo=None,
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
     summary = pipeline_service.pipeline_to_summary(pipeline)
@@ -286,7 +286,7 @@ def test_pipeline_to_summary_build_type_explicit(pipeline_service):
         params={"workflow_id": "build.yml"},
         triggered_by=PipelineTrigger.MANUAL,
         flat_manager_repo="stable",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
     summary = pipeline_service.pipeline_to_summary(pipeline)
@@ -303,7 +303,7 @@ def test_pipeline_to_summary_build_type_no_workflow_id(pipeline_service):
         params={"branch": "main"},
         triggered_by=PipelineTrigger.MANUAL,
         flat_manager_repo="stable",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
     summary = pipeline_service.pipeline_to_summary(pipeline)

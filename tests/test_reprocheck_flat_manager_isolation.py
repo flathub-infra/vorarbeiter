@@ -1,6 +1,6 @@
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
-from datetime import datetime
 
 import pytest
 
@@ -24,7 +24,7 @@ def stable_pipeline():
         build_id=123,
         update_repo_job_id=456,
         callback_token="test_token",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -53,7 +53,7 @@ async def test_reprocheck_pipeline_skips_flat_manager_build_creation(
                 "build_pipeline_id": str(stable_pipeline.id),
             },
             flat_manager_repo="test",  # Will be set based on ref, but won't be used
-            created_at=datetime.now(),
+            created_at=datetime.now(UTC),
             triggered_by=PipelineTrigger.MANUAL,
             provider_data={},
         )
@@ -95,7 +95,7 @@ async def test_reprocheck_pipeline_excluded_from_flat_manager_operations():
         commit_job_id=123,
         publish_job_id=456,
         update_repo_job_id=789,
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )
@@ -137,7 +137,7 @@ async def test_publishing_service_excludes_reprocheck_pipelines():
         status=PipelineStatus.COMMITTED,  # Even if somehow committed
         params={"workflow_id": "reprocheck.yml"},
         flat_manager_repo=None,  # Should exclude it from publishing
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
     )

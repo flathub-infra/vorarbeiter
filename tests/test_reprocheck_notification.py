@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -25,7 +25,7 @@ def mock_build_pipeline():
         },
         triggered_by=PipelineTrigger.WEBHOOK,
         flat_manager_repo="stable",
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -43,7 +43,7 @@ def mock_reprocheck_pipeline(mock_build_pipeline):
             },
         },
         triggered_by=PipelineTrigger.WEBHOOK,
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -228,7 +228,7 @@ async def test_handle_success_closes_existing_issue(
             },
         },
         triggered_by=PipelineTrigger.WEBHOOK,
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
     async with db_session_maker() as db:
@@ -281,7 +281,7 @@ async def test_handle_success_no_existing_issue(
             },
         },
         triggered_by=PipelineTrigger.WEBHOOK,
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
     async with db_session_maker() as db:
@@ -319,7 +319,7 @@ async def test_handle_failure_missing_build_pipeline(
             },
         },
         triggered_by=PipelineTrigger.WEBHOOK,
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
     async with db_session_maker() as db:
@@ -347,7 +347,7 @@ async def test_handle_failure_missing_status_code(
             "reprocheck_result": {},
         },
         triggered_by=PipelineTrigger.WEBHOOK,
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
     async with db_session_maker() as db:

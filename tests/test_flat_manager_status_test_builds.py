@@ -1,9 +1,11 @@
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from app.services.job_monitor import JobMonitor
-from app.models import Pipeline, PipelineStatus
-from app.utils.flat_manager import JobStatus
 import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.models import Pipeline, PipelineStatus
+from app.services.job_monitor import JobMonitor
+from app.utils.flat_manager import JobStatus
 
 
 @pytest.fixture
@@ -28,19 +30,21 @@ async def test_job_monitor_skips_notifications_for_test_builds(mock_test_pipelin
     # Test commit job success for test build
     mock_job_response = {"status": JobStatus.ENDED, "kind": 0, "results": ""}
 
-    with patch.object(
-        job_monitor.flat_manager, "get_job", return_value=mock_job_response
-    ):
-        with patch.object(
+    with (
+        patch.object(
+            job_monitor.flat_manager, "get_job", return_value=mock_job_response
+        ),
+        patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
-        ) as mock_notify_completed:
-            result = await job_monitor._process_succeeded_pipeline(mock_test_pipeline)
+        ) as mock_notify_completed,
+    ):
+        result = await job_monitor._process_succeeded_pipeline(mock_test_pipeline)
 
-            assert result is True
-            assert mock_test_pipeline.status == PipelineStatus.COMMITTED
-            mock_notify_completed.assert_called_once_with(
-                mock_test_pipeline, "commit", 12345, success=True
-            )
+        assert result is True
+        assert mock_test_pipeline.status == PipelineStatus.COMMITTED
+        mock_notify_completed.assert_called_once_with(
+            mock_test_pipeline, "commit", 12345, success=True
+        )
 
 
 @pytest.mark.asyncio
@@ -82,7 +86,7 @@ async def test_build_pipeline_skips_notification_for_test_builds():
     mock_pipeline.flat_manager_repo = "test"  # Test repo
 
     build_pipeline = BuildPipeline()
-    build_pipeline.start_pending_builds = AsyncMock(return_value=[])  # ty: ignore[invalid-assignment]
+    build_pipeline.start_pending_builds = AsyncMock(return_value=[])
 
     with patch("app.pipelines.build.get_db") as mock_get_db:
         mock_db = AsyncMock()
@@ -126,33 +130,35 @@ async def test_publishing_service_skips_notification_for_non_stable_beta():
 
     publishing_service = PublishingService()
 
-    with patch.object(
-        publishing_service.flat_manager, "publish", new_callable=AsyncMock
-    ):
-        with patch.object(
+    with (
+        patch.object(
+            publishing_service.flat_manager, "publish", new_callable=AsyncMock
+        ),
+        patch.object(
             publishing_service.flat_manager, "get_build_info", new_callable=AsyncMock
-        ) as mock_get_info:
-            mock_get_info.return_value = {"build": {"publish_job_id": 12346}}
+        ) as mock_get_info,
+    ):
+        mock_get_info.return_value = {"build": {"publish_job_id": 12346}}
 
-            with patch(
-                "app.services.github_notifier.GitHubNotifier"
-            ) as mock_notifier_class:
-                mock_notifier = AsyncMock()
-                mock_notifier_class.return_value = mock_notifier
+        with patch(
+            "app.services.github_notifier.GitHubNotifier"
+        ) as mock_notifier_class:
+            mock_notifier = AsyncMock()
+            mock_notifier_class.return_value = mock_notifier
 
-                from app.services.publishing import PublishResult
+            from app.services.publishing import PublishResult
 
-                PublishResult()
+            PublishResult()
 
-                # Since test repos are filtered out in _get_publishable_pipelines,
-                # we'll just verify the notification logic would skip
-                if mock_pipeline.flat_manager_repo in ["stable", "beta"]:
-                    await mock_notifier.notify_flat_manager_job_status(
-                        mock_pipeline,
-                        "publish",
-                        12346,
-                        "pending",
-                        "Publishing build...",
-                    )
+            # Since test repos are filtered out in _get_publishable_pipelines,
+            # we'll just verify the notification logic would skip
+            if mock_pipeline.flat_manager_repo in ["stable", "beta"]:
+                await mock_notifier.notify_flat_manager_job_status(
+                    mock_pipeline,
+                    "publish",
+                    12346,
+                    "pending",
+                    "Publishing build...",
+                )
 
-                mock_notifier.notify_flat_manager_job_status.assert_not_called()
+            mock_notifier.notify_flat_manager_job_status.assert_not_called()

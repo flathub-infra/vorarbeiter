@@ -78,7 +78,9 @@ async def fetch_diffoscope_report(result_url: str) -> DiffoscopeReport | None:
         logger.error("Invalid zip file for diffoscope report", url=result_url)
         return None
     except Exception as e:
-        logger.error("Failed to fetch diffoscope report", url=result_url, error=str(e))
+        logger.exception(
+            "Failed to fetch diffoscope report", url=result_url, error=str(e)
+        )
         return None
 
 

@@ -1,16 +1,17 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import re
 import uuid
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 import httpxyz as httpx
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from sqlalchemy import select, text
-from typing import Any
+
 from app.config import settings
 from app.database import get_db
 from app.models.pipeline import Pipeline, PipelineStatus
@@ -27,8 +28,8 @@ from app.utils.github import (
     get_github_client,
     get_workflow_run_title,
     is_issue_edited,
-    update_commit_status,
     set_pr_labels,
+    update_commit_status,
 )
 
 logger = structlog.get_logger(__name__)
@@ -272,7 +273,7 @@ async def handle_issue_retry(
         return pipeline.id
 
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Failed to trigger retry build",
             error=str(e),
             repo=git_repo,
@@ -281,7 +282,7 @@ async def handle_issue_retry(
         await add_issue_comment(
             git_repo=git_repo,
             issue_number=issue_number,
-            comment=f"❌ Failed to trigger retry build: {str(e)}",
+            comment=f"❌ Failed to trigger retry build: {e!s}",
         )
         return None
 
@@ -314,12 +315,19 @@ def should_store_event(payload: dict) -> bool:
                 or target_ref.startswith("branch/")
             )
 
-    if "commits" in payload and ref:
-        if ref in (
-            "refs/heads/master",
-            "refs/heads/beta",
-        ) or ref.startswith("refs/heads/branch/"):
-            return True
+    if (
+        "commits" in payload
+        and ref
+        and (
+            ref
+            in (
+                "refs/heads/master",
+                "refs/heads/beta",
+            )
+            or ref.startswith("refs/heads/branch/")
+        )
+    ):
+        return True
 
     if "comment" in payload:
         repo_full_name = payload.get("repository", {}).get("full_name")
@@ -629,7 +637,7 @@ async def handle_eol_only_push(
             description="EOL-only change - republish queued",
         )
     except Exception as err:
-        logger.warning(
+        logger.exception(
             "Failed to set pending commit status",
             repo=event.repository,
             sha=sha,
@@ -649,7 +657,7 @@ async def handle_eol_only_push(
             end_of_life_rebase=end_of_life_rebase,
         )
     except Exception as err:
-        logger.error(
+        logger.exception(
             "Failed to republish EOL-only change",
             repo=event.repository,
             ref=ref,
@@ -798,7 +806,7 @@ async def receive_github_webhook(
 
     try:
         payload = await request.json()
-    except Exception:
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload."
         )
@@ -910,7 +918,7 @@ async def receive_github_webhook(
             pipeline_id = await create_pipeline(event)
 
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Database error",
                 error=str(e),
                 event_id=str(event.id) if event else None,
@@ -988,7 +996,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                         labels=["runtime"],
                     )
             except Exception as err:
-                logger.warning(
+                logger.exception(
                     "Failed to check or apply runtime update label",
                     pr_number=pr_number,
                     repo=event.repository,
@@ -1080,7 +1088,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
                 for pipeline in active_pipelines:
                     pipeline.status = PipelineStatus.CANCELLED
-                    pipeline.finished_at = datetime.now(timezone.utc)
+                    pipeline.finished_at = datetime.now(UTC)
 
                 pipelines_to_cancel = [
                     (
@@ -1266,7 +1274,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 target_url=target_url,
             )
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 "Error setting initial commit status",
                 pipeline_id=str(pipeline.id),
                 git_repo=git_repo,
@@ -1303,7 +1311,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 pipeline_id=str(pipeline.id),
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Error creating initial PR comment",
                 pipeline_id=str(pipeline.id),
                 error=str(e),

@@ -1,7 +1,7 @@
 import io
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -31,7 +31,7 @@ def reprocheck_pipeline_with_result():
                 "result_url": "https://s3.example.com/diffoscope/result.zip",
             },
         },
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
         callback_token="test_token",
@@ -45,7 +45,7 @@ def reprocheck_pipeline_without_result():
         app_id="org.test.App",
         status=PipelineStatus.SUCCEEDED,
         params={"workflow_id": "reprocheck.yml"},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
         provider_data={},
         callback_token="test_token",
@@ -73,14 +73,14 @@ class TestViewDiffoscope:
             icon=b"\x89PNG",
         )
 
-        with patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)):
-            with patch(
+        with (
+            patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)),
+            patch(
                 "app.routes.diffoscope.fetch_diffoscope_report",
                 return_value=report,
-            ):
-                response = client.get(
-                    f"/diffoscope/{reprocheck_pipeline_with_result.id}"
-                )
+            ),
+        ):
+            response = client.get(f"/diffoscope/{reprocheck_pipeline_with_result.id}")
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/html; charset=utf-8"
@@ -114,14 +114,14 @@ class TestViewDiffoscope:
     ):
         mock_db.get.return_value = reprocheck_pipeline_with_result
 
-        with patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)):
-            with patch(
+        with (
+            patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)),
+            patch(
                 "app.routes.diffoscope.fetch_diffoscope_report",
                 return_value=None,
-            ):
-                response = client.get(
-                    f"/diffoscope/{reprocheck_pipeline_with_result.id}"
-                )
+            ),
+        ):
+            response = client.get(f"/diffoscope/{reprocheck_pipeline_with_result.id}")
 
         assert response.status_code == 502
         assert "Failed to fetch" in response.json()["detail"]
@@ -137,14 +137,16 @@ class TestDiffoscopeCss:
             icon=b"",
         )
 
-        with patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)):
-            with patch(
+        with (
+            patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)),
+            patch(
                 "app.routes.diffoscope.fetch_diffoscope_report",
                 return_value=report,
-            ):
-                response = client.get(
-                    f"/diffoscope/{reprocheck_pipeline_with_result.id}/common.css"
-                )
+            ),
+        ):
+            response = client.get(
+                f"/diffoscope/{reprocheck_pipeline_with_result.id}/common.css"
+            )
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/css; charset=utf-8"
@@ -157,14 +159,16 @@ class TestDiffoscopeCss:
 
         report = DiffoscopeReport(html=b"<html></html>", css=b"", icon=b"")
 
-        with patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)):
-            with patch(
+        with (
+            patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)),
+            patch(
                 "app.routes.diffoscope.fetch_diffoscope_report",
                 return_value=report,
-            ):
-                response = client.get(
-                    f"/diffoscope/{reprocheck_pipeline_with_result.id}/common.css"
-                )
+            ),
+        ):
+            response = client.get(
+                f"/diffoscope/{reprocheck_pipeline_with_result.id}/common.css"
+            )
 
         assert response.status_code == 404
 
@@ -179,14 +183,16 @@ class TestDiffoscopeIcon:
             icon=b"\x89PNG\r\n\x1a\n",
         )
 
-        with patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)):
-            with patch(
+        with (
+            patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)),
+            patch(
                 "app.routes.diffoscope.fetch_diffoscope_report",
                 return_value=report,
-            ):
-                response = client.get(
-                    f"/diffoscope/{reprocheck_pipeline_with_result.id}/icon.png"
-                )
+            ),
+        ):
+            response = client.get(
+                f"/diffoscope/{reprocheck_pipeline_with_result.id}/icon.png"
+            )
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
@@ -199,13 +205,15 @@ class TestDiffoscopeIcon:
 
         report = DiffoscopeReport(html=b"<html></html>", css=b"", icon=b"")
 
-        with patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)):
-            with patch(
+        with (
+            patch("app.routes.diffoscope.get_db", create_mock_get_db(mock_db)),
+            patch(
                 "app.routes.diffoscope.fetch_diffoscope_report",
                 return_value=report,
-            ):
-                response = client.get(
-                    f"/diffoscope/{reprocheck_pipeline_with_result.id}/icon.png"
-                )
+            ),
+        ):
+            response = client.get(
+                f"/diffoscope/{reprocheck_pipeline_with_result.id}/icon.png"
+            )
 
         assert response.status_code == 404
