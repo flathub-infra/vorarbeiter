@@ -431,13 +431,14 @@ def test_receive_github_webhook_dispatches_submission_checker_for_new_pr(
         )
 
     assert response.status_code == 202
-    assert response.json()["message"] == "Triggered submission checker on new submission open."
+    assert (
+        response.json()["message"]
+        == "Triggered submission checker on new submission open."
+    )
     mock_client.request.assert_awaited_once_with(
         "post",
         "https://api.github.com/repos/flathub/flathub/actions/workflows/pr-check.yml/dispatches",
-        content=json.dumps(
-            {"ref": "master", "inputs": {"pr_number": "42"}}
-        ),
+        content=json.dumps({"ref": "master", "inputs": {"pr_number": "42"}}),
         context={"git_repo": "flathub/flathub", "pr_number": 42},
     )
 
