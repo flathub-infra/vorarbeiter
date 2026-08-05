@@ -21,6 +21,7 @@ from app.utils.flat_manager import (
     get_flat_manager_client,
     get_flat_manager_repo,
 )
+from app.utils.github import validate_pipeline_commit_params
 
 logger = structlog.get_logger(__name__)
 
@@ -246,10 +247,11 @@ class BuildPipeline:
         params: dict[str, Any],
         webhook_event_id: uuid.UUID | None = None,
     ) -> Pipeline:
+        validated_params = validate_pipeline_commit_params(params)
         async with get_db() as db:
             pipeline = Pipeline(
                 app_id=app_id,
-                params=params,
+                params=validated_params,
                 webhook_event_id=webhook_event_id,
                 provider_data={},
             )

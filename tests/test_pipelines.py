@@ -78,7 +78,12 @@ async def test_start_pipeline(build_pipeline, mock_db):
     mock_pipeline.status = PipelineStatus.PENDING
     mock_pipeline.app_id = "org.flathub.Test"
     mock_pipeline.flat_manager_repo = None
-    mock_pipeline.params = {"repo": "test", "branch": "main"}
+    mock_pipeline.params = {
+        "repo": "test",
+        "branch": "main",
+        "sha": "a" * 40,
+        "base_sha": "b" * 40,
+    }
 
     async def mock_get(model_class, model_id):
         if model_class is Pipeline and model_id == pipeline_id:
@@ -114,6 +119,7 @@ async def test_start_pipeline(build_pipeline, mock_db):
     dispatch_call_args = build_pipeline.provider.dispatch.call_args[0]
     job_data = dispatch_call_args[2]
     assert job_data["params"]["inputs"]["flat_manager_token"] == "test-token"
+    assert "base_sha" not in job_data["params"]["inputs"]
 
 
 @pytest.mark.asyncio
@@ -205,6 +211,7 @@ async def test_start_pipeline_branch_mapping(
         == expected_flat_manager_repo
     )
     assert mock_pipeline.provider_data == {"dispatch_result": "ok"}
+    assert "base_sha" not in dispatched_job_data["params"]["inputs"]
 
     mock_db_session.commit.assert_called_once()
 
@@ -801,7 +808,14 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
 ):
     """Test that a cancelled stable build is automatically retried once."""
     sample_pipeline.flat_manager_repo = "stable"
-    sample_pipeline.params = {"branch": "main"}
+    sample_pipeline.params = {
+        "repo": "flathub/test-app",
+        "ref": "refs/heads/master",
+        "sha": "a" * 40,
+        "base_sha": "b" * 40,
+        "metadata": "preserve",
+    }
+    original_params = sample_pipeline.params.copy()
     mock_db.get.return_value = sample_pipeline
     mock_db.flush = AsyncMock()
 
@@ -843,7 +857,13 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
     mock_create.assert_called_once()
     mock_start.assert_called_once()
     call_args = mock_create.call_args
-    assert call_args.kwargs["params"]["auto_retried"] is True
+    assert call_args.kwargs["params"] == {
+        **original_params,
+        "auto_retried": True,
+        "use_spot": False,
+    }
+    assert call_args.kwargs["webhook_event_id"] == sample_pipeline.webhook_event_id
+    assert sample_pipeline.params == original_params
 
 
 @pytest.mark.asyncio
@@ -852,7 +872,14 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
 ):
     """Test that a cancelled beta build is automatically retried once."""
     sample_pipeline.flat_manager_repo = "beta"
-    sample_pipeline.params = {"branch": "main"}
+    sample_pipeline.params = {
+        "repo": "flathub/test-app",
+        "ref": "refs/heads/beta",
+        "sha": "c" * 40,
+        "base_sha": "d" * 40,
+        "metadata": "preserve",
+    }
+    original_params = sample_pipeline.params.copy()
     mock_db.get.return_value = sample_pipeline
     mock_db.flush = AsyncMock()
 
@@ -893,6 +920,14 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_called_once()
     mock_start.assert_called_once()
+    call_args = mock_create.call_args
+    assert call_args.kwargs["params"] == {
+        **original_params,
+        "auto_retried": True,
+        "use_spot": False,
+    }
+    assert call_args.kwargs["webhook_event_id"] == sample_pipeline.webhook_event_id
+    assert sample_pipeline.params == original_params
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,7 @@ from app.utils.github import (
     get_github_client,
     get_workflow_run_title,
     is_issue_edited,
+    normalize_git_oid,
     set_pr_labels,
     update_commit_status,
 )
@@ -81,6 +82,9 @@ async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
     stable_match = STABLE_BUILD_FAILURE_PATTERN.search(issue_body)
     if stable_match:
         sha, build_url = stable_match.groups()
+        sha = normalize_git_oid(sha)
+        if sha is None:
+            return None
         ref = await parse_build_ref_from_log(build_url, "refs/heads/master")
 
         return {
@@ -94,6 +98,9 @@ async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
     validation_match = VALIDATION_FAILURE_PATTERN.search(issue_body)
     if validation_match:
         repo_type, sha, build_url = validation_match.groups()
+        sha = normalize_git_oid(sha)
+        if sha is None:
+            return None
         default_ref = (
             "refs/heads/beta" if repo_type.lower() == "beta" else "refs/heads/master"
         )
@@ -109,6 +116,9 @@ async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
     job_match = JOB_FAILURE_PATTERN.search(issue_body)
     if job_match:
         job_type, repo_type, sha = job_match.groups()
+        sha = normalize_git_oid(sha)
+        if sha is None:
+            return None
         ref = (
             "refs/heads/master" if repo_type.lower() == "stable" else "refs/heads/beta"
         )
@@ -122,6 +132,64 @@ async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
         }
 
     return None
+
+
+async def find_retry_base_sha(
+    app_id: str,
+    repo: str,
+    ref: str,
+    sha: str,
+) -> str | None:
+    normalized_sha = normalize_git_oid(sha)
+    if normalized_sha is None:
+        return None
+
+    async with get_db() as db:
+        query = (
+            select(Pipeline)
+            .where(
+                Pipeline.app_id == app_id,
+                text("params->>'repo' = :repo"),
+                text("params->>'ref' = :ref"),
+                text("params->>'sha' = :sha"),
+            )
+            .params(repo=repo, ref=ref, sha=normalized_sha)
+        )
+        result = await db.execute(query)
+        matches = list(result.scalars().all())
+
+    if not matches:
+        logger.warning(
+            "Original pipeline not found for issue retry baseline",
+            app_id=app_id,
+            repo=repo,
+            ref=ref,
+            sha=normalized_sha,
+        )
+        return None
+
+    baselines = {
+        base_sha
+        for pipeline in matches
+        if (base_sha := normalize_git_oid((pipeline.params or {}).get("base_sha")))
+        and base_sha != normalized_sha
+    }
+    if len(baselines) != 1 or any(
+        normalize_git_oid((pipeline.params or {}).get("base_sha")) is None
+        or normalize_git_oid((pipeline.params or {}).get("base_sha")) == normalized_sha
+        for pipeline in matches
+    ):
+        logger.warning(
+            "Original pipeline baseline is missing or ambiguous",
+            app_id=app_id,
+            repo=repo,
+            ref=ref,
+            sha=normalized_sha,
+            pipeline_count=len(matches),
+        )
+        return None
+
+    return baselines.pop()
 
 
 async def validate_retry_permissions(git_repo: str, user_login: str) -> bool:
@@ -231,6 +299,15 @@ async def handle_issue_retry(
         return None
 
     build_params["app_id"] = app_id
+
+    base_sha = await find_retry_base_sha(
+        app_id=app_id,
+        repo=build_params["repo"],
+        ref=build_params["ref"],
+        sha=build_params["sha"],
+    )
+    if base_sha is not None:
+        build_params["base_sha"] = base_sha
     build_params["retry_from_issue"] = issue_number
 
     try:
@@ -325,6 +402,10 @@ def should_store_event(payload: dict) -> bool:
             )
             or ref.startswith("refs/heads/branch/")
         )
+        and normalize_git_oid(payload.get("before")) is not None
+        and normalize_git_oid(payload.get("after")) is not None
+        and normalize_git_oid(payload.get("before"))
+        != normalize_git_oid(payload.get("after"))
     ):
         return True
 
@@ -976,7 +1057,15 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             )
             return None
 
-        sha = pr.get("head", {}).get("sha")
+        sha = normalize_git_oid(pr.get("head", {}).get("sha"))
+        if sha is None:
+            logger.warning(
+                "Invalid PR head SHA, skipping pipeline creation",
+                pr_number=pr_number,
+                repo=event.repository,
+            )
+            return None
+        base_sha = normalize_git_oid(pr.get("base", {}).get("sha"))
         params.update(
             {
                 "ref": f"refs/pull/{pr_number}/head",
@@ -985,6 +1074,8 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 "pr_target_branch": pr.get("base", {}).get("ref", "master"),
             }
         )
+        if base_sha is not None:
+            params["base_sha"] = base_sha
 
         if payload_action == "opened":
             try:
@@ -1004,11 +1095,21 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
     elif "commits" in payload and payload.get("ref", ""):
         ref = payload.get("ref", "")
-        sha = payload.get("after")
+        before = normalize_git_oid(payload.get("before"))
+        sha = normalize_git_oid(payload.get("after"))
+        if before is None or sha is None or before == sha:
+            logger.info(
+                "Ignoring push without a valid baseline",
+                repo=event.repository,
+                ref=ref,
+            )
+            return None
         params.update(
             {
                 "ref": ref,
                 "push": "true",
+                "sha": sha,
+                "base_sha": before,
             }
         )
 
@@ -1149,7 +1250,6 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 return None
 
             pr_ref = f"refs/pull/{issue_number}/head"
-            pr_target_branch = "master"
             github_client = get_github_client()
 
             try:
@@ -1161,8 +1261,8 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 if response is None:
                     return None
                 pr_data = response.json()
-                sha = pr_data.get("head", {}).get("sha")
-                pr_target_branch = pr_data.get("base", {}).get("ref", "master")
+                if not isinstance(pr_data, dict):
+                    return None
 
                 pr_state = pr_data.get("state")
                 if pr_state in ["closed", "merged"]:
@@ -1178,21 +1278,36 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                         comment="❌ Cannot build closed or merged PR. Please reopen the PR if you want to trigger a build.",
                     )
                     return None
-            except httpx.RequestError as e:
+
+                sha = normalize_git_oid(pr_data.get("head", {}).get("sha"))
+                pr_target_branch = pr_data.get("base", {}).get("ref")
+                if (
+                    sha is None
+                    or not isinstance(pr_target_branch, str)
+                    or not pr_target_branch
+                ):
+                    logger.warning(
+                        "Incomplete PR details, skipping bot build",
+                        pr_number=issue_number,
+                        repo=repo,
+                    )
+                    return None
+
+                base_sha = normalize_git_oid(pr_data.get("base", {}).get("sha"))
+            except (
+                httpx.RequestError,
+                httpx.HTTPStatusError,
+                ValueError,
+                TypeError,
+                AttributeError,
+            ) as e:
                 logger.error(
                     "Error fetching PR details from GitHub",
                     error=str(e),
                     repo=repo,
                     pr_number=issue_number,
                 )
-            except httpx.HTTPStatusError as e:
-                logger.error(
-                    "GitHub API error",
-                    status_code=e.response.status_code,
-                    response_text=e.response.text,
-                    repo=repo,
-                    pr_number=issue_number,
-                )
+                return None
 
             params.update(
                 {
@@ -1202,6 +1317,8 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                     "pr_target_branch": pr_target_branch,
                 }
             )
+            if base_sha is not None:
+                params["base_sha"] = base_sha
 
         elif "bot, retry" in comment_body:
             if not issue_number or not issue_body:

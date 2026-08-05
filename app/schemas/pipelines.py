@@ -23,6 +23,13 @@ class PipelineTriggerRequest(BaseModel):
     app_id: str
     params: dict[str, Any]
 
+    @field_validator("params")
+    @classmethod
+    def params_must_have_valid_commit_ids(cls, v: dict[str, Any]) -> dict[str, Any]:
+        from app.utils.github import validate_pipeline_commit_params
+
+        return validate_pipeline_commit_params(v)
+
 
 class PipelineSummary(BaseModel):
     id: str

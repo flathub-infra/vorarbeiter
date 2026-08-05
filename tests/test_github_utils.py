@@ -11,8 +11,10 @@ from app.utils.github import (
     create_github_issue,
     create_pr_comment,
     get_linter_warning_messages,
+    normalize_git_oid,
     set_pr_labels,
     update_commit_status,
+    validate_pipeline_commit_params,
 )
 
 
@@ -751,3 +753,47 @@ async def test_set_pr_labels_multiple_labels(mock_settings, mock_httpx, labels):
     assert result is True
     assert mock_httpx.request.call_count == len(labels) + 1
     assert mock_httpx.request.call_args[1]["json"] == {"labels": labels}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("A" * 40, "a" * 40),
+        ("B" * 64, "b" * 64),
+        ("a" * 39, None),
+        ("g" * 40, None),
+        ("0" * 40, None),
+        (None, None),
+    ],
+)
+def test_normalize_git_oid(value, expected):
+    assert normalize_git_oid(value) == expected
+
+
+def test_validate_pipeline_commit_params_normalizes_pair():
+    result = validate_pipeline_commit_params(
+        {"sha": "A" * 40, "base_sha": "B" * 40, "repo": "flathub/test-app"}
+    )
+
+    assert result == {
+        "sha": "a" * 40,
+        "base_sha": "b" * 40,
+        "repo": "flathub/test-app",
+    }
+
+
+@pytest.mark.parametrize(
+    ("params", "message"),
+    [
+        ({"sha": "a" * 39}, "sha must be a full non-zero Git object ID"),
+        (
+            {"sha": "a" * 40, "base_sha": "0" * 40},
+            "base_sha must be a full non-zero Git object ID",
+        ),
+        ({"base_sha": "b" * 40}, "base_sha requires sha"),
+        ({"sha": "a" * 40, "base_sha": "a" * 40}, "base_sha must differ from sha"),
+    ],
+)
+def test_validate_pipeline_commit_params_rejects_invalid_pairs(params, message):
+    with pytest.raises(ValueError, match=message):
+        validate_pipeline_commit_params(params)

@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.schemas.pipelines import PipelineType
+from app.schemas.pipelines import PipelineTriggerRequest, PipelineType
 from app.services.pipeline import PipelineService
 
 
@@ -309,3 +309,20 @@ def test_pipeline_to_summary_build_type_no_workflow_id(pipeline_service):
     summary = pipeline_service.pipeline_to_summary(pipeline)
 
     assert summary.type == PipelineType.BUILD
+
+
+def test_pipeline_trigger_request_normalizes_commit_pair():
+    request = PipelineTriggerRequest(
+        app_id="org.test.App",
+        params={"sha": "A" * 40, "base_sha": "B" * 40},
+    )
+
+    assert request.params == {"sha": "a" * 40, "base_sha": "b" * 40}
+
+
+def test_pipeline_trigger_request_rejects_invalid_baseline():
+    with pytest.raises(ValueError, match="base_sha must differ from sha"):
+        PipelineTriggerRequest(
+            app_id="org.test.App",
+            params={"sha": "A" * 40, "base_sha": "A" * 40},
+        )

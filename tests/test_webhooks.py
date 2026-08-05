@@ -26,7 +26,7 @@ SAMPLE_GITHUB_PAYLOAD = {
         "number": 123,
         "head": {
             "ref": "feature-branch",
-            "sha": "abcdef123456",
+            "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
         "base": {
             "ref": "master",
@@ -34,11 +34,12 @@ SAMPLE_GITHUB_PAYLOAD = {
     },
 }
 
-# Sample payload for a push event to master
 SAMPLE_PUSH_PAYLOAD = {
     "repository": {"full_name": "test-owner/test-repo"},
     "sender": {"login": "test-actor"},
     "ref": "refs/heads/master",
+    "before": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "after": "cccccccccccccccccccccccccccccccccccccccc",
     "commits": [{"id": "abc123"}],
 }
 
@@ -1150,7 +1151,7 @@ async def test_create_pipeline_push():
     pipeline_id = uuid.uuid4()
 
     modified_payload = dict(SAMPLE_PUSH_PAYLOAD)
-    modified_payload["after"] = "abcdef123456"
+    modified_payload["after"] = "dddddddddddddddddddddddddddddddddddddddd"
 
     webhook_event = WebhookEvent(
         id=event_id,
@@ -1256,8 +1257,11 @@ async def test_create_pipeline_comment():
     mock_get_db = create_mock_get_db(mock_db)
     mock_pr_response = MagicMock()
     mock_pr_response.json.return_value = {
-        "head": {"sha": "fedcba654321"},
-        "base": {"ref": "master"},
+        "head": {"sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+        "base": {
+            "sha": "ffffffffffffffffffffffffffffffffffffffff",
+            "ref": "master",
+        },
         "state": "open",
     }
     mock_github_client = AsyncMock()
@@ -1280,6 +1284,11 @@ async def test_create_pipeline_comment():
         assert "params" in kwargs
         assert kwargs["params"].get("pr_number") == "42"
         assert kwargs["params"].get("ref") == "refs/pull/42/head"
+        assert kwargs["params"].get("sha") == "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        assert (
+            kwargs["params"].get("base_sha")
+            == "ffffffffffffffffffffffffffffffffffffffff"
+        )
         assert mock_pipeline_service.create_pipeline.called
         assert mock_pipeline_service.start_pipeline.called
         assert isinstance(result, uuid.UUID)
@@ -1470,7 +1479,7 @@ async def test_create_pipeline_starts_stable_build_even_at_capacity():
     pipeline_id = uuid.uuid4()
 
     modified_payload = dict(SAMPLE_PUSH_PAYLOAD)
-    modified_payload["after"] = "abcdef123456"
+    modified_payload["after"] = "dddddddddddddddddddddddddddddddddddddddd"
 
     webhook_event = WebhookEvent(
         id=event_id,
@@ -1740,7 +1749,11 @@ async def test_create_pipeline_disable_test_builds_bot_build(flag_enabled):
     mock_db = AsyncMock(spec=AsyncSession)
     mock_get_db = create_mock_get_db(mock_db)
 
-    pr_data = {"head": {"sha": "abc123"}, "state": "open"}
+    pr_data = {
+        "head": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "state": "open",
+        "base": {"ref": "master"},
+    }
 
     with (
         patch("app.routes.webhooks.settings.ff_disable_test_builds", flag_enabled),
@@ -1782,13 +1795,13 @@ async def test_create_pipeline_disable_test_builds_bot_build(flag_enabled):
 # Test data for retry functionality
 SAMPLE_ISSUE_BODY_STABLE = """The stable build pipeline for `test-app` failed.
 
-Commit SHA: abc123456789
+Commit SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 Build log: https://github.com/flathub-infra/vorarbeiter/actions/runs/123456789"""
 
 SAMPLE_ISSUE_BODY_JOB_FAILURE = """The commit job for `test-app` failed in the stable repository.
 
 **Build Information:**
-- Commit SHA: abc123456789
+- Commit SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 - Build ID: 456
 - Build log: https://example.com/log/123
 
@@ -1801,7 +1814,7 @@ cc @flathub/build-moderation"""
 SAMPLE_ISSUE_BODY_VALIDATION_FAILURE = """The build for `test-app` failed validation during publication in the stable repository.
 
 **Build Information:**
-- Commit SHA: abc123456789
+- Commit SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 - Build ID: 456
 - Build log: https://github.com/flathub-infra/vorarbeiter/actions/runs/123456789
 
@@ -1833,7 +1846,7 @@ async def test_parse_failure_issue_stable_build():
     result = await parse_failure_issue(SAMPLE_ISSUE_BODY_STABLE, "flathub/test-app")
 
     assert result is not None
-    assert result["sha"] == "abc123456789"
+    assert result["sha"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     assert result["repo"] == "flathub/test-app"
     assert result["ref"] == "refs/heads/master"
     assert result["flat_manager_repo"] == "stable"
@@ -1849,7 +1862,7 @@ async def test_parse_failure_issue_job_failure():
     )
 
     assert result is not None
-    assert result["sha"] == "abc123456789"
+    assert result["sha"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     assert result["repo"] == "flathub/test-app"
     assert result["ref"] == "refs/heads/master"
     assert result["flat_manager_repo"] == "stable"
@@ -1870,7 +1883,7 @@ async def test_parse_failure_issue_validation_failure():
         )
 
     assert result is not None
-    assert result["sha"] == "abc123456789"
+    assert result["sha"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     assert result["repo"] == "flathub/test-app"
     assert result["ref"] == "refs/heads/master"
     assert result["flat_manager_repo"] == "stable"
@@ -1988,6 +2001,10 @@ async def test_handle_issue_retry_success():
             "app.routes.webhooks.get_workflow_run_title",
             AsyncMock(return_value="Build from refs/heads/master"),
         ),
+        patch(
+            "app.routes.webhooks.find_retry_base_sha",
+            AsyncMock(return_value="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        ),
         patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
         patch("app.routes.webhooks.update_commit_status", AsyncMock()),
         patch("app.routes.webhooks.add_issue_comment", AsyncMock()),
@@ -2003,6 +2020,9 @@ async def test_handle_issue_retry_success():
 
         assert result == pipeline_id
         mock_pipeline_service.create_pipeline.assert_called_once()
+        params = mock_pipeline_service.create_pipeline.call_args.kwargs["params"]
+        assert params["sha"] == "a" * 40
+        assert params["base_sha"] == "b" * 40
         mock_pipeline_service.start_pipeline.assert_called_once()
 
 
@@ -2332,7 +2352,12 @@ async def test_create_pipeline_bot_build_open_pr_continues():
     mock_db.get.return_value = mock_pipeline
     mock_get_db = create_mock_get_db(mock_db)
 
-    mock_pr_response = {"number": 42, "state": "open", "head": {"sha": "abcdef123456"}}
+    mock_pr_response = {
+        "number": 42,
+        "state": "open",
+        "head": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "base": {"ref": "master"},
+    }
 
     mock_httpx = MockHttpxClient()
     mock_response = mock_httpx.set_response("request")
@@ -2796,7 +2821,10 @@ async def test_create_pipeline_pr_stores_target_branch(
         "pull_request": {
             "number": 123,
             "state": "open",
-            "head": {"ref": "feature-branch", "sha": "abcdef123456"},
+            "head": {
+                "ref": "feature-branch",
+                "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            },
             "base": {"ref": base_ref},
         },
     }
@@ -2899,7 +2927,7 @@ async def test_create_pipeline_bot_build_stores_target_branch(
     mock_get_db = create_mock_get_db(mock_db)
 
     pr_data = {
-        "head": {"sha": "abc123"},
+        "head": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
         "state": "open",
         "base": {"ref": base_ref},
     }
@@ -3019,7 +3047,10 @@ async def test_create_pipeline_labels_runtime_update_pr():
         "pull_request": {
             "number": 123,
             "state": "open",
-            "head": {"ref": "feature-branch", "sha": "abcdef123456"},
+            "head": {
+                "ref": "feature-branch",
+                "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            },
             "base": {"ref": "master"},
         },
     }
@@ -3070,3 +3101,180 @@ async def test_create_pipeline_labels_runtime_update_pr():
         pr_number=123,
         labels=["runtime"],
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("before", "after", "commit_ids"),
+    [
+        ("1" * 40, "2" * 40, ["2" * 40]),
+        ("3" * 40, "4" * 40, ["5" * 40, "4" * 40]),
+        ("5" * 40, "6" * 40, ["6" * 40]),
+    ],
+)
+async def test_create_pipeline_push_persists_baseline(before, after, commit_ids):
+    from app.routes.webhooks import create_pipeline
+
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        payload={
+            "ref": "refs/heads/master",
+            "before": before,
+            "after": after,
+            "commits": [{"id": commit_id} for commit_id in commit_ids],
+        },
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="test-repo",
+        params={},
+        status=PipelineStatus.PENDING,
+    )
+    service = AsyncMock()
+    service.create_pipeline.return_value = pipeline
+    service.prepare_pipeline_for_start.return_value = pipeline
+    service.supersede_conflicting_test_pipelines.return_value = None
+    service.should_queue_test_build.return_value = False
+    service.start_pipeline.return_value = pipeline
+    db = AsyncMock(spec=AsyncSession)
+
+    with (
+        patch("app.routes.webhooks.BuildPipeline", return_value=service),
+        patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
+        patch("app.pipelines.build.get_db", create_mock_get_db(db)),
+        patch(
+            "app.routes.webhooks.is_eol_only_push",
+            AsyncMock(return_value=(False, None)),
+        ),
+    ):
+        await create_pipeline(event)
+
+    params = service.create_pipeline.call_args.kwargs["params"]
+    assert params["sha"] == after
+    assert params["base_sha"] == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [("0" * 40, "1" * 40), ("1" * 40, "0" * 40)],
+)
+async def test_create_pipeline_push_ignores_branch_lifecycle(before, after):
+    from app.routes.webhooks import create_pipeline
+
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        payload={
+            "ref": "refs/heads/master",
+            "before": before,
+            "after": after,
+            "commits": [],
+        },
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+    service = AsyncMock()
+    with patch("app.routes.webhooks.BuildPipeline", return_value=service):
+        assert await create_pipeline(event) is None
+
+    service.create_pipeline.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["opened", "synchronize"])
+async def test_create_pipeline_pr_persists_base_sha(action):
+    from app.routes.webhooks import create_pipeline
+
+    head_sha = "1" * 40 if action == "opened" else "2" * 40
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        payload={
+            "action": action,
+            "pull_request": {
+                "number": 123,
+                "state": "open",
+                "head": {"sha": head_sha},
+                "base": {
+                    "sha": "5" * 40,
+                    "ref": "master",
+                },
+            },
+        },
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="test-repo",
+        params={},
+        status=PipelineStatus.PENDING,
+    )
+    service = AsyncMock()
+    service.create_pipeline.return_value = pipeline
+    service.prepare_pipeline_for_start.return_value = pipeline
+    service.supersede_conflicting_test_pipelines.return_value = None
+    service.should_queue_test_build.return_value = False
+    service.start_pipeline.return_value = pipeline
+    db = AsyncMock(spec=AsyncSession)
+
+    with (
+        patch("app.routes.webhooks.BuildPipeline", return_value=service),
+        patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
+        patch("app.pipelines.build.get_db", create_mock_get_db(db)),
+        patch(
+            "app.routes.webhooks.is_runtime_update_pr",
+            AsyncMock(return_value=False),
+        ),
+    ):
+        await create_pipeline(event)
+
+    params = service.create_pipeline.call_args.kwargs["params"]
+    assert params["sha"] == head_sha
+    assert params["base_sha"] == "5" * 40
+    assert params["pr_target_branch"] == "master"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("candidate_baselines", "expected"),
+    [
+        (["b" * 40, "b" * 40], "b" * 40),
+        (["b" * 40, "c" * 40], None),
+        ([None], None),
+        ([], None),
+    ],
+)
+async def test_find_retry_base_sha_candidate_sets(
+    db_session_maker, candidate_baselines, expected
+):
+    from app.routes.webhooks import find_retry_base_sha
+
+    app_id = "test-app"
+    repo = "flathub/test-app"
+    ref = "refs/heads/master"
+    sha = "a" * 40
+
+    async with db_session_maker() as db:
+        for baseline in candidate_baselines:
+            params = {"repo": repo, "ref": ref, "sha": sha}
+            if baseline is not None:
+                params["base_sha"] = baseline
+            db.add(
+                Pipeline(
+                    id=uuid.uuid4(),
+                    app_id=app_id,
+                    params=params,
+                    status=PipelineStatus.FAILED,
+                )
+            )
+        await db.commit()
+
+        with patch("app.routes.webhooks.get_db", create_mock_get_db(db)):
+            result = await find_retry_base_sha(app_id, repo, ref, sha)
+
+    assert result == expected

@@ -211,6 +211,44 @@ def get_github_actions_client() -> GitHubAPIClient:
     return _github_actions_client
 
 
+def normalize_git_oid(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+
+    normalized = value.lower()
+    if len(normalized) not in (40, 64):
+        return None
+    if not all(char in "0123456789abcdef" for char in normalized):
+        return None
+    if set(normalized) == {"0"}:
+        return None
+    return normalized
+
+
+def validate_pipeline_commit_params(params: dict[str, Any]) -> dict[str, Any]:
+    validated_params = dict(params)
+
+    sha_present = "sha" in validated_params
+    base_sha_present = "base_sha" in validated_params
+    sha = normalize_git_oid(validated_params.get("sha"))
+    base_sha = normalize_git_oid(validated_params.get("base_sha"))
+
+    if sha_present and sha is None:
+        raise ValueError("sha must be a full non-zero Git object ID")
+    if base_sha_present and base_sha is None:
+        raise ValueError("base_sha must be a full non-zero Git object ID")
+    if base_sha_present and not sha_present:
+        raise ValueError("base_sha requires sha")
+    if base_sha is not None and base_sha == sha:
+        raise ValueError("base_sha must differ from sha")
+
+    if sha is not None:
+        validated_params["sha"] = sha
+    if base_sha is not None:
+        validated_params["base_sha"] = base_sha
+    return validated_params
+
+
 async def update_commit_status(
     sha: str,
     state: str,
