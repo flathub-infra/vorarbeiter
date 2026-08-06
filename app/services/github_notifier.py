@@ -21,6 +21,9 @@ class GitHubNotifier:
     def __init__(self, flat_manager_client: FlatManagerClient | None = None):
         self.flat_manager = flat_manager_client
 
+    def _get_flathub_build_url(self, pipeline: Pipeline) -> str:
+        return f"https://flathub.org/en/builds/{pipeline.id}"
+
     async def notify_build_status(
         self,
         pipeline: Pipeline,
@@ -212,15 +215,14 @@ class GitHubNotifier:
                 arch_info_comment = f"\n\n*Built for {arch_text} architecture{plural}.*"
 
             if status == "committed":
+                build_url = self._get_flathub_build_url(pipeline)
                 if pipeline.build_id and self.flat_manager:
                     download_url = self.flat_manager.get_flatpakref_url(
                         pipeline.build_id, pipeline.app_id
                     )
-                    comment = f"✅ [Test build succeeded]({log_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```{arch_info_comment}"
+                    comment = f"✅ [Test build succeeded]({log_url}). [Build page]({build_url}). To test this build, install it from the testing repository:\n\n```\nflatpak install --user {download_url}\n```{arch_info_comment}"
                 else:
-                    comment = (
-                        f"✅ [Test build succeeded]({log_url}).{arch_info_comment}"
-                    )
+                    comment = f"✅ [Test build succeeded]({log_url}). [Build page]({build_url}).{arch_info_comment}"
                 if linter_warnings:
                     warnings_text = "\n".join(f"- {w.strip()}" for w in linter_warnings)
                     comment += (
@@ -229,9 +231,9 @@ class GitHubNotifier:
                         f"{warnings_text}"
                     )
             elif status == "failure":
-                comment = f"❌ [Test build]({log_url}) failed.\n\n{footnote}"
+                comment = f"❌ [Test build]({log_url}) failed. [Build page]({self._get_flathub_build_url(pipeline)}).\n\n{footnote}"
             elif status == "cancelled":
-                comment = f"❌ [Test build]({log_url}) was cancelled.\n\n{footnote}"
+                comment = f"❌ [Test build]({log_url}) was cancelled. [Build page]({self._get_flathub_build_url(pipeline)}).\n\n{footnote}"
             elif status == "commit_failure":
                 status = "failure"
                 comment = (
