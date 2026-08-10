@@ -561,6 +561,49 @@ def test_should_store_event_push_to_master():
     assert should_store_event(SAMPLE_PUSH_PAYLOAD) is True
 
 
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "refs/heads/master",
+        "refs/heads/beta",
+        "refs/heads/branch/feature-x",
+    ],
+)
+def test_should_store_event_initial_push(ref):
+    from app.routes.webhooks import should_store_event
+
+    payload = {
+        "ref": ref,
+        "before": "0" * 40,
+        "after": "1" * 40,
+        "commits": [{"id": "1" * 40}],
+    }
+
+    assert should_store_event(payload) is True
+
+
+@pytest.mark.parametrize(
+    ("ref", "after"),
+    [
+        ("refs/heads/master", "0" * 40),
+        ("refs/heads/beta", "0" * 40),
+        ("refs/heads/branch/feature-x", "0" * 40),
+        ("refs/heads/feature-x", "1" * 40),
+    ],
+)
+def test_should_not_store_event_invalid_initial_push(ref, after):
+    from app.routes.webhooks import should_store_event
+
+    payload = {
+        "ref": ref,
+        "before": "0" * 40,
+        "after": after,
+        "commits": [{"id": after}],
+    }
+
+    assert should_store_event(payload) is False
+
+
 def test_should_store_event_push_to_beta():
     """Test should_store_event returns True for push to beta."""
     from app.routes.webhooks import should_store_event
@@ -3159,10 +3202,68 @@ async def test_create_pipeline_push_persists_baseline(before, after, commit_ids)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("before", "after"),
-    [("0" * 40, "1" * 40), ("1" * 40, "0" * 40)],
+    "ref",
+    [
+        "refs/heads/master",
+        "refs/heads/beta",
+        "refs/heads/branch/feature-x",
+    ],
 )
-async def test_create_pipeline_push_ignores_branch_lifecycle(before, after):
+async def test_create_pipeline_initial_push_without_baseline(ref):
+    from app.routes.webhooks import create_pipeline
+
+    after = "A" * 40
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        payload={
+            "ref": ref,
+            "before": "0" * 40,
+            "after": after,
+            "commits": [{"id": after}],
+        },
+        repository="test-owner/test-repo",
+        actor="test-actor",
+    )
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="test-repo",
+        params={},
+        status=PipelineStatus.PENDING,
+    )
+    service = AsyncMock()
+    service.create_pipeline.return_value = pipeline
+    service.prepare_pipeline_for_start.return_value = pipeline
+    service.supersede_conflicting_test_pipelines.return_value = None
+    service.should_queue_test_build.return_value = False
+    service.start_pipeline.return_value = pipeline
+    db = AsyncMock(spec=AsyncSession)
+
+    with (
+        patch("app.routes.webhooks.BuildPipeline", return_value=service),
+        patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
+        patch("app.pipelines.build.get_db", create_mock_get_db(db)),
+        patch(
+            "app.routes.webhooks.is_eol_only_push",
+            AsyncMock(return_value=(False, None)),
+        ),
+    ):
+        result = await create_pipeline(event)
+
+    assert result == pipeline.id
+    params = service.create_pipeline.call_args.kwargs["params"]
+    assert params == {
+        "repo": "test-owner/test-repo",
+        "ref": ref,
+        "push": "true",
+        "sha": "a" * 40,
+    }
+    service.prepare_pipeline_for_start.assert_awaited_once_with(pipeline.id)
+    service.start_pipeline.assert_awaited_once_with(pipeline_id=pipeline.id)
+
+
+@pytest.mark.asyncio
+async def test_create_pipeline_push_ignores_branch_lifecycle():
     from app.routes.webhooks import create_pipeline
 
     event = WebhookEvent(
@@ -3170,8 +3271,8 @@ async def test_create_pipeline_push_ignores_branch_lifecycle(before, after):
         source=WebhookSource.GITHUB,
         payload={
             "ref": "refs/heads/master",
-            "before": before,
-            "after": after,
+            "before": "1" * 40,
+            "after": "0" * 40,
             "commits": [],
         },
         repository="test-owner/test-repo",

@@ -363,6 +363,18 @@ async def handle_issue_retry(
         return None
 
 
+def is_initial_push(payload: dict[str, Any]) -> bool:
+    ref = payload.get("ref", "")
+    return (
+        (
+            ref in ("refs/heads/master", "refs/heads/beta")
+            or ref.startswith("refs/heads/branch/")
+        )
+        and payload.get("before") == "0" * 40
+        and normalize_git_oid(payload.get("after")) is not None
+    )
+
+
 def should_store_event(payload: dict) -> bool:
     """
     Determine if a webhook event should be stored based on event type.
@@ -402,10 +414,15 @@ def should_store_event(payload: dict) -> bool:
             )
             or ref.startswith("refs/heads/branch/")
         )
-        and normalize_git_oid(payload.get("before")) is not None
-        and normalize_git_oid(payload.get("after")) is not None
-        and normalize_git_oid(payload.get("before"))
-        != normalize_git_oid(payload.get("after"))
+        and (
+            is_initial_push(payload)
+            or (
+                normalize_git_oid(payload.get("before")) is not None
+                and normalize_git_oid(payload.get("after")) is not None
+                and normalize_git_oid(payload.get("before"))
+                != normalize_git_oid(payload.get("after"))
+            )
+        )
     ):
         return True
 
@@ -1095,9 +1112,10 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
     elif "commits" in payload and payload.get("ref", ""):
         ref = payload.get("ref", "")
+        initial_push = is_initial_push(payload)
         before = normalize_git_oid(payload.get("before"))
         sha = normalize_git_oid(payload.get("after"))
-        if before is None or sha is None or before == sha:
+        if sha is None or (not initial_push and (before is None or before == sha)):
             logger.info(
                 "Ignoring push without a valid baseline",
                 repo=event.repository,
@@ -1109,9 +1127,10 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 "ref": ref,
                 "push": "true",
                 "sha": sha,
-                "base_sha": before,
             }
         )
+        if before is not None:
+            params["base_sha"] = before
 
         is_eol_only, eol_data = await is_eol_only_push(payload)
         if is_eol_only:
