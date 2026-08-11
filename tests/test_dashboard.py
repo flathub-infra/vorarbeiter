@@ -21,6 +21,7 @@ def make_pipeline(**overrides):
         "commit_job_id": None,
         "publish_job_id": None,
         "update_repo_job_id": None,
+        "failure_issue_url": None,
     }
     defaults.update(overrides)
     return Pipeline(**defaults)
@@ -58,6 +59,23 @@ def test_builds_table_failed_badge_prefers_update_repo_job(client):
     assert 'href="https://hub.flathub.org/status/12346"' not in response.text
 
 
+def test_builds_table_failed_badge_prefers_failure_issue(client):
+    pipeline = make_pipeline(
+        commit_job_id=12345,
+        failure_issue_url="https://github.com/flathub/org.test.App/issues/1",
+    )
+
+    with patch(
+        "app.routes.dashboard.get_recent_pipelines",
+        new=AsyncMock(return_value=[pipeline]),
+    ):
+        response = client.get("/api/htmx/builds")
+
+    assert response.status_code == 200
+    assert 'href="https://github.com/flathub/org.test.App/issues/1"' in response.text
+    assert 'href="https://hub.flathub.org/status/12345"' not in response.text
+
+
 def test_builds_table_failed_badge_falls_back_to_log_url(client):
     pipeline = make_pipeline(log_url="https://example.com/logs/123")
 
@@ -89,3 +107,26 @@ def test_app_status_failed_badge_links_in_stable_table(client):
     assert response.status_code == 200
     assert 'href="https://hub.flathub.org/status/12345"' in response.text
     assert ">failed</a>" in response.text
+
+
+def test_app_status_failed_badge_prefers_failure_issue(client):
+    stable_pipeline = make_pipeline(
+        commit_job_id=12345,
+        failure_issue_url="https://github.com/flathub/org.test.App/issues/1",
+    )
+
+    with (
+        patch(
+            "app.routes.dashboard.get_app_builds",
+            new=AsyncMock(return_value=([stable_pipeline], {})),
+        ),
+        patch(
+            "app.routes.dashboard.get_status_banner",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        response = client.get("/status/org.test.App")
+
+    assert response.status_code == 200
+    assert 'href="https://github.com/flathub/org.test.App/issues/1"' in response.text
+    assert 'href="https://hub.flathub.org/status/12345"' not in response.text

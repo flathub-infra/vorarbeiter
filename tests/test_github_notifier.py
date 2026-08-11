@@ -662,6 +662,7 @@ async def test_create_stable_job_failure_issue_commit(github_notifier, mock_pipe
             title=expected_title,
             body=expected_body,
         )
+        assert mock_pipeline.failure_issue_url is None
 
 
 @pytest.mark.asyncio
@@ -914,6 +915,10 @@ async def test_create_validation_failure_issue_stable(
             git_repo="flathub/org.test.App",
             title="Stable publish validation failed for org.test.App",
             body=expected_body,
+        )
+        assert (
+            mock_pipeline.failure_issue_url
+            == "https://github.com/flathub/org.test.App/issues/1"
         )
 
 

@@ -327,7 +327,7 @@ class GitHubNotifier:
         missing_repo_log_message: str,
         failure_log_message: str,
         log_context: dict[str, str | int] | None = None,
-    ) -> None:
+    ) -> str | None:
         git_repo = pipeline.params.get("repo")
         if not git_repo:
             logger.error(
@@ -373,6 +373,7 @@ class GitHubNotifier:
                     pipeline_id=str(pipeline.id),
                     issue_url=issue_url,
                 )
+                return issue_url
         except Exception as e:
             logger.exception(
                 failure_log_message,
@@ -484,7 +485,7 @@ class GitHubNotifier:
         )
         extra_sections = f"**Validation Failure:**\n```\n{validation_reason}\n```\n"
 
-        await self._create_tracking_issue(
+        issue_url = await self._create_tracking_issue(
             pipeline,
             title,
             summary,
@@ -492,6 +493,8 @@ class GitHubNotifier:
             missing_repo_log_message="Missing git_repo in params. Cannot create issue for validation failure",
             failure_log_message="Failed to create GitHub issue for validation failure",
         )
+        if issue_url:
+            pipeline.failure_issue_url = issue_url
 
     async def handle_build_completion(
         self,

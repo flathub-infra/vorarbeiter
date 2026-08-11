@@ -3,7 +3,9 @@
     <td>
         {% set target = pipeline.flat_manager_repo or 'stable' %}
         {% set failed_target_url = none %}
-        {% if pipeline.update_repo_job_id %}
+        {% if pipeline.failure_issue_url %}
+        {% set failed_target_url = pipeline.failure_issue_url %}
+        {% elif pipeline.update_repo_job_id %}
         {% set failed_target_url = flat_manager_url ~ '/status/' ~ pipeline.update_repo_job_id %}
         {% elif pipeline.publish_job_id %}
         {% set failed_target_url = flat_manager_url ~ '/status/' ~ pipeline.publish_job_id %}
