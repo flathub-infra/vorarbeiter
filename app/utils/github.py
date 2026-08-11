@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -475,6 +476,26 @@ async def add_comment_reaction(
     return False
 
 
+async def list_open_github_issues(
+    git_repo: str,
+) -> list[dict[str, Any]] | None:
+    if not git_repo or "/" not in git_repo:
+        logger.error("Invalid git_repo format. Expected 'owner/repo'.")
+        return None
+
+    url = f"https://api.github.com/repos/{git_repo}/issues"
+    client = get_github_client()
+    response = await client.request(
+        "get",
+        url,
+        params={"state": "open", "per_page": 100},
+        context={"git_repo": git_repo},
+    )
+    if response:
+        return response.json()
+    return None
+
+
 async def create_github_issue(
     git_repo: str, title: str, body: str
 ) -> tuple[str, int] | None:
@@ -757,6 +778,24 @@ async def get_workflow_run_title(run_id: int) -> str | None:
         )
         return title
     return None
+
+
+async def parse_build_ref_from_log(build_url: str, default_ref: str) -> str:
+    ref = default_ref
+    run_id = int(build_url.rstrip("/").split("/")[-1])
+
+    title = await get_workflow_run_title(run_id)
+    if title:
+        ref_match = re.search(r"from (refs/heads/\S+)", title)
+        if ref_match:
+            extracted_ref = ref_match.group(1)
+            if extracted_ref in (
+                "refs/heads/master",
+                "refs/heads/beta",
+            ) or extracted_ref.startswith("refs/heads/branch/"):
+                ref = extracted_ref
+
+    return ref
 
 
 async def get_build_job_arches(

@@ -17,6 +17,7 @@ from app.database import get_db
 from app.models.pipeline import Pipeline, PipelineStatus
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types, cancel_pipeline
+from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.github_actions import GitHubActionsService
 from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_repo
 from app.utils.github import (
@@ -25,9 +26,9 @@ from app.utils.github import (
     close_github_issue,
     create_pr_comment,
     get_github_client,
-    get_workflow_run_title,
     is_issue_edited,
     normalize_git_oid,
+    parse_build_ref_from_log,
     set_pr_labels,
     update_commit_status,
 )
@@ -58,24 +59,6 @@ DISABLED_TEST_BUILDS_MSG = (
     "can be retried by posting a `bot, build` comment. Please refer to "
     "{statuspage_url} for updates."
 )
-
-
-async def parse_build_ref_from_log(build_url: str, default_ref: str) -> str:
-    ref = default_ref
-    run_id = int(build_url.rstrip("/").split("/")[-1])
-
-    title = await get_workflow_run_title(run_id)
-    if title:
-        ref_match = re.search(r"from (refs/heads/\S+)", title)
-        if ref_match:
-            extracted_ref = ref_match.group(1)
-            if extracted_ref in (
-                "refs/heads/master",
-                "refs/heads/beta",
-            ) or extracted_ref.startswith("refs/heads/branch/"):
-                ref = extracted_ref
-
-    return ref
 
 
 async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
@@ -284,7 +267,11 @@ async def handle_issue_retry(
 
     app_id = git_repo.split("/", 1)[1]
 
-    build_params = await parse_failure_issue(issue_body, git_repo)
+    build_params = await BuildFailureIssueService().get_retry_params(
+        git_repo, app_id, issue_number
+    )
+    if build_params is None:
+        build_params = await parse_failure_issue(issue_body, git_repo)
     if not build_params:
         logger.warning(
             "Could not parse build parameters from issue",

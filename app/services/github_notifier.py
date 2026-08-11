@@ -5,6 +5,7 @@ import structlog
 
 from app.config import settings
 from app.models import Pipeline
+from app.services.build_failure_issue import BuildFailureIssueService
 from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
     create_github_issue,
@@ -260,63 +261,6 @@ class GitHubNotifier:
                 error=str(e),
             )
 
-    async def create_stable_build_failure_issue(
-        self,
-        pipeline: Pipeline,
-    ) -> None:
-        if pipeline.flat_manager_repo != "stable":
-            return
-
-        git_repo = pipeline.params.get("repo")
-        if not git_repo:
-            logger.error(
-                "Missing git_repo in params. Cannot create issue for failed stable build",
-                pipeline_id=str(pipeline.id),
-            )
-            return
-
-        try:
-            app_id = pipeline.app_id
-            sha = pipeline.params.get("sha")
-            log_url = pipeline.log_url
-
-            title = "Stable build failed"
-            body = f"The stable build pipeline for `{app_id}` failed.\n\nCommit SHA: {sha}\n"
-
-            if log_url:
-                body += f"Build log: {log_url}"
-            else:
-                body += "Build log URL not available."
-
-            if log_url:
-                body += (
-                    "\n\nPlease check the logs for details. "
-                    "If the failure was unexpected, you can retry the build "
-                    "by commenting `bot, retry` in this issue."
-                )
-
-            body += "\n\ncc @flathub/build-moderation"
-
-            result = await create_github_issue(
-                git_repo=git_repo,
-                title=title,
-                body=body,
-            )
-
-            if result:
-                issue_url, _ = result
-                logger.info(
-                    "Successfully created GitHub issue",
-                    pipeline_id=str(pipeline.id),
-                    issue_url=issue_url,
-                )
-        except Exception as e:
-            logger.exception(
-                "Failed to create GitHub issue for failed stable build",
-                pipeline_id=str(pipeline.id),
-                error=str(e),
-            )
-
     async def _create_tracking_issue(
         self,
         pipeline: Pipeline,
@@ -510,8 +454,7 @@ class GitHubNotifier:
         else:
             await self.notify_build_status(pipeline, status)
 
-        if status == "failure":
-            await self.create_stable_build_failure_issue(pipeline)
+        await BuildFailureIssueService().handle_result(pipeline, status)
 
         if pipeline.params.get("pr_number") and status != "success":
             await self.notify_pr_build_complete(pipeline, status)

@@ -11,6 +11,7 @@ from app.utils.github import (
     create_github_issue,
     create_pr_comment,
     get_linter_warning_messages,
+    list_open_github_issues,
     normalize_git_oid,
     set_pr_labels,
     update_commit_status,
@@ -797,3 +798,57 @@ def test_validate_pipeline_commit_params_normalizes_pair():
 def test_validate_pipeline_commit_params_rejects_invalid_pairs(params, message):
     with pytest.raises(ValueError, match=message):
         validate_pipeline_commit_params(params)
+
+
+@pytest.mark.asyncio
+async def test_list_open_github_issues_success():
+    response = MagicMock()
+    issues = [{"number": 1}, {"number": 2}]
+    response.json.return_value = issues
+    client = AsyncMock()
+    client.request.return_value = response
+
+    with patch("app.utils.github.get_github_client", return_value=client):
+        result = await list_open_github_issues("flathub/test-app")
+
+    assert result == issues
+    client.request.assert_awaited_once_with(
+        "get",
+        "https://api.github.com/repos/flathub/test-app/issues",
+        params={"state": "open", "per_page": 100},
+        context={"git_repo": "flathub/test-app"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_open_github_issues_empty_list():
+    response = MagicMock()
+    response.json.return_value = []
+    client = AsyncMock()
+    client.request.return_value = response
+
+    with patch("app.utils.github.get_github_client", return_value=client):
+        result = await list_open_github_issues("flathub/test-app")
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("git_repo", ["", "invalid"])
+async def test_list_open_github_issues_rejects_invalid_repository(git_repo):
+    with patch("app.utils.github.get_github_client") as get_client:
+        result = await list_open_github_issues(git_repo)
+
+    assert result is None
+    get_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_open_github_issues_request_failure():
+    client = AsyncMock()
+    client.request.return_value = None
+
+    with patch("app.utils.github.get_github_client", return_value=client):
+        result = await list_open_github_issues("flathub/test-app")
+
+    assert result is None

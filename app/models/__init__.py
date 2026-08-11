@@ -1,3 +1,4 @@
+from app.models.build_failure_issue import BuildFailureIssue
 from app.models.github_task import GitHubTask, GitHubTaskStatus
 from app.models.merge_request import MergeRequest, MergeStatus
 from app.models.pipeline import Pipeline, PipelineStatus, PipelineTrigger
@@ -6,6 +7,7 @@ from app.models.webhook_event import Base, WebhookEvent, WebhookSource
 
 __all__ = [
     "Base",
+    "BuildFailureIssue",
     "GitHubTask",
     "GitHubTaskStatus",
     "MergeRequest",

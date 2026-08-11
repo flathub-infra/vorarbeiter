@@ -1918,7 +1918,7 @@ async def test_parse_failure_issue_validation_failure():
     from app.routes.webhooks import parse_failure_issue
 
     with patch(
-        "app.routes.webhooks.get_workflow_run_title",
+        "app.utils.github.get_workflow_run_title",
         AsyncMock(return_value="Build from refs/heads/master"),
     ):
         result = await parse_failure_issue(
@@ -2041,7 +2041,11 @@ async def test_handle_issue_retry_success():
         patch("app.routes.webhooks.validate_retry_permissions", return_value=True),
         patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
         patch(
-            "app.routes.webhooks.get_workflow_run_title",
+            "app.routes.webhooks.BuildFailureIssueService.get_retry_params",
+            AsyncMock(return_value=None),
+        ) as get_retry_params,
+        patch(
+            "app.utils.github.get_workflow_run_title",
             AsyncMock(return_value="Build from refs/heads/master"),
         ),
         patch(
@@ -2067,6 +2071,7 @@ async def test_handle_issue_retry_success():
         assert params["sha"] == "a" * 40
         assert params["base_sha"] == "b" * 40
         mock_pipeline_service.start_pipeline.assert_called_once()
+        get_retry_params.assert_awaited_once_with("flathub/test-app", "test-app", 123)
 
 
 @pytest.mark.asyncio
@@ -2079,8 +2084,10 @@ async def test_handle_issue_retry_permission_denied():
         patch("app.routes.webhooks.validate_retry_permissions", return_value=False),
         patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
         patch(
-            "app.routes.webhooks.get_workflow_run_title", AsyncMock(return_value=None)
-        ),
+            "app.routes.webhooks.BuildFailureIssueService.get_retry_params",
+            AsyncMock(),
+        ) as get_retry_params,
+        patch("app.utils.github.get_workflow_run_title", AsyncMock(return_value=None)),
         patch("app.routes.webhooks.add_issue_comment", AsyncMock()) as mock_comment,
     ):
         result = await handle_issue_retry(
@@ -2095,6 +2102,98 @@ async def test_handle_issue_retry_permission_denied():
         mock_comment.assert_called_once()
         _args, kwargs = mock_comment.call_args
         assert "does not have permission" in kwargs["comment"]
+        get_retry_params.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_issue_retry_prefers_tracked_failure_metadata():
+    from app.routes.webhooks import handle_issue_retry
+
+    event_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+    mock_pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="test-app",
+        params={},
+        status=PipelineStatus.PENDING,
+    )
+    mock_pipeline_service = AsyncMock()
+    mock_pipeline_service.create_pipeline.return_value = mock_pipeline
+    mock_pipeline_service.start_pipeline.return_value = mock_pipeline
+    tracked_params = {
+        "sha": "b" * 40,
+        "repo": "flathub/test-app",
+        "ref": "refs/heads/branch/24.08",
+        "flat_manager_repo": "stable",
+        "issue_type": "build_failure",
+    }
+
+    with (
+        patch("app.routes.webhooks.validate_retry_permissions", return_value=True),
+        patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
+        patch(
+            "app.routes.webhooks.BuildFailureIssueService.get_retry_params",
+            AsyncMock(return_value=tracked_params),
+        ) as get_retry_params,
+        patch(
+            "app.routes.webhooks.parse_failure_issue", AsyncMock()
+        ) as parse_failure_issue,
+        patch(
+            "app.routes.webhooks.find_retry_base_sha",
+            AsyncMock(return_value=None),
+        ),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+        patch("app.routes.webhooks.add_issue_comment", AsyncMock()),
+        patch("app.routes.webhooks.close_github_issue", AsyncMock()),
+    ):
+        result = await handle_issue_retry(
+            git_repo="flathub/test-app",
+            issue_number=123,
+            issue_body="Legacy body with stale metadata",
+            comment_author="test-user",
+            webhook_event_id=event_id,
+        )
+
+    assert result == pipeline_id
+    get_retry_params.assert_awaited_once_with("flathub/test-app", "test-app", 123)
+    parse_failure_issue.assert_not_awaited()
+    params = mock_pipeline_service.create_pipeline.call_args.kwargs["params"]
+    assert params["sha"] == "b" * 40
+    assert params["ref"] == "refs/heads/branch/24.08"
+    assert params["retry_from_issue"] == 123
+
+
+@pytest.mark.asyncio
+async def test_handle_issue_retry_edited_issue_aborts_before_lookup():
+    from app.routes.webhooks import handle_issue_retry
+
+    validate_permissions = AsyncMock(return_value=True)
+    get_retry_params = AsyncMock()
+    build_pipeline = AsyncMock()
+    with (
+        patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=True)),
+        patch("app.routes.webhooks.validate_retry_permissions", validate_permissions),
+        patch(
+            "app.routes.webhooks.BuildFailureIssueService.get_retry_params",
+            get_retry_params,
+        ),
+        patch("app.routes.webhooks.BuildPipeline", build_pipeline),
+        patch("app.routes.webhooks.add_issue_comment", AsyncMock()) as add_comment,
+    ):
+        result = await handle_issue_retry(
+            git_repo="flathub/test-app",
+            issue_number=123,
+            issue_body=SAMPLE_ISSUE_BODY_STABLE,
+            comment_author="test-user",
+            webhook_event_id=uuid.uuid4(),
+        )
+
+    assert result is None
+    validate_permissions.assert_not_awaited()
+    get_retry_params.assert_not_awaited()
+    build_pipeline.assert_not_called()
+    add_comment.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -2108,8 +2207,10 @@ async def test_handle_issue_retry_invalid_issue():
         patch("app.routes.webhooks.validate_retry_permissions", return_value=True),
         patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
         patch(
-            "app.routes.webhooks.get_workflow_run_title", AsyncMock(return_value=None)
+            "app.routes.webhooks.BuildFailureIssueService.get_retry_params",
+            AsyncMock(return_value=None),
         ),
+        patch("app.utils.github.get_workflow_run_title", AsyncMock(return_value=None)),
         patch("app.routes.webhooks.add_issue_comment", AsyncMock()) as mock_comment,
     ):
         result = await handle_issue_retry(
