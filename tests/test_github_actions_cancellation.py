@@ -244,6 +244,36 @@ async def test_check_run_was_cancelled_via_api(
 
 
 @pytest.mark.asyncio
+async def test_check_run_was_cancelled_via_lost_runner_annotation(
+    github_actions_service, sample_provider_data
+):
+    annotations = [
+        {
+            "message": "The self-hosted runner lost communication with the server. Verify the machine is running and has a healthy network connection.",
+            "annotation_level": "failure",
+        }
+    ]
+    with (
+        patch.object(
+            github_actions_service, "get_workflow_run_details"
+        ) as mock_get_details,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
+    ):
+        mock_get_details.return_value = {"run_attempt": 1}
+        mock_get_annotations.return_value = annotations
+
+        result = await github_actions_service.check_run_was_cancelled(
+            sample_provider_data
+        )
+
+        assert result is True
+        mock_get_details.assert_called_once_with("flathub", "actions", 12345)
+        mock_get_annotations.assert_called_once_with("flathub", "actions", 12345)
+
+
+@pytest.mark.asyncio
 async def test_check_run_was_cancelled_via_logs(
     github_actions_service, sample_provider_data, cancelled_annotations
 ):

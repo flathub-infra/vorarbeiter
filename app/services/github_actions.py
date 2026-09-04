@@ -192,6 +192,7 @@ class GitHubActionsService:
         cancel_annotation_strs = (
             "The operation was canceled.",
             "The job was not acquired by Runner of",
+            "The self-hosted runner lost communication with the server.",
         )
 
         cancelled = any(
