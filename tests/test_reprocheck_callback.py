@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
@@ -12,6 +13,14 @@ from app.pipelines.build import BuildPipeline
 @pytest.fixture
 def build_pipeline():
     return BuildPipeline()
+
+
+@pytest.fixture(autouse=True)
+def mock_queue_starter():
+    with patch.object(
+        BuildPipeline, "start_pending_builds", new=AsyncMock(return_value=[])
+    ):
+        yield
 
 
 @pytest.fixture
@@ -348,3 +357,104 @@ async def test_reprocheck_callback_handles_partial_json_output(
         assert "timestamp" not in result
         assert "result_url" not in result
         assert "message" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("callback_status", "pipeline_status"),
+    [
+        ("success", PipelineStatus.SUCCEEDED),
+        ("failure", PipelineStatus.FAILED),
+        ("cancelled", PipelineStatus.CANCELLED),
+    ],
+)
+async def test_reprocheck_callback_commits_before_starting_pending_builds(
+    db_session_maker, callback_status, pipeline_status
+):
+    session_maker = db_session_maker
+    original_pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        params={},
+        flat_manager_repo="stable",
+        callback_token="original-token",
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.MANUAL,
+        provider_data={},
+    )
+    reprocheck_pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id=original_pipeline.app_id,
+        status=PipelineStatus.RUNNING,
+        params={
+            "workflow_id": "reprocheck.yml",
+            "build_type": "medium",
+        },
+        flat_manager_repo="test",
+        callback_token="reprocheck-token",
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.MANUAL,
+        provider_data={},
+    )
+    active_pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.Active",
+        status=PipelineStatus.RUNNING,
+        params={"workflow_id": "build.yml", "build_type": "medium"},
+        flat_manager_repo="test",
+        callback_token="active-token",
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.MANUAL,
+        provider_data={},
+    )
+
+    async with session_maker() as session:
+        session.add_all([original_pipeline, reprocheck_pipeline, active_pipeline])
+        await session.commit()
+
+    queue_started = False
+
+    async def observe_committed_state(_pipeline):
+        nonlocal queue_started
+        async with session_maker() as session:
+            terminal = await session.get(Pipeline, reprocheck_pipeline.id)
+            running_count = await session.scalar(
+                select(func.count())
+                .select_from(Pipeline)
+                .where(
+                    Pipeline.status == PipelineStatus.RUNNING,
+                    Pipeline.params["build_type"].as_string() == "medium",
+                )
+            )
+            assert terminal.status == pipeline_status
+            assert terminal.finished_at is not None
+            assert terminal.params["reprocheck_result"]["status_code"] == "0"
+            assert running_count == 1
+        queue_started = True
+        return []
+
+    with patch.object(
+        BuildPipeline,
+        "start_pending_builds",
+        new=observe_committed_state,
+    ):
+        pipeline, updates = await BuildPipeline().handle_reprocheck_callback(
+            reprocheck_pipeline.id,
+            {
+                "status": callback_status,
+                "status_code": "0",
+            },
+        )
+
+    assert queue_started
+    assert pipeline.status == pipeline_status
+    assert updates["pipeline_status"] == callback_status
+
+    async with session_maker() as session:
+        original = await session.get(Pipeline, original_pipeline.id)
+        reprocheck = await session.get(Pipeline, reprocheck_pipeline.id)
+
+    assert original.status == PipelineStatus.PUBLISHED
+    assert original.repro_pipeline_id is None
+    assert reprocheck.params["reprocheck_result"]["status_code"] == "0"

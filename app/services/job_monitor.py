@@ -44,6 +44,7 @@ JOB_DESCRIPTIONS = {
 DEFAULT_BUILD_TIMEOUT = timedelta(hours=6)
 EXTENDED_BUILD_TIMEOUT = timedelta(hours=9)
 BUILD_TIMEOUT_SAFETY_MARGIN = timedelta(minutes=15)
+REPROCHECK_TIMEOUT = timedelta(hours=4)
 
 
 class JobMonitor:
@@ -57,6 +58,9 @@ class JobMonitor:
         now = datetime.now(tz=UTC)
         cutoff_date = now - timedelta(hours=24)
         running_build_cutoff = now - DEFAULT_BUILD_TIMEOUT - BUILD_TIMEOUT_SAFETY_MARGIN
+        reprocheck_running_cutoff = (
+            now - REPROCHECK_TIMEOUT - BUILD_TIMEOUT_SAFETY_MARGIN
+        )
 
         query = select(Pipeline).where(
             or_(
@@ -93,6 +97,18 @@ class JobMonitor:
                     | (
                         Pipeline.started_at.is_(None)
                         & (Pipeline.created_at < running_build_cutoff)
+                    )
+                ),
+                (Pipeline.status == PipelineStatus.RUNNING)
+                & (Pipeline.params["workflow_id"].as_string() == "reprocheck.yml")
+                & (
+                    (
+                        Pipeline.started_at.isnot(None)
+                        & (Pipeline.started_at < reprocheck_running_cutoff)
+                    )
+                    | (
+                        Pipeline.started_at.is_(None)
+                        & (Pipeline.created_at < reprocheck_running_cutoff)
                     )
                 ),
             )
@@ -201,13 +217,21 @@ class JobMonitor:
 
     async def _expire_timed_out_running_build(self, pipeline: Pipeline) -> bool:
         params = pipeline.params or {}
-        if params.get("workflow_id", "build.yml") != "build.yml":
+        workflow_id = params.get("workflow_id", "build.yml")
+        if workflow_id not in {"build.yml", "reprocheck.yml"}:
             return False
 
         build_type = params.get("build_type") or "default"
-        timeout = (
-            DEFAULT_BUILD_TIMEOUT if build_type == "default" else EXTENDED_BUILD_TIMEOUT
-        )
+        if workflow_id == "reprocheck.yml":
+            timeout = (
+                DEFAULT_BUILD_TIMEOUT if build_type == "default" else REPROCHECK_TIMEOUT
+            )
+        else:
+            timeout = (
+                DEFAULT_BUILD_TIMEOUT
+                if build_type == "default"
+                else EXTENDED_BUILD_TIMEOUT
+            )
         timeout += BUILD_TIMEOUT_SAFETY_MARGIN
 
         run_info = self._get_github_run_info(pipeline)
@@ -226,7 +250,9 @@ class JobMonitor:
         if jobs is None:
             return False
 
-        started_at = self._get_in_progress_build_job_started_at(jobs)
+        started_at = self._get_in_progress_build_job_started_at(
+            jobs, workflow_id=workflow_id
+        )
         if started_at is None:
             started_at = self._running_pipeline_started_at(pipeline)
             return self._cancel_if_running_build_timed_out(
@@ -275,16 +301,20 @@ class JobMonitor:
         return True
 
     def _get_in_progress_build_job_started_at(
-        self, jobs: list[dict]
+        self, jobs: list[dict], *, workflow_id: str = "build.yml"
     ) -> datetime | None:
         started_at_values: list[datetime] = []
         for job in jobs:
             name = job.get("name")
             started_at = job.get("started_at")
-            if (
-                job.get("status") == "in_progress"
+            is_active_job = (
+                workflow_id == "build.yml"
                 and isinstance(name, str)
                 and name.startswith("build-")
+            ) or (workflow_id == "reprocheck.yml" and name == "reprocheck")
+            if (
+                job.get("status") == "in_progress"
+                and is_active_job
                 and isinstance(started_at, str)
             ):
                 parsed_started_at = self._parse_github_datetime(started_at)

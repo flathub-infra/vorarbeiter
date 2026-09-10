@@ -957,6 +957,8 @@ class BuildPipeline:
                     )
 
             updates["pipeline_status"] = status_value
+            await db.commit()
+            await self.start_pending_builds()
             return pipeline, updates
 
     async def handle_cost_callback(

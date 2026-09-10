@@ -1397,6 +1397,9 @@ def test_pipeline_reprocheck_callback_success(mock_get_db, sample_pipeline):
     with (
         patch("app.routes.pipelines.get_db", mock_get_db_session),
         patch("app.pipelines.build.get_db", side_effect=get_db_side_effect),
+        patch.object(
+            BuildPipeline, "start_pending_builds", new=AsyncMock(return_value=[])
+        ),
     ):
         data = {"status": "success", "build_pipeline_id": str(original_pipeline_id)}
         headers = {"Authorization": "Bearer reprocheck_token"}

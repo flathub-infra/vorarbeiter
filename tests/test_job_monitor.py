@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 
 from app.models import Pipeline, PipelineStatus
 from app.services.job_monitor import JobMonitor
@@ -29,6 +30,14 @@ def mock_pipeline():
 def github_build_job(started_at: datetime, status: str = "in_progress") -> dict:
     return {
         "name": "build-x86_64",
+        "status": status,
+        "started_at": started_at.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def github_reprocheck_job(started_at: datetime, status: str = "in_progress") -> dict:
+    return {
+        "name": "reprocheck",
         "status": status,
         "started_at": started_at.isoformat().replace("+00:00", "Z"),
     }
@@ -451,7 +460,7 @@ async def test_check_jobs_cancels_timed_out_running_builds(
         result = await run_check_all_active_pipelines(session_maker)
 
     assert result["checked_pipelines"] == 4
-    assert result["updated_pipelines"] == 2
+    assert result["updated_pipelines"] == 3
     mock_start.assert_awaited_once()
 
     async with session_maker() as session:
@@ -466,8 +475,158 @@ async def test_check_jobs_cancels_timed_out_running_builds(
         assert refreshed_extended_active.finished_at is None
         assert refreshed_extended_expired.status == PipelineStatus.CANCELLED
         assert refreshed_extended_expired.finished_at is not None
-        assert refreshed_reprocheck.status == PipelineStatus.RUNNING
-        assert refreshed_reprocheck.finished_at is None
+        assert refreshed_reprocheck.status == PipelineStatus.CANCELLED
+        assert refreshed_reprocheck.finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_check_jobs_selects_reprochecks_at_timeout_boundaries(
+    db_session_maker, run_check_all_active_pipelines
+):
+    now = datetime.now(tz=UTC)
+    session_maker = db_session_maker
+    pipelines = [
+        Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.MediumInside",
+            status=PipelineStatus.RUNNING,
+            started_at=now - timedelta(hours=4, minutes=14),
+            created_at=now - timedelta(hours=4, minutes=14),
+            flat_manager_repo="test",
+            params={"workflow_id": "reprocheck.yml", "build_type": "medium"},
+        ),
+        Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.MediumExpired",
+            status=PipelineStatus.RUNNING,
+            started_at=now - timedelta(hours=4, minutes=16),
+            created_at=now - timedelta(hours=4, minutes=16),
+            flat_manager_repo="test",
+            params={"workflow_id": "reprocheck.yml", "build_type": "medium"},
+        ),
+        Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.DefaultInside",
+            status=PipelineStatus.RUNNING,
+            started_at=now - timedelta(hours=6, minutes=14),
+            created_at=now - timedelta(hours=6, minutes=14),
+            flat_manager_repo="test",
+            params={"workflow_id": "reprocheck.yml", "build_type": "default"},
+        ),
+        Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.CreatedExpired",
+            status=PipelineStatus.RUNNING,
+            created_at=now - timedelta(hours=4, minutes=16),
+            flat_manager_repo="test",
+            params={"workflow_id": "reprocheck.yml", "build_type": "medium"},
+        ),
+    ]
+
+    async with session_maker() as session:
+        session.add_all(pipelines)
+        await session.commit()
+
+    with patch("app.pipelines.build.BuildPipeline.start_pending_builds"):
+        result = await run_check_all_active_pipelines(session_maker)
+
+    assert result == {"checked_pipelines": 3, "updated_pipelines": 2}
+
+    async with session_maker() as session:
+        refreshed = {
+            pipeline.id: pipeline
+            for pipeline in (await session.execute(select(Pipeline))).scalars()
+        }
+
+    assert refreshed[pipelines[0].id].status == PipelineStatus.RUNNING
+    assert refreshed[pipelines[1].id].status == PipelineStatus.CANCELLED
+    assert refreshed[pipelines[1].id].finished_at is not None
+    assert refreshed[pipelines[2].id].status == PipelineStatus.RUNNING
+    assert refreshed[pipelines[3].id].status == PipelineStatus.CANCELLED
+    assert refreshed[pipelines[3].id].finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_check_jobs_uses_reprocheck_job_start_time(
+    db_session_maker, run_check_all_active_pipelines
+):
+    now = datetime.now(tz=UTC)
+    session_maker = db_session_maker
+    recent_job = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.RecentJob",
+        status=PipelineStatus.RUNNING,
+        started_at=now - timedelta(hours=8),
+        created_at=now - timedelta(hours=8),
+        flat_manager_repo="test",
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 1},
+        params={"workflow_id": "reprocheck.yml", "build_type": "medium"},
+    )
+    expired_job = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.ExpiredJob",
+        status=PipelineStatus.RUNNING,
+        started_at=now - timedelta(hours=8),
+        created_at=now - timedelta(hours=8),
+        flat_manager_repo="test",
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 2},
+        params={"workflow_id": "reprocheck.yml", "build_type": "medium"},
+    )
+    unavailable_jobs = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.UnavailableJobs",
+        status=PipelineStatus.RUNNING,
+        started_at=now - timedelta(hours=8),
+        created_at=now - timedelta(hours=8),
+        flat_manager_repo="test",
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 3},
+        params={"workflow_id": "reprocheck.yml", "build_type": "medium"},
+    )
+    completed_jobs = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.CompletedJobs",
+        status=PipelineStatus.RUNNING,
+        started_at=now - timedelta(hours=8),
+        created_at=now - timedelta(hours=8),
+        flat_manager_repo="test",
+        provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 4},
+        params={"workflow_id": "reprocheck.yml", "build_type": "medium"},
+    )
+
+    async with session_maker() as session:
+        session.add_all([recent_job, expired_job, unavailable_jobs, completed_jobs])
+        await session.commit()
+
+    async def get_workflow_run_jobs(_owner, _repo, run_id):
+        if run_id == 1:
+            return [github_reprocheck_job(now - timedelta(minutes=10))]
+        if run_id == 2:
+            return [github_reprocheck_job(now - timedelta(hours=4, minutes=16))]
+        if run_id == 3:
+            return None
+        return [github_reprocheck_job(now - timedelta(hours=8), status="completed")]
+
+    with (
+        patch(
+            "app.services.github_actions.GitHubActionsService.get_workflow_run_jobs",
+            side_effect=get_workflow_run_jobs,
+        ),
+        patch("app.pipelines.build.BuildPipeline.start_pending_builds"),
+    ):
+        result = await run_check_all_active_pipelines(session_maker)
+
+    assert result == {"checked_pipelines": 4, "updated_pipelines": 2}
+
+    async with session_maker() as session:
+        refreshed = {
+            pipeline.id: pipeline
+            for pipeline in (await session.execute(select(Pipeline))).scalars()
+        }
+
+    assert refreshed[recent_job.id].status == PipelineStatus.RUNNING
+    assert refreshed[expired_job.id].status == PipelineStatus.CANCELLED
+    assert refreshed[unavailable_jobs.id].status == PipelineStatus.RUNNING
+    assert refreshed[completed_jobs.id].status == PipelineStatus.CANCELLED
 
 
 @pytest.mark.asyncio
