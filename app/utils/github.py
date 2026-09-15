@@ -879,14 +879,17 @@ async def get_linter_warning_messages(
 
     seen: set[str] = set()
 
-    messages = [
-        msg
-        for a in annotations
-        if (msg := a.get("message"))
-        and "warning found in linter" in msg
-        and (parts := msg.split("'"))
-        and len(parts) >= 3
-        and (warning_id := parts[1]) not in seen
-        and not seen.add(warning_id)
-    ]
+    for a in annotations:
+        msg = a.get("message")
+        if (
+            msg
+            and "warning found in linter" in msg
+            and (parts := msg.split("'"))
+            and len(parts) >= 3
+        ):
+            warning_id = parts[1]
+            if warning_id not in seen:
+                seen.add(warning_id)
+                messages.append(msg)
+
     return list(set(messages))
