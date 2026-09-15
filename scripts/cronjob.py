@@ -21,6 +21,7 @@ COMMANDS = (
     "check-jobs",
     "github-tasks-process",
     "github-tasks-cleanup",
+    "inactive-repos-refresh",
     "prune-beta",
     "prune-stable",
 )
@@ -114,6 +115,32 @@ async def prune_repo(repo: str) -> dict[str, Any]:
     return {"result": result}
 
 
+async def refresh_inactive_repos() -> dict[str, Any]:
+    from app.database import get_db
+    from app.services.inactive_repos import InactiveRepoScanner, publish_snapshot
+
+    try:
+        scan = await InactiveRepoScanner().scan()
+        async with get_db() as db:
+            published = await publish_snapshot(db, scan)
+    except Exception as error:
+        structlog.get_logger(__name__).exception("Inactive repository refresh failed")
+        sentry_sdk.capture_exception(error)
+        raise
+
+    return {
+        "status": "completed",
+        "organization": scan.organization,
+        "scan_started_at": scan.scan_started_at.isoformat(),
+        "scan_completed_at": scan.scan_completed_at.isoformat(),
+        "repositories_seen": scan.repositories_seen,
+        "repositories_checked": scan.repositories_checked,
+        "repositories_at_pr_threshold": scan.repositories_at_pr_threshold,
+        "automatic_candidates": len(scan.automatic_candidates),
+        "published": published,
+    }
+
+
 async def close_flat_manager_client() -> None:
     from app.utils import flat_manager
 
@@ -134,6 +161,8 @@ async def dispatch(command: str) -> dict[str, Any]:
             return await process_github_tasks()
         case "github-tasks-cleanup":
             return await cleanup_github_tasks()
+        case "inactive-repos-refresh":
+            return await refresh_inactive_repos()
         case "prune-beta":
             return await prune_repo("beta")
         case "prune-stable":
