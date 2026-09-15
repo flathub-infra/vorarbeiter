@@ -242,6 +242,51 @@ async def test_persistent_authentication_failure_aborts():
 
 
 @pytest.mark.asyncio
+async def test_persistent_rate_limit_aborts_after_attempt_cap(monkeypatch):
+
+    monkeypatch.setattr("app.services.inactive_repos.RATE_LIMIT_MAX_ATTEMPTS", 3)
+    rate_limit = GitHubAPIResult(
+        response=None,
+        should_queue=True,
+        error_type="rate_limit",
+        retry_after=0,
+    )
+    client = FakeClient(lambda url, params: rate_limit)
+
+    scanner = InactiveRepoScanner(auth=FakeAuth(client), sleep=AsyncMock())
+
+    with pytest.raises(InactiveRepoScanError, match="rate limit retries exhausted"):
+        await scanner.scan(scan_started_at=datetime(2026, 9, 15, tzinfo=UTC))
+
+    assert len(client.requests) == 4
+
+
+@pytest.mark.asyncio
+async def test_persistent_rate_limit_aborts_after_delay_cap(monkeypatch):
+
+    monkeypatch.setattr("app.services.inactive_repos.RATE_LIMIT_MAX_TOTAL_DELAY", 60.0)
+    rate_limit = GitHubAPIResult(
+        response=None,
+        should_queue=True,
+        error_type="rate_limit",
+        retry_after=30.0,
+    )
+    client = FakeClient(lambda url, params: rate_limit)
+    sleeps = []
+
+    async def sleep(delay):
+        sleeps.append(delay)
+
+    scanner = InactiveRepoScanner(auth=FakeAuth(client), sleep=sleep)
+
+    with pytest.raises(InactiveRepoScanError, match="rate limit retries exhausted"):
+        await scanner.scan(scan_started_at=datetime(2026, 9, 15, tzinfo=UTC))
+
+    assert sleeps == [30.0, 30.0]
+    assert len(client.requests) == 3
+
+
+@pytest.mark.asyncio
 async def test_unexpected_commit_failure_aborts_scan():
     started_at = datetime(2026, 9, 15, tzinfo=UTC)
 

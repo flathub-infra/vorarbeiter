@@ -23,7 +23,10 @@ PAGE_SIZE = 100
 PR_THRESHOLD = 5
 SERVER_RETRIES = 3
 
+RATE_LIMIT_MAX_ATTEMPTS = 15
+RATE_LIMIT_MAX_TOTAL_DELAY = 21600.0
 OVERRIDE_DIRECTORY = Path(__file__).resolve().parents[2] / "config" / "inactive-repos"
+
 REPOSITORY_BASENAME = re.compile(r"[A-Za-z0-9._-]+", re.ASCII)
 
 
@@ -135,6 +138,8 @@ class InactiveRepoScanner:
         self, url: str, *, params: dict[str, Any], context: dict[str, Any]
     ) -> Any:
         authentication_retried = False
+        rate_limit_attempts = 0
+        rate_limit_total_delay = 0.0
         server_attempt = 0
         while True:
             client = await self.auth.get_client()
@@ -147,8 +152,21 @@ class InactiveRepoScanner:
             )
             if self._is_rate_limited(result):
                 delay = self._rate_limit_delay(result)
+                rate_limit_attempts += 1
+                rate_limit_total_delay += delay
+                if (
+                    rate_limit_attempts > RATE_LIMIT_MAX_ATTEMPTS
+                    or rate_limit_total_delay > RATE_LIMIT_MAX_TOTAL_DELAY
+                ):
+                    raise InactiveRepoScanError(
+                        f"GitHub rate limit retries exhausted for {url}"
+                    )
                 logger.warning(
-                    "Inactive repository scan rate limited", delay=delay, **context
+                    "Inactive repository scan rate limited",
+                    delay=delay,
+                    rate_limit_attempts=rate_limit_attempts,
+                    rate_limit_total_delay=round(rate_limit_total_delay, 1),
+                    **context,
                 )
                 await self.sleep(delay)
                 continue
