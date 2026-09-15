@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.main import app
-from app.models import Pipeline, PipelineStatus
+from app.models import InactiveRepoSnapshot, Pipeline, PipelineStatus
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.routes.webhooks import is_submodule_only_pr
 from tests.conftest import MockHttpxClient, create_mock_get_db
@@ -717,6 +718,55 @@ def test_receive_github_webhook_comments_for_large_app_pr(client):
         comment=(
             "🚧 Test builds for large applications are not started automatically. "
             "To request a test build, comment `bot, build` on this PR."
+        ),
+    )
+
+
+def test_receive_github_webhook_comments_for_inactive_repo_pr(
+    client, mock_db, tmp_path
+):
+
+    timestamp = datetime(2026, 9, 15, tzinfo=UTC)
+    mock_db.get = AsyncMock(
+        return_value=InactiveRepoSnapshot(
+            organization="flathub",
+            scan_started_at=timestamp,
+            scan_completed_at=timestamp,
+            automatic_candidates=["org.test.App"],
+        )
+    )
+    (tmp_path / "exclude.txt").write_text("", encoding="utf-8")
+    (tmp_path / "manual_inactive.txt").write_text("", encoding="utf-8")
+    headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
+    payload = {
+        **SAMPLE_GITHUB_PAYLOAD,
+        "repository": {"full_name": "flathub/org.test.App"},
+    }
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.routes.webhooks.get_db",
+            create_mock_get_db(mock_db),
+        ),
+        patch("app.routes.webhooks.OVERRIDE_DIRECTORY", tmp_path),
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as mock_comment,
+    ):
+        response = client.post(
+            "/api/webhooks/github",
+            json=payload,
+            headers=headers,
+        )
+
+    assert response.status_code == 202
+    assert "ignored due to inactivity" in response.json()["message"]
+    mock_comment.assert_awaited_once_with(
+        git_repo="flathub/org.test.App",
+        pr_number=123,
+        comment=(
+            "🚧 Pull requests in this repository are no longer built automatically "
+            "due to inactivity. To request a test build, comment `bot, build` on "
+            "this PR."
         ),
     )
 

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models import InactiveRepoSnapshot
-from app.routes.inactive_repos import load_override_file
+from app.services.inactive_repos import load_override_file
 from tests.conftest import create_mock_get_db
 
 
@@ -94,7 +94,10 @@ def test_malformed_override_returns_500(client, mock_db, tmp_path):
 
     with (
         patch("app.routes.inactive_repos.get_db", create_mock_get_db(mock_db)),
-        patch("app.routes.inactive_repos.OVERRIDE_DIRECTORY", tmp_path),
+        patch(
+            "app.routes.inactive_repos.OVERRIDE_DIRECTORY",
+            tmp_path,
+        ),
     ):
         response = client.get("/api/inactive-repos.txt")
 

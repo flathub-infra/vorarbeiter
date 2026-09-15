@@ -11,14 +11,20 @@ import httpx2 as httpx
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.database import get_db
+from app.models import InactiveRepoSnapshot
 from app.models.pipeline import Pipeline, PipelineStatus
 from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types, cancel_pipeline
 from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.github_actions import GitHubActionsService
+from app.services.inactive_repos import (
+    OVERRIDE_DIRECTORY,
+    effective_inactive_repositories,
+)
 from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_repo
 from app.utils.github import (
     add_comment_reaction,
@@ -63,6 +69,26 @@ LARGE_APP_TEST_BUILD_MSG = (
     "🚧 Test builds for large applications are not started automatically. "
     "To request a test build, comment `bot, build` on this PR."
 )
+INACTIVE_REPO_TEST_BUILD_MSG = (
+    "🚧 Pull requests in this repository are no longer built automatically due to "
+    "inactivity. To request a test build, comment `bot, build` on this PR."
+)
+
+
+async def is_inactive_repository(repository: str) -> bool:
+    try:
+        async with get_db(use_replica=True) as db:
+            snapshot = await db.get(InactiveRepoSnapshot, "flathub")
+        if snapshot is None:
+            return False
+        return repository in effective_inactive_repositories(
+            snapshot, OVERRIDE_DIRECTORY
+        )
+    except (OSError, SQLAlchemyError, ValueError):
+        logger.exception(
+            "Failed to determine inactive repository status", repository=repository
+        )
+        return False
 
 
 async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
@@ -983,6 +1009,29 @@ async def receive_github_webhook(
             payload
         ):
             return {"message": "Webhook received but ignored due to PR changes filter."}
+
+        repository = repo_name.split("/")[1]
+        if await is_inactive_repository(repository):
+            if payload.get("action") == "opened":
+                pr_number = payload.get("pull_request", {}).get("number")
+                if pr_number:
+                    try:
+                        await create_pr_comment(
+                            git_repo=repo_name,
+                            pr_number=pr_number,
+                            comment=INACTIVE_REPO_TEST_BUILD_MSG,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to post inactive repository test build comment",
+                            repo=repo_name,
+                            pr_number=pr_number,
+                        )
+            return {
+                "message": (
+                    "Pull request webhook received but ignored due to inactivity."
+                )
+            }
 
     is_eol_only = False
     eol_data = None

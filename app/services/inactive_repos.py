@@ -1,8 +1,10 @@
 import asyncio
+import re
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol
 
 import structlog
@@ -20,6 +22,31 @@ BOT_AUTHORS = {"dependabot[bot]", "flathubbot", "github-actions[bot]"}
 PAGE_SIZE = 100
 PR_THRESHOLD = 5
 SERVER_RETRIES = 3
+
+OVERRIDE_DIRECTORY = Path(__file__).resolve().parents[2] / "config" / "inactive-repos"
+REPOSITORY_BASENAME = re.compile(r"[A-Za-z0-9._-]+", re.ASCII)
+
+
+def load_override_file(path: Path) -> set[str]:
+    entries: set[str] = set()
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        entry = raw_line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        if entry in {".", ".."} or REPOSITORY_BASENAME.fullmatch(entry) is None:
+            raise ValueError(f"Malformed repository basename in {path}:{line_number}")
+        entries.add(entry)
+    return entries
+
+
+def effective_inactive_repositories(
+    snapshot: InactiveRepoSnapshot, override_directory: Path = OVERRIDE_DIRECTORY
+) -> set[str]:
+    exclude = load_override_file(override_directory / "exclude.txt")
+    manual_inactive = load_override_file(override_directory / "manual_inactive.txt")
+    return (set(snapshot.automatic_candidates) - exclude) | manual_inactive
 
 
 class InactiveRepoScanError(RuntimeError):
