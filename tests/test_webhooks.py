@@ -692,6 +692,35 @@ async def test_receive_github_webhook_ignores_bot_pr(client, mock_db):
         assert "ignored due to actor filter" in response.json()["message"]
 
 
+def test_receive_github_webhook_comments_for_large_app_pr(client):
+    headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
+    payload = {
+        **SAMPLE_GITHUB_PAYLOAD,
+        "repository": {"full_name": "flathub/org.chromium.Chromium"},
+    }
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as mock_comment,
+    ):
+        response = client.post(
+            "/api/webhooks/github",
+            json=payload,
+            headers=headers,
+        )
+
+    assert response.status_code == 202
+    assert "ignored due to large app" in response.json()["message"]
+    mock_comment.assert_awaited_once_with(
+        git_repo="flathub/org.chromium.Chromium",
+        pr_number=123,
+        comment=(
+            "🚧 Test builds for large applications are not started automatically. "
+            "To request a test build, comment `bot, build` on this PR."
+        ),
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mock_files_response,expected",

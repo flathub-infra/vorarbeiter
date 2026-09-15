@@ -59,6 +59,10 @@ DISABLED_TEST_BUILDS_MSG = (
     "can be retried by posting a `bot, build` comment. Please refer to "
     "{statuspage_url} for updates."
 )
+LARGE_APP_TEST_BUILD_MSG = (
+    "🚧 Test builds for large applications are not started automatically. "
+    "To request a test build, comment `bot, build` on this PR."
+)
 
 
 async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
@@ -953,6 +957,21 @@ async def receive_github_webhook(
 
     if is_pr_event:
         if repo_name.split("/")[1] in app_build_types:
+            if payload.get("action") == "opened":
+                pr_number = payload.get("pull_request", {}).get("number")
+                if pr_number:
+                    try:
+                        await create_pr_comment(
+                            git_repo=repo_name,
+                            pr_number=pr_number,
+                            comment=LARGE_APP_TEST_BUILD_MSG,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to post large app test build comment",
+                            repo=repo_name,
+                            pr_number=pr_number,
+                        )
             return {
                 "message": "Pull request webhook received but ignored due to large app."
             }
