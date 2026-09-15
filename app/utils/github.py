@@ -49,10 +49,10 @@ class GitHubAPIClient:
     DEFAULT_TIMEOUT = 10.0
     DEFAULT_MAX_RETRIES = 3
 
-    def __init__(self, token: str):
+    def __init__(self, token: str, authorization_scheme: str = "token"):
         self.headers = {
             "Accept": "application/vnd.github.v3+json",
-            "Authorization": f"token {token}",
+            "Authorization": f"{authorization_scheme} {token}",
         }
 
     def _is_rate_limit_error(self, response: httpx.Response) -> bool:

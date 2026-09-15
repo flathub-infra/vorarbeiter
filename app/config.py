@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     debug: bool = False
     flathubbot_token: str = "test_flathubbot_token"
     github_actions_token: str = "test_github_actions_token"
+    inactive_repos_github_app_id: int | None = None
+    inactive_repos_github_app_installation_id: int | None = None
+    inactive_repos_github_app_private_key_file: str | None = None
     github_webhook_secret: str = "test_webhook_secret"
     flat_manager_token: str = "test_repo_token"
     flat_manager_url: str = "https://hub.flathub.org"
