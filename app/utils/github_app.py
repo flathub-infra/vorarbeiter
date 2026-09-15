@@ -1,10 +1,18 @@
+import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx2 as httpx
 import jwt
+import structlog
 
 from app.config import settings
 from app.utils.github import GitHubAPIClient
+
+logger = structlog.get_logger(__name__)
+
+TOKEN_EXCHANGE_RATE_LIMIT_RETRIES = 1
 
 
 class GitHubAppAuthenticationError(RuntimeError):
@@ -60,36 +68,88 @@ class GitHubAppInstallationAuth:
     async def _refresh(self) -> None:
         app_id, installation_id, key_file = self._configuration()
         app_jwt = self._app_jwt(app_id, key_file)
-        auth_client = GitHubAPIClient(app_jwt, authorization_scheme="Bearer")
-        result = await auth_client.request_with_result(
-            "post",
-            f"https://api.github.com/app/installations/{installation_id}/access_tokens",
-            raise_for_status=False,
-        )
-        response = result.response
-        if response is None:
-            raise GitHubAppAuthenticationError(
-                f"GitHub App token exchange failed: {result.error_type or 'request error'}"
+        for attempt in range(TOKEN_EXCHANGE_RATE_LIMIT_RETRIES + 1):
+            auth_client = GitHubAPIClient(app_jwt, authorization_scheme="Bearer")
+            result = await auth_client.request_with_result(
+                "post",
+                f"https://api.github.com/app/installations/{installation_id}/access_tokens",
+                raise_for_status=False,
             )
-        if response.status_code not in (200, 201):
-            raise GitHubAppAuthenticationError(
-                f"GitHub App token exchange failed with HTTP {response.status_code}"
+            response = result.response
+            is_rate_limited = result.error_type == "rate_limit" or (
+                response is not None
+                and response.status_code in (403, 429)
+                and self._is_rate_limit_response(response)
             )
+            if is_rate_limited and attempt < TOKEN_EXCHANGE_RATE_LIMIT_RETRIES:
+                delay = self._rate_limit_delay(response, result.retry_after)
+                logger.warning(
+                    "GitHub App token exchange rate limited",
+                    attempt=attempt + 1,
+                    delay=delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            if response is None:
+                raise GitHubAppAuthenticationError(
+                    f"GitHub App token exchange failed: {result.error_type or 'request error'}"
+                )
+            if response.status_code not in (200, 201):
+                raise GitHubAppAuthenticationError(
+                    f"GitHub App token exchange failed with HTTP {response.status_code}"
+                )
+            try:
+                body = response.json()
+                token = body["token"]
+                expires_at = datetime.fromisoformat(body["expires_at"])
+            except (AttributeError, KeyError, TypeError, ValueError) as error:
+                raise GitHubAppAuthenticationError(
+                    "GitHub App token exchange returned an unexpected response"
+                ) from error
+            if not isinstance(token, str) or not token or expires_at.tzinfo is None:
+                raise GitHubAppAuthenticationError(
+                    "GitHub App token exchange returned an unexpected response"
+                )
+            self._token = token
+            self._expires_at = expires_at.astimezone(UTC)
+            self._client = GitHubAPIClient(token, authorization_scheme="Bearer")
+            return
+
+    @staticmethod
+    def _is_rate_limit_response(response: httpx.Response) -> bool:
+        if response.status_code == 429:
+            return True
+        if response.status_code != 403:
+            return False
         try:
             body = response.json()
-            token = body["token"]
-            expires_at = datetime.fromisoformat(body["expires_at"])
-        except (AttributeError, KeyError, TypeError, ValueError) as error:
-            raise GitHubAppAuthenticationError(
-                "GitHub App token exchange returned an unexpected response"
-            ) from error
-        if not isinstance(token, str) or not token or expires_at.tzinfo is None:
-            raise GitHubAppAuthenticationError(
-                "GitHub App token exchange returned an unexpected response"
-            )
-        self._token = token
-        self._expires_at = expires_at.astimezone(UTC)
-        self._client = GitHubAPIClient(token, authorization_scheme="Bearer")
+        except ValueError:
+            return False
+        return (
+            isinstance(body, dict)
+            and "rate limit" in str(body.get("message", "")).lower()
+        )
+
+    @staticmethod
+    def _rate_limit_delay(
+        response: httpx.Response | None, retry_after: float | None
+    ) -> float:
+        if retry_after is not None:
+            return retry_after
+        if response is not None:
+            retry_after_header = response.headers.get("Retry-After")
+            if retry_after_header:
+                try:
+                    return max(float(retry_after_header), 0)
+                except ValueError:
+                    pass
+            reset = response.headers.get("X-RateLimit-Reset")
+            if reset:
+                try:
+                    return max(float(reset) - time.time(), 0) + 1
+                except ValueError:
+                    pass
+        return 60.0
 
     async def get_client(self) -> GitHubAPIClient:
         now = datetime.now(UTC)

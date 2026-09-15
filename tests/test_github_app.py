@@ -115,3 +115,47 @@ async def test_invalidated_installation_token_is_exchanged_again():
         assert await auth.get_client() is first_scanner
         auth.invalidate()
         assert await auth.get_client() is second_scanner
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_token_exchange_retries_once_and_succeeds():
+    auth = GitHubAppInstallationAuth()
+    rate_limited = httpx.Response(
+        403,
+        json={"message": "API rate limit exceeded"},
+        headers={"Retry-After": "30"},
+    )
+    success = httpx.Response(
+        201,
+        json={"token": "token", "expires_at": "2999-01-01T00:00:00Z"},
+    )
+    first_exchange = Mock()
+    first_exchange.request_with_result = AsyncMock(
+        return_value=GitHubAPIResult(response=rate_limited)
+    )
+    second_exchange = Mock()
+    second_exchange.request_with_result = AsyncMock(
+        return_value=GitHubAPIResult(response=success)
+    )
+    scanner_client = Mock()
+
+    with (
+        patch.object(auth, "_app_jwt", return_value="app-jwt"),
+        patch(
+            "app.utils.github_app.GitHubAPIClient",
+            side_effect=[first_exchange, second_exchange, scanner_client],
+        ),
+        patch("app.utils.github_app.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        patch("app.utils.github_app.settings.inactive_repos_github_app_id", 1),
+        patch(
+            "app.utils.github_app.settings.inactive_repos_github_app_installation_id", 2
+        ),
+        patch(
+            "app.utils.github_app.settings.inactive_repos_github_app_private_key_file",
+            "/private-key.pem",
+        ),
+    ):
+        assert await auth.get_client() is scanner_client
+
+    mock_sleep.assert_awaited_once_with(30.0)
+    assert second_exchange.request_with_result.await_count == 1
