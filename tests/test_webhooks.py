@@ -722,10 +722,7 @@ def test_receive_github_webhook_comments_for_large_app_pr(client):
     )
 
 
-def test_receive_github_webhook_comments_for_inactive_repo_pr(
-    client, mock_db, tmp_path
-):
-
+def test_receive_github_webhook_comments_for_inactive_repo_pr(client, mock_db):
     timestamp = datetime(2026, 9, 15, tzinfo=UTC)
     mock_db.get = AsyncMock(
         return_value=InactiveRepoSnapshot(
@@ -735,8 +732,6 @@ def test_receive_github_webhook_comments_for_inactive_repo_pr(
             automatic_candidates=["org.test.App"],
         )
     )
-    (tmp_path / "exclude.txt").write_text("", encoding="utf-8")
-    (tmp_path / "manual_inactive.txt").write_text("", encoding="utf-8")
     headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
     payload = {
         **SAMPLE_GITHUB_PAYLOAD,
@@ -749,7 +744,6 @@ def test_receive_github_webhook_comments_for_inactive_repo_pr(
             "app.routes.webhooks.get_db",
             create_mock_get_db(mock_db),
         ),
-        patch("app.routes.webhooks.OVERRIDE_DIRECTORY", tmp_path),
         patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as mock_comment,
     ):
         response = client.post(

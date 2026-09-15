@@ -21,10 +21,6 @@ from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types, cancel_pipeline
 from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.github_actions import GitHubActionsService
-from app.services.inactive_repos import (
-    OVERRIDE_DIRECTORY,
-    effective_inactive_repositories,
-)
 from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_repo
 from app.utils.github import (
     add_comment_reaction,
@@ -81,10 +77,8 @@ async def is_inactive_repository(repository: str) -> bool:
             snapshot = await db.get(InactiveRepoSnapshot, "flathub")
         if snapshot is None:
             return False
-        return repository in effective_inactive_repositories(
-            snapshot, OVERRIDE_DIRECTORY
-        )
-    except (OSError, SQLAlchemyError, ValueError):
+        return repository in set(snapshot.automatic_candidates)
+    except SQLAlchemyError:
         logger.exception(
             "Failed to determine inactive repository status", repository=repository
         )

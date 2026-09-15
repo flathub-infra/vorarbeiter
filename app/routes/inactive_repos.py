@@ -8,10 +8,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import get_db
 from app.models import InactiveRepoSnapshot
-from app.services.inactive_repos import (
-    OVERRIDE_DIRECTORY,
-    effective_inactive_repositories,
-)
 
 inactive_repos_router = APIRouter(prefix="/api", tags=["inactive-repos"])
 logger = structlog.get_logger(__name__)
@@ -33,14 +29,7 @@ async def inactive_repositories() -> Response:
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Inactive repository snapshot is not initialized",
         )
-    try:
-        effective = effective_inactive_repositories(snapshot, OVERRIDE_DIRECTORY)
-    except (OSError, ValueError) as error:
-        logger.exception("Inactive repository override read failed")
-        raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Inactive repository overrides unavailable",
-        ) from error
+    effective = set(snapshot.automatic_candidates)
     body = "".join(f"{name}\n" for name in sorted(effective))
     completed_at = snapshot.scan_completed_at
     if completed_at.tzinfo is None:
