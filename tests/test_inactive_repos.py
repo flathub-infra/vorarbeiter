@@ -138,6 +138,32 @@ async def test_scan_classification_boundaries_and_pagination():
 
 
 @pytest.mark.asyncio
+async def test_legally_restricted_repository_is_reported_and_scan_continues():
+    started_at = datetime(2026, 9, 15, tzinfo=UTC)
+    cutoff = started_at - timedelta(days=21)
+    bot_prs = [pull_request("flathubbot")] * 5
+
+    def handler(url, params):
+        if url.endswith("/orgs/flathub/repos"):
+            return response(200, [repository("restricted"), repository("candidate")])
+        name = url.split("/")[5]
+        if name == "restricted":
+            return response(451, {"message": "Unavailable For Legal Reasons"})
+        if url.endswith("/pulls"):
+            return response(200, bot_prs)
+        return response(200, [commit(cutoff - timedelta(seconds=1))])
+
+    result = await InactiveRepoScanner(auth=FakeAuth(FakeClient(handler))).scan(
+        scan_started_at=started_at
+    )
+
+    assert result.automatic_candidates == ["candidate"]
+    assert result.repositories_checked == 2
+    assert result.repositories_at_pr_threshold == 1
+    assert result.unobservable_repositories == ["restricted"]
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_retries_same_page_and_refreshes_client_after_wait():
     started_at = datetime(2026, 9, 15, tzinfo=UTC)
     repo_result = response(200, [repository("limited")])

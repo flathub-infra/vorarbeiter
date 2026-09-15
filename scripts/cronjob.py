@@ -136,6 +136,7 @@ async def refresh_inactive_repos() -> dict[str, Any]:
         "repositories_seen": scan.repositories_seen,
         "repositories_checked": scan.repositories_checked,
         "repositories_at_pr_threshold": scan.repositories_at_pr_threshold,
+        "repositories_unobservable": len(scan.unobservable_repositories),
         "automatic_candidates": len(scan.automatic_candidates),
         "published": published,
     }

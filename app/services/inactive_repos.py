@@ -1,7 +1,7 @@
 import asyncio
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -26,6 +26,10 @@ class InactiveRepoScanError(RuntimeError):
     pass
 
 
+class GitHubLegalRestrictionError(InactiveRepoScanError):
+    pass
+
+
 @dataclass(frozen=True)
 class InactiveRepoScanResult:
     organization: str
@@ -35,6 +39,7 @@ class InactiveRepoScanResult:
     repositories_seen: int
     repositories_checked: int
     repositories_at_pr_threshold: int
+    unobservable_repositories: list[str] = field(default_factory=list)
 
 
 class ScannerClient(Protocol):
@@ -142,6 +147,10 @@ class InactiveRepoScanner:
                 server_attempt += 1
                 await self.sleep(delay)
                 continue
+            if response.status_code == 451:
+                raise GitHubLegalRestrictionError(
+                    f"GitHub legally restricted access to {url}"
+                )
             if not 200 <= response.status_code < 300:
                 raise InactiveRepoScanError(
                     f"GitHub request failed with HTTP {response.status_code} for {url}"
@@ -239,6 +248,7 @@ class InactiveRepoScanner:
         repositories_seen = 0
         repositories_checked = 0
         repositories_at_pr_threshold = 0
+        unobservable_repositories: set[str] = set()
         url = f"https://api.github.com/orgs/{organization}/repos"
         logger.info(
             "Inactive repository scan started",
@@ -286,12 +296,21 @@ class InactiveRepoScanner:
                         "GitHub returned an unexpected repository response"
                     )
                 repositories_checked += 1
-                if not await self._has_bot_pr_threshold(organization, name):
+                try:
+                    if not await self._has_bot_pr_threshold(organization, name):
+                        continue
+                    repositories_at_pr_threshold += 1
+                    commit_time = await self._latest_commit_time(
+                        organization, name, default_branch
+                    )
+                except GitHubLegalRestrictionError:
+                    unobservable_repositories.add(name)
+                    logger.warning(
+                        "Inactive repository scan skipped legally restricted repository",
+                        organization=organization,
+                        repository=name,
+                    )
                     continue
-                repositories_at_pr_threshold += 1
-                commit_time = await self._latest_commit_time(
-                    organization, name, default_branch
-                )
                 if commit_time is not None and commit_time < cutoff:
                     candidates.add(name)
         completed_at = datetime.now(UTC)
@@ -303,6 +322,7 @@ class InactiveRepoScanner:
             repositories_seen=repositories_seen,
             repositories_checked=repositories_checked,
             repositories_at_pr_threshold=repositories_at_pr_threshold,
+            unobservable_repositories=sorted(unobservable_repositories),
         )
         logger.info(
             "Inactive repository scan completed",
@@ -312,6 +332,7 @@ class InactiveRepoScanner:
             repositories_checked=repositories_checked,
             repositories_at_pr_threshold=repositories_at_pr_threshold,
             automatic_candidates=len(candidates),
+            repositories_unobservable=len(unobservable_repositories),
         )
         return result
 
