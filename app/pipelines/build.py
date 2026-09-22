@@ -124,6 +124,7 @@ async def _validate_and_prepare_callback(
         PipelineStatus.SUCCEEDED,
         PipelineStatus.PUBLISHED,
         PipelineStatus.CANCELLED,
+        PipelineStatus.SUPERSEDED,
     ]:
         raise ValueError("Pipeline status already finalized")
 
@@ -682,31 +683,35 @@ class BuildPipeline:
 
             updates: dict[str, Any] = {}
 
+            infrastructure_cancellation = False
+            if status_value in ["failure", "cancelled"]:
+                github_actions = GitHubActionsService()
+                try:
+                    infrastructure_cancellation = (
+                        await github_actions.check_run_was_cancelled(
+                            pipeline.provider_data
+                        )
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "Failed to check if build was cancelled",
+                        pipeline_id=str(pipeline_id),
+                        error=str(e),
+                    )
+
             match status_value:
                 case "success":
                     pipeline.status = PipelineStatus.SUCCEEDED
                     pipeline.finished_at = datetime.now(tz=UTC)
                 case "failure":
-                    github_actions = GitHubActionsService()
-                    try:
-                        was_cancelled = await github_actions.check_run_was_cancelled(
-                            pipeline.provider_data
-                        )
-                        if was_cancelled:
-                            logger.info(
-                                "Build reclassified from failed to cancelled",
-                                pipeline_id=str(pipeline_id),
-                            )
-                            pipeline.status = PipelineStatus.CANCELLED
-                            status_value = "cancelled"
-                        else:
-                            pipeline.status = PipelineStatus.FAILED
-                    except Exception as e:
-                        logger.exception(
-                            "Failed to check if build was cancelled, treating as failed",
+                    if infrastructure_cancellation:
+                        logger.info(
+                            "Build reclassified from failed to cancelled",
                             pipeline_id=str(pipeline_id),
-                            error=str(e),
                         )
+                        pipeline.status = PipelineStatus.CANCELLED
+                        status_value = "cancelled"
+                    else:
                         pipeline.status = PipelineStatus.FAILED
                     pipeline.finished_at = datetime.now(tz=UTC)
                 case "cancelled":
@@ -716,7 +721,7 @@ class BuildPipeline:
             await db.commit()
 
             if (
-                status_value == "cancelled"
+                infrastructure_cancellation
                 and pipeline.flat_manager_repo in ["stable", "beta"]
                 and not pipeline.params.get("auto_retried")
             ):

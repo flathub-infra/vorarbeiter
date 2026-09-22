@@ -939,63 +939,108 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
 
 
 @pytest.mark.asyncio
-async def test_handle_status_callback_no_auto_retry_test_cancelled(
+async def test_handle_status_callback_test_infrastructure_cancellation(
     build_pipeline, mock_db, sample_pipeline
 ):
-    """Test that test builds are NOT automatically retried when cancelled."""
     sample_pipeline.flat_manager_repo = "test"
-    sample_pipeline.params = {"branch": "main"}
     mock_db.get.return_value = sample_pipeline
-    mock_db.flush = AsyncMock()
-
     mock_get_db = create_mock_get_db(mock_db)
+    notifier = MagicMock()
+    notifier.handle_build_completion = AsyncMock()
 
     with (
         patch("app.pipelines.build.get_db", mock_get_db),
         patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
         ) as mock_check_cancelled,
+        patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
+        patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create,
     ):
         mock_check_cancelled.return_value = True
-        with patch.object(
-            build_pipeline, "create_pipeline", new_callable=AsyncMock
-        ) as mock_create:
-            pipeline, _updates = await build_pipeline.handle_status_callback(
-                sample_pipeline.id, {"status": "failure"}
-            )
+
+        pipeline, updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "failure"}
+        )
 
     assert pipeline.status == PipelineStatus.CANCELLED
-    mock_create.assert_not_called()
+    assert updates["pipeline_status"] == "cancelled"
+    mock_check_cancelled.assert_awaited_once_with(sample_pipeline.provider_data)
+    mock_create.assert_not_awaited()
+    notifier.handle_build_completion.assert_awaited_once_with(
+        sample_pipeline,
+        "cancelled",
+        flat_manager_client=None,
+    )
 
 
 @pytest.mark.asyncio
-async def test_handle_status_callback_no_auto_retry_already_retried(
-    build_pipeline, mock_db, sample_pipeline
+@pytest.mark.parametrize("classifier_result", [True, False])
+async def test_handle_status_callback_test_cancelled_does_not_retry(
+    build_pipeline, mock_db, sample_pipeline, classifier_result
 ):
-    """Test that already-retried builds are NOT retried again."""
-    sample_pipeline.flat_manager_repo = "stable"
-    sample_pipeline.params = {"branch": "main", "auto_retried": True}
+    sample_pipeline.flat_manager_repo = "test"
     mock_db.get.return_value = sample_pipeline
-    mock_db.flush = AsyncMock()
-
     mock_get_db = create_mock_get_db(mock_db)
+    notifier = MagicMock()
+    notifier.handle_build_completion = AsyncMock()
 
     with (
         patch("app.pipelines.build.get_db", mock_get_db),
         patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
         ) as mock_check_cancelled,
-    ):
-        mock_check_cancelled.return_value = True
-        with patch.object(
+        patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
+        patch.object(
             build_pipeline, "create_pipeline", new_callable=AsyncMock
-        ) as mock_create:
-            pipeline, _updates = await build_pipeline.handle_status_callback(
-                sample_pipeline.id, {"status": "failure"}
-            )
+        ) as mock_create,
+    ):
+        mock_check_cancelled.return_value = classifier_result
+
+        pipeline, _updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "cancelled"}
+        )
 
     assert pipeline.status == PipelineStatus.CANCELLED
-    mock_create.assert_not_called()
+    mock_check_cancelled.assert_awaited_once_with(sample_pipeline.provider_data)
+    mock_create.assert_not_awaited()
+    notifier.handle_build_completion.assert_awaited_once_with(
+        sample_pipeline, "cancelled", flat_manager_client=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_status_callback_test_cancellation_check_error_does_not_retry(
+    build_pipeline, mock_db, sample_pipeline
+):
+    sample_pipeline.flat_manager_repo = "test"
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+    notifier = MagicMock()
+    notifier.handle_build_completion = AsyncMock()
+
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled,
+        patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
+        patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create,
+    ):
+        mock_check_cancelled.side_effect = Exception("API error")
+
+        pipeline, _updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "cancelled"}
+        )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    mock_create.assert_not_awaited()
+    notifier.handle_build_completion.assert_awaited_once_with(
+        sample_pipeline, "cancelled", flat_manager_client=None
+    )
 
 
 def test_pipeline_metadata_callback_app_id(mock_get_db, sample_pipeline):
@@ -1363,6 +1408,31 @@ def test_pipeline_status_callback_rejected_for_cancelled(mock_get_db, sample_pip
 
     assert response.status_code == 409
     assert "Pipeline status already finalized" in response.json()["detail"]
+
+
+def test_pipeline_status_callback_rejected_for_superseded(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.status = PipelineStatus.SUPERSEDED
+
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/status",
+            json={"status": "cancelled"},
+            headers={"Authorization": "Bearer test_token_12345"},
+        )
+
+    assert response.status_code == 409
+    assert "Pipeline status already finalized" in response.json()["detail"]
+    assert sample_pipeline.status == PipelineStatus.SUPERSEDED
 
 
 def test_pipeline_status_callback_missing_status(mock_get_db, sample_pipeline):
