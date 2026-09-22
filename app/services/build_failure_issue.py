@@ -19,12 +19,10 @@ from app.utils.github import (
 
 logger = structlog.get_logger(__name__)
 
-ISSUE_TITLE = "Stable build failed"
-
 
 class BuildFailureIssueService:
     async def handle_result(self, pipeline: Pipeline, status: str) -> None:
-        if pipeline.flat_manager_repo != "stable" or status not in {
+        if pipeline.flat_manager_repo not in {"stable", "beta"} or status not in {
             "success",
             "failure",
         }:
@@ -33,15 +31,16 @@ class BuildFailureIssueService:
         git_repo = (pipeline.params or {}).get("repo")
         if not git_repo:
             logger.error(
-                "Missing git_repo in params. Cannot track stable build issue",
+                "Missing git_repo in params. Cannot track build issue",
                 pipeline_id=str(pipeline.id),
+                flat_manager_repo=pipeline.flat_manager_repo,
             )
             return
 
         try:
             async with get_db() as db:
                 state, created = await self._reserve_state(
-                    db, pipeline.app_id, git_repo
+                    db, pipeline.app_id, git_repo, pipeline.flat_manager_repo
                 )
                 if created and not await self._adopt_legacy_issue(
                     db, state, pipeline.app_id
@@ -54,9 +53,10 @@ class BuildFailureIssueService:
                     await self._handle_success(state, pipeline)
         except Exception as error:
             logger.exception(
-                "Failed to update stable build issue state",
+                "Failed to update build issue state",
                 pipeline_id=str(pipeline.id),
                 app_id=pipeline.app_id,
+                flat_manager_repo=pipeline.flat_manager_repo,
                 error=str(error),
             )
 
@@ -84,19 +84,24 @@ class BuildFailureIssueService:
                 sha = normalize_git_oid(state.latest_sha)
                 if sha is None:
                     return None
+                fallback_ref = (
+                    "refs/heads/beta"
+                    if state.flat_manager_repo == "beta"
+                    else "refs/heads/master"
+                )
                 ref = await parse_build_ref_from_log(
-                    state.latest_build_url, "refs/heads/master"
+                    state.latest_build_url, fallback_ref
                 )
                 return {
                     "sha": sha,
                     "repo": git_repo,
                     "ref": ref,
-                    "flat_manager_repo": "stable",
+                    "flat_manager_repo": state.flat_manager_repo,
                     "issue_type": "build_failure",
                 }
         except Exception as error:
             logger.exception(
-                "Failed to resolve stable build retry metadata",
+                "Failed to resolve build retry metadata",
                 git_repo=git_repo,
                 app_id=app_id,
                 issue_number=issue_number,
@@ -109,17 +114,25 @@ class BuildFailureIssueService:
         db: AsyncSession,
         app_id: str,
         git_repo: str,
+        flat_manager_repo: str,
     ) -> tuple[BuildFailureIssue, bool]:
         statement = (
             select(BuildFailureIssue)
-            .where(BuildFailureIssue.app_id == app_id)
+            .where(
+                BuildFailureIssue.app_id == app_id,
+                BuildFailureIssue.flat_manager_repo == flat_manager_repo,
+            )
             .with_for_update()
         )
         state = (await db.execute(statement)).scalar_one_or_none()
         if state is not None:
             return state, False
 
-        state = BuildFailureIssue(app_id=app_id, git_repo=git_repo)
+        state = BuildFailureIssue(
+            app_id=app_id,
+            git_repo=git_repo,
+            flat_manager_repo=flat_manager_repo,
+        )
         db.add(state)
         try:
             await db.flush()
@@ -142,12 +155,15 @@ class BuildFailureIssueService:
             await db.delete(state)
             return False
 
-        expected_prefix = f"The stable build pipeline for `{app_id}` failed."
+        title = f"{state.flat_manager_repo.capitalize()} build failed"
+        expected_prefix = (
+            f"The {state.flat_manager_repo} build pipeline for `{app_id}` failed."
+        )
         matches = [
             issue
             for issue in issues
             if "pull_request" not in issue
-            and issue.get("title") == ISSUE_TITLE
+            and issue.get("title") == title
             and isinstance(issue.get("body"), str)
             and issue["body"].startswith(expected_prefix)
             and isinstance(issue.get("number"), int)
@@ -159,8 +175,9 @@ class BuildFailureIssueService:
         state.issue_number = adopted["number"]
         if len(matches) > 1:
             logger.warning(
-                "Found duplicate open stable build issues",
+                "Found duplicate open build issues",
                 app_id=app_id,
+                flat_manager_repo=state.flat_manager_repo,
                 adopted_issue_number=state.issue_number,
                 duplicate_issue_numbers=sorted(
                     issue["number"]
@@ -198,8 +215,9 @@ class BuildFailureIssueService:
             return
 
         logger.warning(
-            "Unknown stable build issue state",
+            "Unknown build issue state",
             app_id=pipeline.app_id,
+            flat_manager_repo=state.flat_manager_repo,
             issue_number=state.issue_number,
             issue_state=issue_state,
         )
@@ -222,8 +240,9 @@ class BuildFailureIssueService:
             return
         if issue_state != "open":
             logger.warning(
-                "Unknown stable build issue state",
+                "Unknown build issue state",
                 app_id=pipeline.app_id,
+                flat_manager_repo=state.flat_manager_repo,
                 issue_number=state.issue_number,
                 issue_state=issue_state,
             )
@@ -245,7 +264,7 @@ class BuildFailureIssueService:
     ) -> None:
         result = await create_github_issue(
             git_repo=git_repo,
-            title=ISSUE_TITLE,
+            title=f"{state.flat_manager_repo.capitalize()} build failed",
             body=self._build_issue_body(pipeline),
         )
         if result is None:
@@ -257,8 +276,9 @@ class BuildFailureIssueService:
         state.latest_sha = (pipeline.params or {}).get("sha")
         state.latest_build_url = pipeline.log_url
         logger.info(
-            "Created stable build failure issue",
+            "Created build failure issue",
             pipeline_id=str(pipeline.id),
+            flat_manager_repo=state.flat_manager_repo,
             issue_url=issue_url,
             issue_number=issue_number,
         )
@@ -266,7 +286,7 @@ class BuildFailureIssueService:
     def _build_issue_body(self, pipeline: Pipeline) -> str:
         sha = (pipeline.params or {}).get("sha")
         body = (
-            f"The stable build pipeline for `{pipeline.app_id}` failed."
+            f"The {pipeline.flat_manager_repo} build pipeline for `{pipeline.app_id}` failed."
             f"\n\nCommit SHA: {sha}\n"
         )
 
@@ -287,13 +307,14 @@ class BuildFailureIssueService:
     def _failure_comment(self, pipeline: Pipeline) -> str:
         sha, log_url = self._display_metadata(pipeline)
         return (
-            f"Another stable build failed.\n\nCommit SHA: {sha}\nBuild log: {log_url}"
+            f"Another {pipeline.flat_manager_repo} build failed."
+            f"\n\nCommit SHA: {sha}\nBuild log: {log_url}"
         )
 
     def _success_comment(self, pipeline: Pipeline) -> str:
         sha, log_url = self._display_metadata(pipeline)
         return (
-            "A subsequent stable build succeeded."
+            f"A subsequent {pipeline.flat_manager_repo} build succeeded."
             f"\n\nCommit SHA: {sha}\nBuild log: {log_url}"
         )
 

@@ -1914,6 +1914,25 @@ SAMPLE_ISSUE_BODY_STABLE = """The stable build pipeline for `test-app` failed.
 Commit SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 Build log: https://github.com/flathub-infra/vorarbeiter/actions/runs/123456789"""
 
+SAMPLE_ISSUE_BODY_BETA = """The beta build pipeline for `test-app` failed.
+
+Commit SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+Build log: https://github.com/flathub-infra/vorarbeiter/actions/runs/987654321"""
+
+SAMPLE_ISSUE_BODY_BETA_JOB_FAILURE = """The publish job for `test-app` failed in the beta repository.
+
+**Build Information:**
+- Commit SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+- Build ID: 456
+- Build log: https://example.com/log/123"""
+
+SAMPLE_ISSUE_BODY_BETA_VALIDATION_FAILURE = """The build for `test-app` failed validation during publication in the beta repository.
+
+**Build Information:**
+- Commit SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+- Build ID: 456
+- Build log: https://github.com/flathub-infra/vorarbeiter/actions/runs/987654321"""
+
 SAMPLE_ISSUE_BODY_JOB_FAILURE = """The commit job for `test-app` failed in the stable repository.
 
 **Build Information:**
@@ -1956,53 +1975,110 @@ SAMPLE_RETRY_COMMENT_PAYLOAD = {
 
 
 @pytest.mark.asyncio
-async def test_parse_failure_issue_stable_build():
-    from app.routes.webhooks import parse_failure_issue
-
-    result = await parse_failure_issue(SAMPLE_ISSUE_BODY_STABLE, "flathub/test-app")
-
-    assert result is not None
-    assert result["sha"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    assert result["repo"] == "flathub/test-app"
-    assert result["ref"] == "refs/heads/master"
-    assert result["flat_manager_repo"] == "stable"
-    assert result["issue_type"] == "build_failure"
-
-
-@pytest.mark.asyncio
-async def test_parse_failure_issue_job_failure():
-    from app.routes.webhooks import parse_failure_issue
-
-    result = await parse_failure_issue(
-        SAMPLE_ISSUE_BODY_JOB_FAILURE, "flathub/test-app"
-    )
-
-    assert result is not None
-    assert result["sha"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    assert result["repo"] == "flathub/test-app"
-    assert result["ref"] == "refs/heads/master"
-    assert result["flat_manager_repo"] == "stable"
-    assert result["issue_type"] == "job_failure"
-    assert result["job_type"] == "commit"
-
-
-@pytest.mark.asyncio
-async def test_parse_failure_issue_validation_failure():
+@pytest.mark.parametrize(
+    ("issue_body", "workflow_title", "sha", "ref", "flat_manager_repo"),
+    [
+        (
+            SAMPLE_ISSUE_BODY_STABLE,
+            "Build from refs/heads/master",
+            "a" * 40,
+            "refs/heads/master",
+            "stable",
+        ),
+        (SAMPLE_ISSUE_BODY_BETA, None, "b" * 40, "refs/heads/beta", "beta"),
+    ],
+)
+async def test_parse_failure_issue_build(
+    issue_body, workflow_title, sha, ref, flat_manager_repo
+):
     from app.routes.webhooks import parse_failure_issue
 
     with patch(
         "app.utils.github.get_workflow_run_title",
-        AsyncMock(return_value="Build from refs/heads/master"),
+        AsyncMock(return_value=workflow_title),
     ):
-        result = await parse_failure_issue(
-            SAMPLE_ISSUE_BODY_VALIDATION_FAILURE, "flathub/test-app"
-        )
+        result = await parse_failure_issue(issue_body, "flathub/test-app")
 
     assert result is not None
-    assert result["sha"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert result["sha"] == sha
     assert result["repo"] == "flathub/test-app"
-    assert result["ref"] == "refs/heads/master"
-    assert result["flat_manager_repo"] == "stable"
+    assert result["ref"] == ref
+    assert result["flat_manager_repo"] == flat_manager_repo
+    assert result["issue_type"] == "build_failure"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("issue_body", "sha", "ref", "flat_manager_repo", "job_type"),
+    [
+        (
+            SAMPLE_ISSUE_BODY_JOB_FAILURE,
+            "a" * 40,
+            "refs/heads/master",
+            "stable",
+            "commit",
+        ),
+        (
+            SAMPLE_ISSUE_BODY_BETA_JOB_FAILURE,
+            "b" * 40,
+            "refs/heads/beta",
+            "beta",
+            "publish",
+        ),
+    ],
+)
+async def test_parse_failure_issue_job_failure(
+    issue_body, sha, ref, flat_manager_repo, job_type
+):
+    from app.routes.webhooks import parse_failure_issue
+
+    result = await parse_failure_issue(issue_body, "flathub/test-app")
+
+    assert result is not None
+    assert result["sha"] == sha
+    assert result["repo"] == "flathub/test-app"
+    assert result["ref"] == ref
+    assert result["flat_manager_repo"] == flat_manager_repo
+    assert result["issue_type"] == "job_failure"
+    assert result["job_type"] == job_type
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("issue_body", "workflow_title", "sha", "ref", "flat_manager_repo"),
+    [
+        (
+            SAMPLE_ISSUE_BODY_VALIDATION_FAILURE,
+            "Build from refs/heads/master",
+            "a" * 40,
+            "refs/heads/master",
+            "stable",
+        ),
+        (
+            SAMPLE_ISSUE_BODY_BETA_VALIDATION_FAILURE,
+            None,
+            "b" * 40,
+            "refs/heads/beta",
+            "beta",
+        ),
+    ],
+)
+async def test_parse_failure_issue_validation_failure(
+    issue_body, workflow_title, sha, ref, flat_manager_repo
+):
+    from app.routes.webhooks import parse_failure_issue
+
+    with patch(
+        "app.utils.github.get_workflow_run_title",
+        AsyncMock(return_value=workflow_title),
+    ):
+        result = await parse_failure_issue(issue_body, "flathub/test-app")
+
+    assert result is not None
+    assert result["sha"] == sha
+    assert result["repo"] == "flathub/test-app"
+    assert result["ref"] == ref
+    assert result["flat_manager_repo"] == flat_manager_repo
     assert result["issue_type"] == "validation_failure"
 
 

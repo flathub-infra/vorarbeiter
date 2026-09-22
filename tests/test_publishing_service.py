@@ -284,13 +284,18 @@ async def test_handle_build_state_already_published(publishing_service):
 
 
 @pytest.mark.asyncio
-async def test_handle_build_state_failed(publishing_service):
+@pytest.mark.parametrize("channel", ["stable", "beta"])
+async def test_handle_build_state_failed_creates_validation_issue(
+    publishing_service, channel
+):
     pipeline = Pipeline(
         id=uuid.uuid4(),
+        app_id="org.test.App",
         status=PipelineStatus.SUCCEEDED,
         build_id=123,
-        flat_manager_repo="stable",
-        params={},
+        flat_manager_repo=channel,
+        log_url="https://example.com/logs/123",
+        params={"repo": "flathub/org.test.App", "sha": "b" * 40},
     )
     checks = [
         {
@@ -312,19 +317,26 @@ async def test_handle_build_state_failed(publishing_service):
     }
     result = PublishResult()
     now = datetime.now(UTC)
+    issue_url = "https://github.com/flathub/org.test.App/issues/2"
 
-    with patch.object(
-        publishing_service, "_create_validation_failure_issue", new_callable=AsyncMock
-    ) as mock_issue:
+    with patch(
+        "app.services.github_notifier.create_github_issue",
+        AsyncMock(return_value=(issue_url, 2)),
+    ) as create_issue:
         await publishing_service._handle_build_state(pipeline, build_info, result, now)
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at == now
     assert len(result.errors) == 1
     assert "repo_state FAILED" in result.errors[0]["error"]
-    mock_issue.assert_awaited_once_with(
-        pipeline, "1 out of 1 checks failed (flathub-hooks)", checks
+    create_issue.assert_awaited_once()
+    assert create_issue.await_args is not None
+    assert create_issue.await_args.kwargs["git_repo"] == "flathub/org.test.App"
+    assert create_issue.await_args.kwargs["title"] == (
+        f"{channel.capitalize()} publish validation failed for org.test.App"
     )
+    assert f"in the {channel} repository" in create_issue.await_args.kwargs["body"]
+    assert pipeline.failure_issue_url == issue_url
 
 
 @pytest.mark.asyncio

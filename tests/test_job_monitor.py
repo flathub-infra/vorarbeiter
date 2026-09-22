@@ -894,17 +894,17 @@ async def test_check_published_pipeline_jobs_handles_exception(job_monitor):
 
 
 @pytest.mark.asyncio
-async def test_process_publish_job_failed(job_monitor):
+@pytest.mark.parametrize("channel", ["stable", "beta"])
+async def test_process_publish_job_failed_creates_issue(job_monitor, channel):
     pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id="org.test.App",
         status=PipelineStatus.COMMITTED,
         publish_job_id=67890,
         build_id=123,
-        flat_manager_repo="stable",
-        params={},
+        flat_manager_repo=channel,
+        params={"repo": "flathub/org.test.App", "sha": "b" * 40},
     )
-
     job_response = {
         "status": JobStatus.BROKEN,
         "kind": JobKind.PUBLISH,
@@ -912,18 +912,28 @@ async def test_process_publish_job_failed(job_monitor):
     }
 
     with (
-        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
-        patch.object(job_monitor, "_create_job_failure_issue") as mock_create_issue,
+        patch.object(
+            job_monitor.flat_manager, "get_job", AsyncMock(return_value=job_response)
+        ),
+        patch.object(job_monitor, "_notify_flat_manager_job_completed", AsyncMock()),
+        patch(
+            "app.services.github_notifier.create_github_issue",
+            AsyncMock(
+                return_value=("https://github.com/flathub/org.test.App/issues/2", 2)
+            ),
+        ) as create_issue,
     ):
-        mock_get_job.return_value = job_response
-
         result = await job_monitor.check_and_update_pipeline_jobs(pipeline)
 
-        assert result is True
-        assert pipeline.status == PipelineStatus.FAILED
-        mock_create_issue.assert_called_once_with(
-            pipeline, "publish", 67890, job_response
-        )
+    assert result is True
+    assert pipeline.status == PipelineStatus.FAILED
+    create_issue.assert_awaited_once()
+    assert create_issue.await_args is not None
+    assert create_issue.await_args.kwargs["git_repo"] == "flathub/org.test.App"
+    assert create_issue.await_args.kwargs["title"] == (
+        f"{channel.capitalize()} publish job failed for org.test.App"
+    )
+    assert f"in the {channel} repository" in create_issue.await_args.kwargs["body"]
 
 
 @pytest.mark.asyncio

@@ -385,7 +385,7 @@ class GitHubNotifier:
         repo_state_reason: str | None,
         checks: list[dict[str, Any]] | None,
     ) -> None:
-        if pipeline.flat_manager_repo != "stable":
+        if pipeline.flat_manager_repo not in {"stable", "beta"}:
             return
 
         checks_json = next(

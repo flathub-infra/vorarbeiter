@@ -804,14 +804,18 @@ async def test_create_stable_job_failure_issue_exception(
 
 
 @pytest.mark.asyncio
-async def test_create_validation_failure_issue_stable(
-    github_notifier, mock_pipeline, flathub_hooks_check
+@pytest.mark.parametrize(
+    ("channel", "issue_number"),
+    [("stable", 1), ("beta", 2)],
+)
+async def test_create_validation_failure_issue(
+    github_notifier, mock_pipeline, flathub_hooks_check, channel, issue_number
 ):
+    mock_pipeline.flat_manager_repo = channel
+    issue_url = f"https://github.com/flathub/org.test.App/issues/{issue_number}"
+
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:
-        mock_issue.return_value = (
-            "https://github.com/flathub/org.test.App/issues/1",
-            1,
-        )
+        mock_issue.return_value = (issue_url, issue_number)
 
         await github_notifier.create_validation_failure_issue(
             mock_pipeline,
@@ -821,7 +825,7 @@ async def test_create_validation_failure_issue_stable(
 
         expected_body = (
             "The build for `org.test.App` failed validation during publication in the "
-            "stable repository.\n\n"
+            f"{channel} repository.\n\n"
             "**Build Information:**\n"
             "- Commit SHA: abc123def456\n"
             "- Build ID: 123\n"
@@ -838,27 +842,10 @@ async def test_create_validation_failure_issue_stable(
 
         mock_issue.assert_called_once_with(
             git_repo="flathub/org.test.App",
-            title="Stable publish validation failed for org.test.App",
+            title=f"{channel.capitalize()} publish validation failed for org.test.App",
             body=expected_body,
         )
-        assert (
-            mock_pipeline.failure_issue_url
-            == "https://github.com/flathub/org.test.App/issues/1"
-        )
-
-
-@pytest.mark.asyncio
-async def test_create_validation_failure_issue_beta_skipped(
-    github_notifier, mock_pipeline
-):
-    mock_pipeline.flat_manager_repo = "beta"
-
-    with patch("app.services.github_notifier.create_github_issue") as mock_issue:
-        await github_notifier.create_validation_failure_issue(
-            mock_pipeline, "Validation failed", None
-        )
-
-        mock_issue.assert_not_called()
+        assert mock_pipeline.failure_issue_url == issue_url
 
 
 @pytest.mark.asyncio
@@ -919,9 +906,11 @@ async def test_create_validation_failure_issue_exception(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["stable", "beta"])
 async def test_create_validation_failure_issue_review_rejected_skipped(
-    github_notifier, mock_pipeline, flathub_hooks_check
+    github_notifier, mock_pipeline, flathub_hooks_check, channel
 ):
+    mock_pipeline.flat_manager_repo = channel
     flathub_hooks_check["status_reason"] = "The review was rejected by a moderator."
     flathub_hooks_check["results"] = '{"diagnostics":[]}'
     with patch("app.services.github_notifier.create_github_issue") as mock_issue:

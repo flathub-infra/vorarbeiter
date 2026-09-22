@@ -39,8 +39,8 @@ logger = structlog.get_logger(__name__)
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
-STABLE_BUILD_FAILURE_PATTERN = re.compile(
-    r"The stable build pipeline for `.+?` failed\.\s*\n"
+BUILD_FAILURE_PATTERN = re.compile(
+    r"The (stable|beta) build pipeline for `.+?` failed\.\s*\n"
     r"Commit SHA: ([0-9a-fA-F]+)\s*\n"
     r"Build log: (https://github\.com/flathub-infra/vorarbeiter/actions/runs/\d+)"
 )
@@ -86,28 +86,19 @@ async def is_inactive_repository(repository: str) -> bool:
 
 
 async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
-    stable_match = STABLE_BUILD_FAILURE_PATTERN.search(issue_body)
-    if stable_match:
-        sha, build_url = stable_match.groups()
+    for pattern, issue_type in (
+        (BUILD_FAILURE_PATTERN, "build_failure"),
+        (VALIDATION_FAILURE_PATTERN, "validation_failure"),
+    ):
+        match = pattern.search(issue_body)
+        if match is None:
+            continue
+
+        repo_type, sha, build_url = match.groups()
         sha = normalize_git_oid(sha)
         if sha is None:
             return None
-        ref = await parse_build_ref_from_log(build_url, "refs/heads/master")
 
-        return {
-            "sha": sha,
-            "repo": git_repo,
-            "ref": ref,
-            "flat_manager_repo": get_flat_manager_repo(ref),
-            "issue_type": "build_failure",
-        }
-
-    validation_match = VALIDATION_FAILURE_PATTERN.search(issue_body)
-    if validation_match:
-        repo_type, sha, build_url = validation_match.groups()
-        sha = normalize_git_oid(sha)
-        if sha is None:
-            return None
         default_ref = (
             "refs/heads/beta" if repo_type.lower() == "beta" else "refs/heads/master"
         )
@@ -117,7 +108,7 @@ async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
             "repo": git_repo,
             "ref": ref,
             "flat_manager_repo": get_flat_manager_repo(ref),
-            "issue_type": "validation_failure",
+            "issue_type": issue_type,
         }
 
     job_match = JOB_FAILURE_PATTERN.search(issue_body)
