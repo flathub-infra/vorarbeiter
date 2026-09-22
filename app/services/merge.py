@@ -820,7 +820,7 @@ class MergeService:
             await self._post_comment(
                 pr_number,
                 f"❌ Cannot merge `{sha}`: the newest matching build is committed, "
-                f"but its checkout SHA was not verified.{build_link} Comment "
+                "but its checkout SHA was not verified. Comment "
                 "`bot, build` to request a new build.",
             )
             return False
