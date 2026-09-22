@@ -70,20 +70,24 @@ async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_pipeline(build_pipeline, mock_db):
+@pytest.mark.parametrize("submission", [False, True])
+async def test_start_pipeline(build_pipeline, mock_db, submission):
     pipeline_id = uuid.uuid4()
 
     mock_pipeline = MagicMock(spec=Pipeline)
     mock_pipeline.id = pipeline_id
     mock_pipeline.status = PipelineStatus.PENDING
     mock_pipeline.app_id = "org.flathub.Test"
-    mock_pipeline.flat_manager_repo = None
     mock_pipeline.params = {
-        "repo": "test",
-        "branch": "main",
+        "repo": "flathub/flathub" if submission else "flathub/org.flathub.Test",
+        "ref": "refs/pull/123/head" if submission else "refs/heads/master",
         "sha": "a" * 40,
         "base_sha": "b" * 40,
     }
+    if submission:
+        mock_pipeline.params["pr_number"] = "123"
+    mock_pipeline.flat_manager_repo = None
+    build_pipeline._supersede_conflicting_pipelines = AsyncMock()
 
     async def mock_get(model_class, model_id):
         if model_class is Pipeline and model_id == pipeline_id:
@@ -120,6 +124,10 @@ async def test_start_pipeline(build_pipeline, mock_db):
     job_data = dispatch_call_args[2]
     assert job_data["params"]["inputs"]["flat_manager_token"] == "test-token"
     assert "base_sha" not in job_data["params"]["inputs"]
+    if submission:
+        assert job_data["params"]["inputs"]["expected_submission_sha"] == "a" * 40
+    else:
+        assert "expected_submission_sha" not in job_data["params"]["inputs"]
 
 
 @pytest.mark.asyncio
@@ -1055,6 +1063,52 @@ def test_pipeline_metadata_callback_end_of_life(mock_get_db, sample_pipeline):
         == "This application has been replaced by org.flathub.NewApp."
     )
     assert sample_pipeline.end_of_life_rebase == "org.flathub.NewApp"
+
+
+def test_pipeline_metadata_callback_records_verified_sha(mock_get_db, sample_pipeline):
+    test_client = TestClient(app)
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.params = {"sha": "a" * 40}
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/metadata",
+            json={"verified_sha": "a" * 40},
+            headers={"Authorization": "Bearer test_token_12345"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["verified_sha"] == "a" * 40
+    assert sample_pipeline.params["verified_sha"] == "a" * 40
+
+
+def test_pipeline_metadata_callback_rejects_wrong_verified_sha(
+    mock_get_db, sample_pipeline
+):
+    test_client = TestClient(app)
+    pipeline_id = sample_pipeline.id
+    sample_pipeline.params = {"sha": "a" * 40}
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+        response = test_client.post(
+            f"/api/pipelines/{pipeline_id}/callback/metadata",
+            json={"verified_sha": "b" * 40},
+            headers={"Authorization": "Bearer test_token_12345"},
+        )
+
+    assert response.status_code == 400
+    assert "does not match" in response.json()["detail"]
+    assert "verified_sha" not in sample_pipeline.params
 
 
 def test_pipeline_metadata_callback_invalid_token(mock_get_db, sample_pipeline):

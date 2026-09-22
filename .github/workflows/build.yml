@@ -14,6 +14,10 @@ on:
       git_ref:
         description: 'Git reference'
         required: true
+      expected_submission_sha:
+        description: 'Expected submission commit SHA'
+        required: false
+        default: ''
       pr_target_branch:
         description: 'Target branch for PR builds'
         required: false
@@ -80,6 +84,7 @@ jobs:
           # sync this env var name with linter
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
+          echo "EXPECTED_SUBMISSION_SHA=${{ inputs.expected_submission_sha }}" >> $GITHUB_ENV
           echo "PR_TARGET_BRANCH=${{ inputs.pr_target_branch }}" >> $GITHUB_ENV
 
       - name: Create work directory
@@ -175,6 +180,24 @@ jobs:
               git config --global --add safe.directory "*"
               just -f .flathub.justfile checkout $REPO $REF
             '
+      - name: Verify submission checkout
+        run: |
+          ACTUAL_SHA="$(git -C "${GITHUB_WORKSPACE}/work" rev-parse HEAD)"
+          if [[ -n "$EXPECTED_SUBMISSION_SHA" && "$ACTUAL_SHA" != "$EXPECTED_SUBMISSION_SHA" ]]; then
+            echo "Checkout SHA $ACTUAL_SHA does not match expected submission SHA $EXPECTED_SUBMISSION_SHA"
+            exit 1
+          fi
+
+          if [[ -n "$EXPECTED_SUBMISSION_SHA" ]]; then
+            CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' "$GITHUB_EVENT_PATH")"
+            echo "::add-mask::$CALLBACK_TOKEN"
+            curl -fsS --retry-all-errors --retry 5 --retry-delay 10 \
+              --retry-max-time 150 --connect-timeout 60 -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $CALLBACK_TOKEN" \
+              -d "{\"verified_sha\": \"$ACTUAL_SHA\"}" \
+              "${{ inputs.callback_url }}/metadata"
+          fi
 
       - name: Detect app ID of the new submission
         if: ${{ github.event.inputs.app_id == 'flathub' }}
@@ -342,6 +365,7 @@ jobs:
           # sync this env var name with linter
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
+          echo "EXPECTED_SUBMISSION_SHA=${{ inputs.expected_submission_sha }}" >> $GITHUB_ENV
           echo "PR_TARGET_BRANCH=${{ inputs.pr_target_branch }}" >> $GITHUB_ENV
           echo "BUILD_URL=${{ inputs.build_url }}" >> $GITHUB_ENV
           echo "BUILD_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
@@ -472,6 +496,13 @@ jobs:
               git config --global --add safe.directory "*"
               just -f .flathub.justfile checkout $REPO $REF
             '
+      - name: Verify submission checkout
+        run: |
+          ACTUAL_SHA="$(git -C "${GITHUB_WORKSPACE}/work" rev-parse HEAD)"
+          if [[ -n "$EXPECTED_SUBMISSION_SHA" && "$ACTUAL_SHA" != "$EXPECTED_SUBMISSION_SHA" ]]; then
+            echo "Checkout SHA $ACTUAL_SHA does not match expected submission SHA $EXPECTED_SUBMISSION_SHA"
+            exit 1
+          fi
 
       - name: Detect app ID of the new submission
         if: ${{ github.event.inputs.app_id == 'flathub' }}

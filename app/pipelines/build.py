@@ -30,6 +30,7 @@ class CallbackData(BaseModel):
     status: str | None = None
     log_url: str | None = None
     app_id: str | None = None
+    verified_sha: str | None = None
     end_of_life: str | None = None
     end_of_life_rebase: str | None = None
     build_pipeline_id: str | None = None
@@ -467,6 +468,12 @@ class BuildPipeline:
                 "pr_target_branch": pipeline.params.get("pr_target_branch", "master"),
             }
 
+            if workflow_id == "build.yml" and (
+                (pipeline.params or {}).get("repo") == "flathub/flathub"
+                and (pipeline.params or {}).get("pr_number") is not None
+            ):
+                inputs["expected_submission_sha"] = pipeline.params.get("sha", "")
+
             if requires_flat_manager:
                 assert pipeline.build_id is not None
                 inputs.update(
@@ -576,6 +583,16 @@ class BuildPipeline:
             if pipeline.app_id == "flathub" and parsed_data.app_id:
                 pipeline.app_id = parsed_data.app_id
                 updates["app_id"] = pipeline.app_id
+            if parsed_data.verified_sha:
+                expected_sha = (pipeline.params or {}).get("sha")
+                if parsed_data.verified_sha != expected_sha:
+                    raise ValueError(
+                        "Verified checkout SHA does not match the pipeline submission SHA"
+                    )
+                params = dict(pipeline.params or {})
+                params["verified_sha"] = parsed_data.verified_sha
+                pipeline.params = params
+                updates["verified_sha"] = parsed_data.verified_sha
 
             if parsed_data.end_of_life:
                 pipeline.end_of_life = parsed_data.end_of_life

@@ -9,12 +9,13 @@ from typing import Any, cast
 import structlog
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import get_db
+from app.models import Pipeline, PipelineStatus
 from app.models.merge_request import (
     ACTIVE_MERGE_STATUS_VALUES,
     MergeRequest,
@@ -219,6 +220,8 @@ class MergeService:
                 f"❌ SHA mismatch: PR HEAD is `{current_sha}` "
                 f"but command specifies `{command.pr_head_sha}`.",
             )
+            return
+        if not await self._require_ready_build(pr_number, command.pr_head_sha):
             return
 
         fork_repo = pr_details["fork_repo"]
@@ -762,6 +765,85 @@ class MergeService:
                 actual=actual_sha,
             )
         return sha_ok, data.get("protected", False) is True
+
+    async def _require_ready_build(self, pr_number: int, sha: str) -> bool:
+        try:
+            async with get_db() as db:
+                query = (
+                    select(Pipeline)
+                    .where(
+                        or_(
+                            Pipeline.flat_manager_repo == "test",
+                            Pipeline.flat_manager_repo.is_(None),
+                        ),
+                        Pipeline.params["repo"].as_string() == FLATHUB_REPO,
+                        Pipeline.params["pr_number"].as_string() == str(pr_number),
+                        Pipeline.params["sha"].as_string() == sha,
+                        or_(
+                            Pipeline.params["workflow_id"].as_string().is_(None),
+                            Pipeline.params["workflow_id"].as_string() == "build.yml",
+                        ),
+                    )
+                    .order_by(Pipeline.created_at.desc(), Pipeline.id.desc())
+                    .limit(1)
+                )
+                result = await db.execute(query)
+                pipeline = result.scalar_one_or_none()
+        except Exception:
+            logger.exception(
+                "Failed to determine merge build readiness",
+                pr_number=pr_number,
+                sha=sha,
+            )
+            await self._post_comment(
+                pr_number,
+                f"❌ Cannot merge `{sha}`: test build readiness could not be "
+                "determined. Please try again later.",
+            )
+            return False
+
+        if pipeline is None:
+            await self._post_comment(
+                pr_number,
+                f"❌ Cannot merge `{sha}`: no test build exists for this exact "
+                "submission. Comment `bot, build` to request one.",
+            )
+            return False
+
+        build_link = f" [Build]({pipeline.log_url})." if pipeline.log_url else ""
+        state = pipeline.status.value
+
+        if pipeline.status == PipelineStatus.COMMITTED:
+            verified_sha = (pipeline.params or {}).get("verified_sha")
+            if verified_sha == sha:
+                return True
+            await self._post_comment(
+                pr_number,
+                f"❌ Cannot merge `{sha}`: the newest matching build is committed, "
+                f"but its checkout SHA was not verified.{build_link} Comment "
+                "`bot, build` to request a new build.",
+            )
+            return False
+
+        if pipeline.status in {
+            PipelineStatus.FAILED,
+            PipelineStatus.CANCELLED,
+            PipelineStatus.SUPERSEDED,
+        }:
+            await self._post_comment(
+                pr_number,
+                f"❌ Cannot merge `{sha}`: the newest matching build is "
+                f"`{state}`.{build_link} Fix the failure and complete a successful "
+                "rebuild.",
+            )
+            return False
+
+        await self._post_comment(
+            pr_number,
+            f"❌ Cannot merge `{sha}`: the newest matching build is "
+            f"`{state}`.{build_link} Wait until the build is ready.",
+        )
+        return False
 
     async def _set_labels(self, pr_number: int, current_labels: list[str]) -> bool:
         should_replace = "migrate-app-id" not in current_labels

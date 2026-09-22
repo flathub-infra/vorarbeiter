@@ -15,6 +15,7 @@ class MetadataCallbackValidator:
             app_id=data.get("app_id"),
             end_of_life=data.get("end_of_life"),
             end_of_life_rebase=data.get("end_of_life_rebase"),
+            verified_sha=data.get("verified_sha"),
         )
 
 

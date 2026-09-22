@@ -2,12 +2,14 @@ import base64
 import json
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models import Pipeline, PipelineStatus
 from app.models.merge_request import MergeRequest, MergeStatus
 from app.schemas.merge import parse_merge_command
 from app.services.merge import (
@@ -51,6 +53,31 @@ def _pr_details(**overrides):
     }
     base.update(overrides)
     return base
+
+
+def _submission_pipeline(
+    status: PipelineStatus,
+    *,
+    created_at: datetime | None = None,
+    params_update: dict | None = None,
+) -> Pipeline:
+    params = {
+        "repo": "flathub/flathub",
+        "pr_number": "123",
+        "sha": "a" * 40,
+        "ref": "refs/pull/123/head",
+        "verified_sha": "a" * 40,
+    }
+    params.update(params_update or {})
+    return Pipeline(
+        id=uuid.uuid4(),
+        app_id="flathub",
+        status=status,
+        params=params,
+        flat_manager_repo="test",
+        created_at=created_at or datetime.now(UTC),
+        log_url="https://github.com/flathub-infra/vorarbeiter/actions/runs/1",
+    )
 
 
 class TestParseMergeCommand:
@@ -589,6 +616,15 @@ class TestMergeServiceCloseAndLock:
 
 
 class TestMergeServiceProcess:
+    @pytest.fixture(autouse=True)
+    def ready_build(self):
+        with patch.object(
+            MergeService,
+            "_require_ready_build",
+            new=AsyncMock(return_value=True),
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_process_persists_row_before_repo_creation(self, db_session_maker):
         service = MergeService()
@@ -988,6 +1024,234 @@ class TestMergeServiceProcess:
             assert await service._has_active_merge_request(123) is False
 
         assert mock_get_db_factory.call_args.kwargs == {}
+
+
+class TestMergeBuildEligibility:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "params_update",
+        [
+            {"verified_sha": None},
+            {"sha": "b" * 40, "verified_sha": "b" * 40},
+            {"pr_number": "124"},
+            {"workflow_id": "reprocheck.yml"},
+        ],
+    )
+    async def test_nonmatching_or_unverified_build_cannot_authorize(
+        self, db_session_maker, params_update
+    ):
+        async with db_session_maker() as session:
+            session.add(
+                _submission_pipeline(
+                    PipelineStatus.COMMITTED,
+                    params_update=params_update,
+                )
+            )
+            await session.commit()
+
+        service = MergeService()
+        mock_get_db = create_realistic_get_db(db_session_maker)
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda **_: mock_get_db()),
+            patch.object(service, "_post_comment", new=AsyncMock()) as mock_comment,
+        ):
+            assert await service._require_ready_build(123, "a" * 40) is False
+
+        mock_comment.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("newest_status", "flat_manager_repo"),
+        [
+            (PipelineStatus.FAILED, "test"),
+            (PipelineStatus.PENDING, "test"),
+            (PipelineStatus.PENDING, None),
+        ],
+    )
+    async def test_newer_attempt_blocks_older_success(
+        self, db_session_maker, newest_status, flat_manager_repo
+    ):
+        now = datetime.now(UTC)
+        newest = _submission_pipeline(newest_status, created_at=now)
+        newest.flat_manager_repo = flat_manager_repo
+        async with db_session_maker() as session:
+            session.add_all(
+                [
+                    _submission_pipeline(
+                        PipelineStatus.COMMITTED,
+                        created_at=now - timedelta(minutes=1),
+                    ),
+                    newest,
+                ]
+            )
+            await session.commit()
+
+        service = MergeService()
+        mock_get_db = create_realistic_get_db(db_session_maker)
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda **_: mock_get_db()),
+            patch.object(service, "_post_comment", new=AsyncMock()) as mock_comment,
+        ):
+            assert await service._require_ready_build(123, "a" * 40) is False
+
+        assert mock_comment.await_args is not None
+        assert f"`{newest_status.value}`" in mock_comment.await_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_stale_replica_cannot_authorize_merge(self, db_session_maker):
+        now = datetime.now(UTC)
+        older = _submission_pipeline(
+            PipelineStatus.COMMITTED, created_at=now - timedelta(minutes=1)
+        )
+        async with db_session_maker() as session:
+            session.add_all(
+                [older, _submission_pipeline(PipelineStatus.FAILED, created_at=now)]
+            )
+            await session.commit()
+
+        @asynccontextmanager
+        async def get_db_with_stale_replica(*, use_replica=False):
+            if use_replica:
+                replica = AsyncMock()
+                replica.execute.return_value = MagicMock()
+                replica.execute.return_value.scalar_one_or_none.return_value = older
+                yield replica
+            else:
+                async with db_session_maker() as session:
+                    yield session
+
+        service = MergeService()
+        with (
+            patch("app.services.merge.get_db", get_db_with_stale_replica),
+            patch.object(service, "_post_comment", new=AsyncMock()),
+        ):
+            assert await service._require_ready_build(123, "a" * 40) is False
+
+    @pytest.mark.asyncio
+    async def test_verified_committed_build_permits_merge(self, db_session_maker):
+        merge_id = uuid.uuid4()
+        async with db_session_maker() as session:
+            session.add(_submission_pipeline(PipelineStatus.COMMITTED))
+            await session.commit()
+
+        service = MergeService()
+        mock_get_db = create_realistic_get_db(db_session_maker)
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda **_: mock_get_db()),
+            patch.object(service, "_is_authorized", new=AsyncMock(return_value=True)),
+            patch.object(
+                service,
+                "_get_pr_details",
+                new=AsyncMock(return_value=_pr_details()),
+            ),
+            patch(
+                "app.services.merge.detect_appid_from_github",
+                new=AsyncMock(return_value=("org.example.App.yml", "org.example.App")),
+            ),
+            patch.object(
+                service, "_check_repo_exists", new=AsyncMock(return_value=False)
+            ),
+            patch.object(
+                service,
+                "_create_repo",
+                new=AsyncMock(
+                    return_value="https://github.com/flathub/org.example.App"
+                ),
+            ),
+            patch.object(service, "_dispatch_merge_workflow", new=AsyncMock()),
+            patch.object(uuid, "uuid4", return_value=merge_id),
+        ):
+            await service._process_merge(
+                comment_body=f"/merge head={'a' * 40}",
+                pr_number=123,
+                comment_author="reviewer",
+            )
+
+        async with db_session_maker() as session:
+            merge_request = await session.get(MergeRequest, merge_id)
+            assert merge_request is not None
+            assert merge_request.status == MergeStatus.PUSHING
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "build_status",
+        [PipelineStatus.FAILED, PipelineStatus.PENDING],
+    )
+    async def test_unready_build_rejects_retry_before_side_effects(
+        self, db_session_maker, build_status
+    ):
+        async with db_session_maker() as session:
+            session.add_all(
+                [
+                    _submission_pipeline(build_status),
+                    MergeRequest(
+                        id=uuid.uuid4(),
+                        pr_number=123,
+                        app_id="org.example.App",
+                        target_branch="master",
+                        pr_head_sha="a" * 40,
+                        collaborators=["author1"],
+                        status=MergeStatus.FAILED,
+                        comment_author="reviewer",
+                        fork_url="https://github.com/user/repo.git",
+                        fork_branch="main",
+                        repo_html_url="https://github.com/flathub/org.example.App",
+                        error=MERGE_ERROR_WORKFLOW_DISPATCH_FAILED,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        service = MergeService()
+        mock_get_db = create_realistic_get_db(db_session_maker)
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda **_: mock_get_db()),
+            patch.object(service, "_is_authorized", new=AsyncMock(return_value=True)),
+            patch.object(
+                service,
+                "_get_pr_details",
+                new=AsyncMock(return_value=_pr_details()),
+            ),
+            patch(
+                "app.services.merge.detect_appid_from_github", new=AsyncMock()
+            ) as mock_detect,
+            patch.object(
+                service, "_check_repo_exists", new=AsyncMock()
+            ) as mock_repo_exists,
+            patch.object(service, "_create_repo", new=AsyncMock()) as mock_create,
+            patch.object(
+                service, "_dispatch_merge_workflow", new=AsyncMock()
+            ) as mock_dispatch,
+            patch.object(service, "_post_comment", new=AsyncMock()) as mock_comment,
+        ):
+            await service._process_merge(
+                comment_body=f"/merge head={'a' * 40}",
+                pr_number=123,
+                comment_author="reviewer",
+            )
+
+        mock_detect.assert_not_awaited()
+        mock_repo_exists.assert_not_awaited()
+        mock_create.assert_not_awaited()
+        mock_dispatch.assert_not_awaited()
+        assert mock_comment.await_args is not None
+        assert f"`{build_status.value}`" in mock_comment.await_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_lookup_failure_rejects_safely(self):
+        service = MergeService()
+
+        with (
+            patch(
+                "app.services.merge.get_db",
+                side_effect=RuntimeError("database unavailable"),
+            ),
+            patch.object(service, "_post_comment", new=AsyncMock()) as mock_comment,
+        ):
+            assert await service._require_ready_build(123, "a" * 40) is False
+
+        assert mock_comment.await_args is not None
+        assert "could not be determined" in mock_comment.await_args.args[1]
 
 
 class TestMergeServiceFinalize:
