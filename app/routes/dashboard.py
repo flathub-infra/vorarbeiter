@@ -201,7 +201,7 @@ async def dashboard(
 @dashboard_router.get("/status/{app_id}", response_class=RedirectResponse)
 async def app_status(app_id: str):
     return RedirectResponse(
-        f"https://flathub.org/builds/apps/{quote(app_id, safe='')}", status_code=308
+        f"https://flathub.org/en/builds/apps/{quote(app_id, safe='')}", status_code=308
     )
 
 

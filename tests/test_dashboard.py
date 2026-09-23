@@ -55,13 +55,13 @@ def test_app_status_redirect_encodes_app_id(client):
     response = client.get("/status/org.test.App", follow_redirects=False)
     assert response.status_code == 308
     assert response.headers["location"] == (
-        "https://flathub.org/builds/apps/org.test.App"
+        "https://flathub.org/en/builds/apps/org.test.App"
     )
 
     response = client.get("/status/org.test%20App", follow_redirects=False)
     assert response.status_code == 308
     assert response.headers["location"] == (
-        "https://flathub.org/builds/apps/org.test%20App"
+        "https://flathub.org/en/builds/apps/org.test%20App"
     )
 
 
