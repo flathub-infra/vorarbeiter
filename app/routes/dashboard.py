@@ -128,7 +128,12 @@ async def get_reproducibility_data(
                     status_filter == "failed" and status_code != REPROCHECK_BUILD_FAILED
                 )
                 or status_filter == "none"
-                and status_code is not None
+                and status_code
+                in (
+                    REPROCHECK_REPRODUCIBLE,
+                    REPROCHECK_UNREPRODUCIBLE,
+                    REPROCHECK_BUILD_FAILED,
+                )
             ):
                 continue
 

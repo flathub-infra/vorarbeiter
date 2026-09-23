@@ -144,6 +144,55 @@ async def test_fleet_uses_latest_published_stable_build(db_session_maker):
         assert data.reproducible == []
 
 
+@pytest.mark.asyncio
+async def test_unknown_fleet_filter_matches_unknown_category(db_session_maker):
+    repro_unknown = make_pipeline(
+        app_id="org.test.Unrecognized",
+        status=PipelineStatus.SUCCEEDED,
+        params={"reprocheck_result": {"status_code": "2"}},
+    )
+    repro_known = make_pipeline(
+        app_id="org.test.Reproducible",
+        status=PipelineStatus.SUCCEEDED,
+        params={"reprocheck_result": {"status_code": "0"}},
+    )
+    builds = [
+        make_pipeline(
+            app_id="org.test.Unrecognized",
+            status=PipelineStatus.PUBLISHED,
+            repro_pipeline_id=repro_unknown.id,
+        ),
+        make_pipeline(
+            app_id="org.test.Missing",
+            status=PipelineStatus.PUBLISHED,
+        ),
+        make_pipeline(
+            app_id="org.test.Reproducible",
+            status=PipelineStatus.PUBLISHED,
+            repro_pipeline_id=repro_known.id,
+        ),
+    ]
+    async with db_session_maker() as session:
+        session.add_all([repro_unknown, repro_known, *builds])
+        await session.commit()
+
+    @asynccontextmanager
+    async def local_db(*, use_replica=False):
+        async with db_session_maker() as session:
+            yield session
+
+    with patch("app.routes.dashboard.get_db", local_db):
+        unfiltered = await get_reproducibility_data()
+        filtered = await get_reproducibility_data(status_filter="none")
+
+    expected_unknown = ["org.test.Missing", "org.test.Unrecognized"]
+    assert [entry.app_id for entry in unfiltered.unknown] == expected_unknown
+    assert [entry.app_id for entry in filtered.unknown] == expected_unknown
+    assert filtered.reproducible == []
+    assert filtered.unreproducible == []
+    assert filtered.failed_to_rebuild == []
+
+
 def test_reproducible_rejects_unknown_status(client):
     assert client.get("/api/reproducible?status=invalid").status_code == 422
 
