@@ -31,109 +31,55 @@ def make_pipeline(**overrides):
     return Pipeline(**defaults)
 
 
-def test_builds_table_failed_badge_links_to_commit_job(client):
-    pipeline = make_pipeline(commit_job_id=12345)
-
-    with patch(
-        "app.routes.dashboard.get_recent_pipelines",
-        new=AsyncMock(return_value=[pipeline]),
-    ):
-        response = client.get("/api/htmx/builds")
-
-    assert response.status_code == 200
-    assert 'href="https://hub.flathub.org/status/12345"' in response.text
-    assert ">failed</a>" in response.text
+def test_dashboard_redirect(client):
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 308
+    assert response.headers["location"] == "https://flathub.org/builds"
 
 
-def test_builds_table_failed_badge_prefers_update_repo_job(client):
-    pipeline = make_pipeline(
-        commit_job_id=12345,
-        publish_job_id=12346,
-        update_repo_job_id=12347,
+def test_dashboard_redirect_preserves_recognized_filters(client):
+    response = client.get(
+        "/?app_id=org.test.App&target=stable&status=failed"
+        "&date_from=2026-09-23T00%3A00&date_to=2026-09-23T23%3A59"
+        "&next=https%3A%2F%2Fevil.example",
+        follow_redirects=False,
+    )
+    assert response.status_code == 308
+    assert response.headers["location"] == (
+        "https://flathub.org/builds?appId=org.test.App&repo=stable"
+        "&status=failed&dateFrom=2026-09-23T00%3A00&dateTo=2026-09-23T23%3A59"
     )
 
-    with patch(
-        "app.routes.dashboard.get_recent_pipelines",
-        new=AsyncMock(return_value=[pipeline]),
-    ):
-        response = client.get("/api/htmx/builds")
 
-    assert response.status_code == 200
-    assert 'href="https://hub.flathub.org/status/12347"' in response.text
-    assert 'href="https://hub.flathub.org/status/12346"' not in response.text
-
-
-def test_builds_table_failed_badge_prefers_failure_issue(client):
-    pipeline = make_pipeline(
-        commit_job_id=12345,
-        failure_issue_url="https://github.com/flathub/org.test.App/issues/1",
+def test_app_status_redirect_encodes_app_id(client):
+    response = client.get("/status/org.test.App", follow_redirects=False)
+    assert response.status_code == 308
+    assert response.headers["location"] == (
+        "https://flathub.org/builds/apps/org.test.App"
     )
 
-    with patch(
-        "app.routes.dashboard.get_recent_pipelines",
-        new=AsyncMock(return_value=[pipeline]),
-    ):
-        response = client.get("/api/htmx/builds")
-
-    assert response.status_code == 200
-    assert 'href="https://github.com/flathub/org.test.App/issues/1"' in response.text
-    assert 'href="https://hub.flathub.org/status/12345"' not in response.text
-
-
-def test_builds_table_failed_badge_falls_back_to_log_url(client):
-    pipeline = make_pipeline(log_url="https://example.com/logs/123")
-
-    with patch(
-        "app.routes.dashboard.get_recent_pipelines",
-        new=AsyncMock(return_value=[pipeline]),
-    ):
-        response = client.get("/api/htmx/builds")
-
-    assert response.status_code == 200
-    assert 'href="https://example.com/logs/123"' in response.text
-
-
-def test_app_status_failed_badge_links_in_stable_table(client):
-    stable_pipeline = make_pipeline(commit_job_id=12345)
-
-    with (
-        patch(
-            "app.routes.dashboard.get_app_builds",
-            new=AsyncMock(return_value=([stable_pipeline], {})),
-        ),
-        patch(
-            "app.routes.dashboard.get_status_banner",
-            new=AsyncMock(return_value=None),
-        ),
-    ):
-        response = client.get("/status/org.test.App")
-
-    assert response.status_code == 200
-    assert 'href="https://hub.flathub.org/status/12345"' in response.text
-    assert ">failed</a>" in response.text
-
-
-def test_app_status_failed_badge_prefers_failure_issue(client):
-    stable_pipeline = make_pipeline(
-        commit_job_id=12345,
-        failure_issue_url="https://github.com/flathub/org.test.App/issues/1",
+    response = client.get("/status/org.test%20App", follow_redirects=False)
+    assert response.status_code == 308
+    assert response.headers["location"] == (
+        "https://flathub.org/builds/apps/org.test%20App"
     )
 
-    with (
-        patch(
-            "app.routes.dashboard.get_app_builds",
-            new=AsyncMock(return_value=([stable_pipeline], {})),
-        ),
-        patch(
-            "app.routes.dashboard.get_status_banner",
-            new=AsyncMock(return_value=None),
-        ),
-    ):
-        response = client.get("/status/org.test.App")
 
-    assert response.status_code == 200
-    assert 'href="https://github.com/flathub/org.test.App/issues/1"' in response.text
-    assert 'href="https://hub.flathub.org/status/12345"' not in response.text
+def test_reproducible_redirect_drops_unknown_filters(client):
+    response = client.get(
+        "/reproducible?app_id=org.test.App&status=failed"
+        "&next=https%3A%2F%2Fevil.example",
+        follow_redirects=False,
+    )
+    assert response.status_code == 308
+    assert response.headers["location"] == (
+        "https://flathub.org/builds/reproducible?appId=org.test.App&status=failed"
+    )
+
+
+@pytest.mark.parametrize("path", ["/api/htmx/builds", "/api/htmx/reproducible"])
+def test_removed_htmx_routes_return_404(client, path):
+    assert client.get(path, follow_redirects=False).status_code == 404
 
 
 @pytest.mark.asyncio
