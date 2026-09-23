@@ -1,10 +1,12 @@
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Any
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi import status as http_status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_db
@@ -122,12 +124,33 @@ async def trigger_pipeline(
 )
 async def list_pipelines(
     app_id: str | None = None,
+    app_id_match: Literal["prefix", "contains", "exact"] = "prefix",
     type: PipelineType = PipelineType.BUILD,
     status: PipelineStatus | str | None = None,
     triggered_by: PipelineTrigger | None = None,
     target_repo: str | None = None,
     limit: int | None = 10,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    group: Literal["in-progress", "awaiting-publishing", "completed"] | None = None,
+    offset: int = 0,
 ):
+    if offset < 0:
+        raise HTTPException(status_code=422, detail="offset must be nonnegative")
+    if date_from is not None:
+        date_from = (
+            date_from.replace(tzinfo=UTC)
+            if date_from.tzinfo is None
+            else date_from.astimezone(UTC)
+        )
+    if date_to is not None:
+        date_to = (
+            date_to.replace(tzinfo=UTC)
+            if date_to.tzinfo is None
+            else date_to.astimezone(UTC)
+        )
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must not exceed date_to")
     reprocheck_status: ReprocheckStatus | None = None
     pipeline_status: PipelineStatus | None = None
 
@@ -158,16 +181,33 @@ async def list_pipelines(
         pipelines = await pipeline_service.list_pipelines_with_filters(
             db=db,
             app_id=app_id,
+            app_id_match=app_id_match,
             pipeline_type=type,
             status=pipeline_status,
             reprocheck_status=reprocheck_status,
             triggered_by=triggered_by,
             target_repo=target_repo,
             limit=limit or 10,
+            date_from=date_from,
+            date_to=date_to,
+            group=group,
+            offset=offset,
         )
 
+        repro_ids = {
+            p.repro_pipeline_id for p in pipelines if p.repro_pipeline_id is not None
+        }
+        repro_pipelines = {}
+        if repro_ids:
+            result = await db.execute(
+                select(Pipeline).where(Pipeline.id.in_(repro_ids))
+            )
+            repro_pipelines = {p.id: p for p in result.scalars().all()}
         return [
-            pipeline_service.pipeline_to_summary(pipeline) for pipeline in pipelines
+            pipeline_service.pipeline_to_summary(
+                pipeline, repro_pipelines.get(pipeline.repro_pipeline_id)
+            )
+            for pipeline in pipelines
         ]
 
 

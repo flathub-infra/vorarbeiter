@@ -1,17 +1,22 @@
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import String, and_, case, cast, func, or_, select
+from sqlalchemy import and_, case, func, nulls_last, or_, select
 from sqlalchemy.orm import aliased
 
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
+from app.schemas.pipelines import (
+    ReproCheckEntry,
+    ReproducibilityData,
+    StatusBannerResponse,
+)
 from app.services.reprocheck_notification import (
     REPROCHECK_BUILD_FAILED,
     REPROCHECK_REPRODUCIBLE,
@@ -119,8 +124,8 @@ async def get_recent_pipelines(
             select(Pipeline)
             .where(
                 or_(
-                    cast(Pipeline.params["workflow_id"], String) != '"reprocheck.yml"',
-                    Pipeline.params["workflow_id"].is_(None),
+                    Pipeline.params["workflow_id"].as_string() != "reprocheck.yml",
+                    Pipeline.params["workflow_id"].as_string().is_(None),
                 )
             )
             .where(Pipeline.app_id != "flathub")
@@ -196,8 +201,8 @@ async def get_app_builds(
             .where(Pipeline.flat_manager_repo == target_repo)
             .where(
                 or_(
-                    cast(Pipeline.params["workflow_id"], String) != '"reprocheck.yml"',
-                    Pipeline.params["workflow_id"].is_(None),
+                    Pipeline.params["workflow_id"].as_string() != "reprocheck.yml",
+                    Pipeline.params["workflow_id"].as_string().is_(None),
                 )
             )
             .order_by(Pipeline.created_at.desc())
@@ -225,67 +230,56 @@ async def get_app_builds(
         return pipelines, reprocheck_status
 
 
-@dataclass
-class ReproCheckEntry:
-    app_id: str
-    reprocheck_status: str | None
-    result_url: str | None
-    build_commit: str | None
-    git_repo: str | None
-    finished_at: datetime | None
-    reprocheck_log_url: str | None
-    repro_pipeline_id: uuid.UUID | None
-
-
-@dataclass
-class ReproducibilityData:
-    reproducible: list[ReproCheckEntry]
-    unreproducible: list[ReproCheckEntry]
-    failed_to_rebuild: list[ReproCheckEntry]
-    unknown: list[ReproCheckEntry]
-
-
 async def get_reproducibility_data(
     app_id_filter: str | None = None,
     status_filter: str | None = None,
 ) -> ReproducibilityData:
     async with get_db(use_replica=True) as db:
-        latest_build_subq = (
+        ranked_builds = (
             select(
-                Pipeline.app_id,
-                func.max(Pipeline.finished_at).label("max_finished"),
+                Pipeline.id.label("build_id"),
+                func.row_number()
+                .over(
+                    partition_by=Pipeline.app_id,
+                    order_by=(
+                        nulls_last(Pipeline.finished_at.desc()),
+                        Pipeline.created_at.desc(),
+                        Pipeline.id.desc(),
+                    ),
+                )
+                .label("rank"),
             )
             .where(Pipeline.flat_manager_repo == "stable")
             .where(Pipeline.status == PipelineStatus.PUBLISHED)
             .where(
                 or_(
-                    cast(Pipeline.params["workflow_id"], String) != '"reprocheck.yml"',
-                    Pipeline.params["workflow_id"].is_(None),
+                    Pipeline.params["workflow_id"].as_string() != "reprocheck.yml",
+                    Pipeline.params["workflow_id"].as_string().is_(None),
                 )
             )
-            .group_by(Pipeline.app_id)
             .subquery()
         )
-
         build_alias = aliased(Pipeline)
         repro_alias = aliased(Pipeline)
-
         query = (
             select(build_alias, repro_alias)
             .join(
-                latest_build_subq,
+                ranked_builds,
                 and_(
-                    build_alias.app_id == latest_build_subq.c.app_id,
-                    build_alias.finished_at == latest_build_subq.c.max_finished,
+                    build_alias.id == ranked_builds.c.build_id,
+                    ranked_builds.c.rank == 1,
                 ),
             )
             .outerjoin(repro_alias, build_alias.repro_pipeline_id == repro_alias.id)
-            .where(build_alias.flat_manager_repo == "stable")
-            .where(build_alias.status == PipelineStatus.PUBLISHED)
         )
 
         if app_id_filter:
-            query = query.where(build_alias.app_id.ilike(f"%{app_id_filter}%"))
+            escaped = (
+                app_id_filter.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            query = query.where(build_alias.app_id.ilike(f"%{escaped}%", escape="\\"))
 
         result = await db.execute(query)
         rows = result.all()
@@ -301,17 +295,28 @@ async def get_reproducibility_data(
             repro_log_url = None
 
             if repro:
-                repro_result = repro.params.get("reprocheck_result", {})
-                status_code = repro_result.get("status_code")
-                result_url = repro_result.get("result_url")
+                repro_result = (
+                    repro.params.get("reprocheck_result")
+                    if isinstance(repro.params, dict)
+                    else None
+                )
+                if isinstance(repro_result, dict):
+                    raw_status = repro_result.get("status_code")
+                    raw_result = repro_result.get("result_url")
+                    status_code = raw_status if isinstance(raw_status, str) else None
+                    result_url = raw_result if isinstance(raw_result, str) else None
                 repro_log_url = repro.log_url
 
             entry = ReproCheckEntry(
                 app_id=build.app_id,
                 reprocheck_status=status_code,
                 result_url=result_url,
-                build_commit=build.params.get("sha"),
-                git_repo=build.params.get("repo"),
+                build_commit=build.params.get("sha")
+                if isinstance(build.params.get("sha"), str)
+                else None,
+                git_repo=build.params.get("repo")
+                if isinstance(build.params.get("repo"), str)
+                else None,
                 finished_at=build.finished_at,
                 reprocheck_log_url=repro_log_url,
                 repro_pipeline_id=repro.id if repro else None,
@@ -354,6 +359,19 @@ async def get_reproducibility_data(
             failed_to_rebuild=failed_to_rebuild,
             unknown=unknown,
         )
+
+
+@dashboard_router.get("/api/reproducible", response_model=ReproducibilityData)
+async def reproducible_api(
+    app_id: str | None = None,
+    status: Literal["reproducible", "unreproducible", "failed", "none"] | None = None,
+):
+    return await get_reproducibility_data(app_id_filter=app_id, status_filter=status)
+
+
+@dashboard_router.get("/api/status-banner", response_model=StatusBannerResponse | None)
+async def status_banner_api():
+    return await get_status_banner()
 
 
 @dashboard_router.get("/", response_class=HTMLResponse)

@@ -456,6 +456,9 @@ def test_list_pipelines_endpoint(mock_get_db):
             flat_manager_repo="stable",
             triggered_by=PipelineTrigger.MANUAL,
             build_id=123,
+            params={},
+            log_url=None,
+            failure_issue_url=None,
             created_at=datetime.now(UTC),
             started_at=datetime.now(UTC),
             finished_at=None,
@@ -469,6 +472,9 @@ def test_list_pipelines_endpoint(mock_get_db):
             flat_manager_repo="beta",
             triggered_by=PipelineTrigger.WEBHOOK,
             build_id=456,
+            params={},
+            log_url=None,
+            failure_issue_url=None,
             created_at=datetime.now(UTC),
             started_at=datetime.now(UTC),
             finished_at=datetime.now(UTC),
@@ -493,6 +499,16 @@ def test_list_pipelines_endpoint(mock_get_db):
     assert response.json()[1]["status"] == "succeeded"
     assert response.json()[1]["triggered_by"] == "webhook"
     assert "build_id" in response.json()[1]
+
+
+def test_list_pipelines_rejects_invalid_pagination_and_dates():
+    test_client = TestClient(app)
+    for query in (
+        "offset=-1",
+        "date_from=not-a-date",
+        "date_from=2025-01-02T00:00:00&date_to=2025-01-01T00:00:00",
+    ):
+        assert test_client.get(f"/api/pipelines?{query}").status_code == 422
 
 
 def test_get_pipeline_endpoint(mock_get_db, sample_pipeline):

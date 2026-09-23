@@ -1,12 +1,11 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.schemas.pipelines import PipelineTriggerRequest, PipelineType
+from app.schemas.pipelines import PipelineTriggerRequest, PipelineType, ReprocheckStatus
 from app.services.pipeline import PipelineService
 
 
@@ -31,58 +30,241 @@ def mock_pipeline():
 
 
 @pytest.mark.asyncio
-async def test_list_pipelines_with_filters_basic(pipeline_service):
-    pipelines = [
-        MagicMock(id=uuid.uuid4(), commit_job_id=1, publish_job_id=2),
-        MagicMock(id=uuid.uuid4(), commit_job_id=3, publish_job_id=4),
+async def test_list_pipelines_with_filters_basic(pipeline_service, db_session_maker):
+    now = datetime.now(UTC)
+    records = [
+        Pipeline(
+            app_id="org.test.App",
+            status=PipelineStatus.RUNNING,
+            params={"workflow_id": "build.yml"},
+            created_at=now,
+            started_at=now,
+            flat_manager_repo="stable",
+        ),
+        Pipeline(
+            app_id="org.test.App",
+            status=PipelineStatus.PENDING,
+            params={},
+            created_at=now - timedelta(seconds=1),
+        ),
+        Pipeline(
+            app_id="org.test.App",
+            status=PipelineStatus.FAILED,
+            params={"workflow_id": None},
+            created_at=now - timedelta(seconds=2),
+        ),
+        Pipeline(
+            app_id="org.test.App",
+            status=PipelineStatus.SUCCEEDED,
+            params={
+                "workflow_id": "reprocheck.yml",
+                "reprocheck_result": {"status_code": "0"},
+            },
+            created_at=now - timedelta(seconds=3),
+        ),
+        Pipeline(
+            app_id="org.test.AppExtra",
+            status=PipelineStatus.PUBLISHED,
+            params={},
+            created_at=now - timedelta(seconds=4),
+        ),
+        Pipeline(
+            app_id="org.test.100%_App",
+            status=PipelineStatus.PUBLISHED,
+            params={},
+            created_at=now - timedelta(seconds=5),
+        ),
     ]
-
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = pipelines
-
-    mock_db = AsyncMock(spec=AsyncSession)
-    mock_db.execute.return_value = mock_result
-
-    result = await pipeline_service.list_pipelines_with_filters(mock_db)
-
-    assert result == pipelines
-    mock_db.execute.assert_called_once()
-    mock_db.commit.assert_not_called()
+    async with db_session_maker() as db:
+        db.add_all(records)
+        await db.commit()
+        builds = await pipeline_service.list_pipelines_with_filters(
+            db, app_id="org.test.App", app_id_match="exact", limit=100
+        )
+        repro = await pipeline_service.list_pipelines_with_filters(
+            db, pipeline_type=PipelineType.REPROCHECK
+        )
+        assert [p.id for p in builds] == [records[i].id for i in (0, 1, 2)]
+        assert [p.id for p in repro] == [records[3].id]
+        assert [
+            p.id
+            for p in await pipeline_service.list_pipelines_with_filters(
+                db,
+                pipeline_type=PipelineType.REPROCHECK,
+                reprocheck_status=ReprocheckStatus.REPRODUCIBLE,
+            )
+        ] == [records[3].id]
+        assert [
+            p.id
+            for p in await pipeline_service.list_pipelines_with_filters(
+                db, app_id="TEST.app", app_id_match="contains"
+            )
+        ] == [records[0].id, records[1].id, records[2].id, records[4].id]
+        assert [
+            p.id
+            for p in await pipeline_service.list_pipelines_with_filters(
+                db, app_id="%_", app_id_match="contains"
+            )
+        ] == [records[5].id]
+        assert [
+            p.id
+            for p in await pipeline_service.list_pipelines_with_filters(
+                db, date_from=now, date_to=now
+            )
+        ] == [records[0].id]
+        assert [
+            p.id
+            for p in await pipeline_service.list_pipelines_with_filters(
+                db, limit=2, offset=2
+            )
+        ] == [records[2].id, records[4].id]
 
 
 @pytest.mark.asyncio
-async def test_list_pipelines_with_filters_all_params(pipeline_service):
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = []
-
-    mock_db = AsyncMock(spec=AsyncSession)
-    mock_db.execute.return_value = mock_result
-
-    result = await pipeline_service.list_pipelines_with_filters(
-        mock_db,
-        app_id="org.test",
-        status=PipelineStatus.SUCCEEDED,
-        triggered_by=PipelineTrigger.WEBHOOK,
-        target_repo="stable",
-        limit=50,
+async def test_list_pipelines_with_filters_groups_and_limit(
+    pipeline_service, db_session_maker
+):
+    now = datetime.now(UTC)
+    active = Pipeline(
+        app_id="org.test.App",
+        status=PipelineStatus.RUNNING,
+        params={},
+        created_at=now - timedelta(days=2),
     )
+    pending = Pipeline(
+        app_id="org.test.App",
+        status=PipelineStatus.PENDING,
+        params={},
+        created_at=now - timedelta(days=3),
+    )
+    completed = [
+        Pipeline(
+            app_id="org.test.App",
+            status=PipelineStatus.PUBLISHED,
+            params={},
+            created_at=now + timedelta(seconds=i),
+        )
+        for i in range(120)
+    ]
+    committed_stable = Pipeline(
+        app_id="org.test.Groups",
+        status=PipelineStatus.COMMITTED,
+        flat_manager_repo="stable",
+        params={},
+        created_at=now,
+    )
+    committed_test = Pipeline(
+        app_id="org.test.Groups",
+        status=PipelineStatus.COMMITTED,
+        flat_manager_repo="test",
+        params={},
+        created_at=now,
+    )
+    committed_without_repo = Pipeline(
+        app_id="org.test.Groups",
+        status=PipelineStatus.COMMITTED,
+        params={},
+        created_at=now,
+    )
+    superseded = Pipeline(
+        app_id="org.test.Groups",
+        status=PipelineStatus.SUPERSEDED,
+        params={},
+        created_at=now,
+    )
+    async with db_session_maker() as db:
+        db.add_all(
+            [
+                active,
+                pending,
+                committed_stable,
+                committed_test,
+                committed_without_repo,
+                superseded,
+                *completed,
+            ]
+        )
+        await db.commit()
+        assert {
+            p.id
+            for p in await pipeline_service.list_pipelines_with_filters(
+                db, group="in-progress"
+            )
+        } == {active.id, pending.id}
+        assert {
+            p.id
+            for p in await pipeline_service.list_pipelines_with_filters(
+                db,
+                app_id="org.test.Groups",
+                app_id_match="exact",
+                group="awaiting-publishing",
+            )
+        } == {committed_stable.id}
+        assert {
+            p.id
+            for p in await pipeline_service.list_pipelines_with_filters(
+                db, app_id="org.test.Groups", app_id_match="exact", group="completed"
+            )
+        } == {committed_test.id, committed_without_repo.id, superseded.id}
+        assert (
+            len(
+                await pipeline_service.list_pipelines_with_filters(
+                    db, group="completed", limit=200
+                )
+            )
+            == 100
+        )
+        assert (
+            len(
+                await pipeline_service.list_pipelines_with_filters(
+                    db, group="completed", limit=200, offset=100
+                )
+            )
+            == 23
+        )
 
-    assert result == []
-    mock_db.execute.assert_called_once()
 
-
-@pytest.mark.asyncio
-async def test_list_pipelines_with_filters_limit_bounds(pipeline_service):
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = []
-
-    mock_db = AsyncMock(spec=AsyncSession)
-    mock_db.execute.return_value = mock_result
-
-    await pipeline_service.list_pipelines_with_filters(mock_db, limit=0)
-    await pipeline_service.list_pipelines_with_filters(mock_db, limit=200)
-
-    assert mock_db.execute.call_count == 2
+def test_summary_exposes_source_and_linked_reprocheck_only(
+    pipeline_service, mock_pipeline
+):
+    mock_pipeline.params = {
+        "repo": "flathub/org.test.App",
+        "sha": "abc123",
+        "pr_number": 42,
+        "callback_token": "private",
+    }
+    mock_pipeline.failure_issue_url = "https://github.com/flathub/builds/issues/1"
+    repro = Pipeline(
+        params={
+            "reprocheck_result": {
+                "status_code": "0",
+                "result_url": "https://example.org/result",
+            }
+        }
+    )
+    summary = pipeline_service.pipeline_to_summary(mock_pipeline, repro)
+    assert (summary.source_repo, summary.sha, summary.pr_number) == (
+        "flathub/org.test.App",
+        "abc123",
+        "42",
+    )
+    assert (summary.reprocheck_status_code, summary.reprocheck_result_url) == (
+        "0",
+        "https://example.org/result",
+    )
+    assert summary.failure_issue_url == mock_pipeline.failure_issue_url
+    assert "private" not in summary.model_dump_json()
+    assert (
+        pipeline_service.pipeline_to_summary(mock_pipeline).reprocheck_status_code
+        is None
+    )
+    repro.params = {"reprocheck_result": None}
+    assert (
+        pipeline_service.pipeline_to_summary(
+            mock_pipeline, repro
+        ).reprocheck_status_code
+        is None
+    )
 
 
 def test_pipeline_to_summary(pipeline_service, mock_pipeline):
