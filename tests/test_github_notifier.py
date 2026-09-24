@@ -279,8 +279,10 @@ async def test_notify_pr_build_complete_failure(
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "failure")
 
+        build_url = f"https://flathub.org/en/builds/{mock_pipeline.id}"
         expected_comment = (
-            "❌ [Test build](https://example.com/logs/123) failed.\n\n"
+            "❌ [Test build](https://example.com/logs/123) failed. "
+            f"[Build page]({build_url}).\n\n"
             "<details><summary>Help</summary>\n\n"
             "- <code>bot, build</code> - Restart the test build\n"
         )
@@ -325,8 +327,10 @@ async def test_notify_pr_build_complete_committed_with_download(
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
 
+        build_url = f"https://flathub.org/en/builds/{mock_pipeline.id}"
         expected_comment = (
             "✅ [Test build succeeded](https://example.com/logs/123). "
+            f"[Build page]({build_url}). "
             "To test this build, install it from the testing repository:\n\n"
             "```\nflatpak install --user "
             "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref\n```"
@@ -356,10 +360,15 @@ async def test_notify_pr_build_complete_committed_no_build_id(
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
 
+        build_url = f"https://flathub.org/en/builds/{mock_pipeline.id}"
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App",
             pr_number=42,
-            comment="✅ [Test build succeeded](https://example.com/logs/123).\n\n*Built for x86_64 architecture.*",
+            comment=(
+                "✅ [Test build succeeded](https://example.com/logs/123). "
+                f"[Build page]({build_url}).\n\n"
+                "*Built for x86_64 architecture.*"
+            ),
         )
 
 
@@ -374,11 +383,13 @@ async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "cancelled")
 
+        build_url = f"https://flathub.org/en/builds/{mock_pipeline.id}"
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App",
             pr_number=42,
             comment=(
-                "❌ [Test build](https://example.com/logs/123) was cancelled.\n\n"
+                "❌ [Test build](https://example.com/logs/123) was cancelled. "
+                f"[Build page]({build_url}).\n\n"
                 "<details><summary>Help</summary>\n\n"
                 "- <code>bot, build</code> - Restart the test build\n"
                 "- <code>bot, ping admins</code> - Contact Flathub admins\n"
