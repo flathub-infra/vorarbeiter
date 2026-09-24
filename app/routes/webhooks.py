@@ -919,6 +919,24 @@ async def receive_github_webhook(
             detail=f"Missing expected key in GitHub payload: {e}",
         )
 
+    if request.headers.get("x-github-event") == "workflow_run":
+        if (
+            repo_name != "flathub-infra/vorarbeiter"
+            or payload.get("action") != "completed"
+        ):
+            return {"message": "Workflow event ignored."}
+        from app.services.smoke import SmokeService
+
+        run_id = payload.get("workflow_run", {}).get("id")
+        if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+            raise HTTPException(422, "Invalid workflow run ID")
+        try:
+            processed = await SmokeService().process_run(run_id)
+        except Exception:
+            logger.exception("Could not report application-check result", run_id=run_id)
+            raise HTTPException(503, "Smoke report temporarily unavailable") from None
+        return {"message": "Workflow event processed.", "smoke_reported": processed}
+
     ignored_repos = [
         "flathub/flathub",
         "flathub/org.freedesktop.Platform.GL.nvidia",

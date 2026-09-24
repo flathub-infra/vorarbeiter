@@ -58,9 +58,16 @@ async def publish_pipelines() -> dict[str, Any]:
 async def check_jobs() -> dict[str, Any]:
     from app.database import get_db
     from app.services.job_monitor import JobMonitor
+    from app.services.smoke import SmokeService
 
     async with get_db() as db:
         result = await JobMonitor(db=db).check_all_active_pipelines(db)
+
+    try:
+        result["smoke_reports"] = await SmokeService().reconcile()
+    except Exception:
+        logger = structlog.get_logger(__name__)
+        logger.exception("Could not reconcile application-check reports")
 
     return {
         "status": "completed",

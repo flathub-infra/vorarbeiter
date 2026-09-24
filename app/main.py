@@ -16,6 +16,7 @@ from app.routes import (
     pipelines_router,
     webhooks_router,
 )
+from app.routes.smoke import smoke_router
 
 setup_logging()
 logger = structlog.get_logger(__name__)
@@ -53,6 +54,7 @@ app.add_middleware(LoggingMiddleware)
 
 app.include_router(dashboard_router)
 app.include_router(diffoscope_router)
+app.include_router(smoke_router)
 app.include_router(inactive_repos_router)
 app.include_router(merge_router)
 app.include_router(pipelines_router)
