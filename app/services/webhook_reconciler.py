@@ -1,11 +1,3 @@
-"""Redeliver GitHub push webhooks that vorarbeiter failed to accept.
-
-GitHub does not retry failed webhook deliveries. When a push to a tracked branch
-times out or errors, no pipeline is created and the stable/beta build silently
-never happens. This reconciler lists recent failed deliveries of the org webhook
-and asks GitHub to redeliver the pushes that are still current.
-"""
-
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
@@ -36,7 +28,6 @@ PAGE_SIZE = 100
 MAX_ATTEMPTS = 3
 DEFAULT_LOOKBACK = timedelta(hours=24)
 
-# The reconciler runs every few hours; don't let one run wait out long limits.
 RATE_LIMIT_MAX_ATTEMPTS = 3
 RATE_LIMIT_MAX_TOTAL_DELAY = 900.0
 
@@ -136,7 +127,6 @@ class WebhookDeliveryReconciler:
                 deliveries.append(delivery)
             if reached_window_start:
                 break
-            # The next link already carries per_page, status and cursor.
             url = response.links.get("next", {}).get("url")
             params = None
         return deliveries
@@ -154,7 +144,6 @@ class WebhookDeliveryReconciler:
         if not failed_attempts:
             return result
 
-        # A later successful redelivery (manual or ours) resolves the guid.
         succeeded = {
             delivery.get("guid")
             for delivery in await self._list_deliveries("success", since)
@@ -192,7 +181,6 @@ class WebhookDeliveryReconciler:
                     result.already_stored.append(guid)
                     return
 
-        # Newest attempt first; its detail holds the original payload.
         attempts.sort(key=lambda d: d.get("delivered_at") or "", reverse=True)
         delivery_id = attempts[0]["id"]
         detail = (

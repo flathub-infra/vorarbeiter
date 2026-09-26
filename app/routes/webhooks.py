@@ -1288,7 +1288,6 @@ async def receive_github_webhook(
                     db.add(event)
                     await db.commit()
             except IntegrityError:
-                # Redelivery of a delivery that was already stored.
                 logger.info(
                     "Webhook delivery already received",
                     event_id=str(event.id),

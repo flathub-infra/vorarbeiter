@@ -48,8 +48,6 @@ def push_payload(ref="refs/heads/master", after=NEW_SHA):
 
 
 class FakeGitHub:
-    """Serves deliveries listings, delivery details, refs and redeliveries."""
-
     def __init__(
         self,
         *,
@@ -246,7 +244,6 @@ async def test_exhausted_attempts_alert_without_redelivery(db, sentry):
 
     assert result.exhausted == [GUID]
     assert github.redeliveries == []
-    # The newest attempt carries the payload.
     assert ("get", f"{DELIVERIES}/1") in github.requests
     sentry.capture_message.assert_called_once()
 
