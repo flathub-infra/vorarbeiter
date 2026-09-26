@@ -940,6 +940,80 @@ async def test_check_published_pipeline_jobs_handles_exception(job_monitor):
 
 
 @pytest.mark.asyncio
+async def test_check_published_pipeline_jobs_reports_once(job_monitor):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        publish_job_id=67890,
+        update_repo_job_id=99999,
+        flat_manager_repo="stable",
+        params={},
+        provider_data={"run_id": 1},
+    )
+
+    with (
+        patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
+        patch.object(job_monitor, "_notify_flat_manager_job") as mock_notify,
+    ):
+        mock_get_job.return_value = {"status": JobStatus.ENDED}
+
+        assert await job_monitor.check_and_update_pipeline_jobs(pipeline) is True
+        assert await job_monitor.check_and_update_pipeline_jobs(pipeline) is False
+
+    assert mock_get_job.call_count == 2
+    assert mock_notify.call_count == 2
+    assert pipeline.provider_data == {
+        "run_id": 1,
+        "reported_flat_manager_jobs": {"publish": 67890, "update-repo": 99999},
+    }
+
+
+@pytest.mark.asyncio
+async def test_published_pipeline_is_not_reported_again_after_transitions(
+    job_monitor,
+):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.COMMITTED,
+        publish_job_id=67890,
+        commit_job_id=12345,
+        build_id=123,
+        flat_manager_repo="stable",
+        params={},
+    )
+    jobs = {
+        67890: {
+            "status": JobStatus.ENDED,
+            "kind": JobKind.PUBLISH,
+            "results": '{"update-repo-job": 99999}',
+        },
+        99999: {"status": JobStatus.ENDED, "kind": JobKind.UPDATE_REPO},
+    }
+
+    with (
+        patch.object(
+            job_monitor.flat_manager, "get_job", side_effect=lambda job_id: jobs[job_id]
+        ) as mock_get_job,
+        patch.object(job_monitor, "_notify_flat_manager_job") as mock_notify,
+        patch(
+            "app.pipelines.build.BuildPipeline.handle_publication",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await job_monitor.check_and_update_pipeline_jobs(pipeline)
+        assert pipeline.status == PipelineStatus.PUBLISHING
+        await job_monitor.check_and_update_pipeline_jobs(pipeline)
+        assert pipeline.status == PipelineStatus.PUBLISHED
+        calls_after_publication = (mock_get_job.call_count, mock_notify.call_count)
+
+        assert await job_monitor.check_and_update_pipeline_jobs(pipeline) is False
+
+    assert (mock_get_job.call_count, mock_notify.call_count) == calls_after_publication
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("channel", ["stable", "beta"])
 async def test_process_publish_job_failed_creates_issue(job_monitor, channel):
     pipeline = Pipeline(

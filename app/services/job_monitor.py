@@ -45,6 +45,7 @@ DEFAULT_BUILD_TIMEOUT = timedelta(hours=6)
 EXTENDED_BUILD_TIMEOUT = timedelta(hours=9)
 BUILD_TIMEOUT_SAFETY_MARGIN = timedelta(minutes=15)
 REPROCHECK_TIMEOUT = timedelta(hours=4)
+REPORTED_JOBS_KEY = "reported_flat_manager_jobs"
 
 
 class JobMonitor:
@@ -892,6 +893,7 @@ class JobMonitor:
         if (
             pipeline.publish_job_id
             and pipeline.flat_manager_repo in ["beta", "stable"]
+            and not self._is_job_reported(pipeline, "publish", pipeline.publish_job_id)
             and await self._report_published_job_status(
                 pipeline, pipeline.publish_job_id, "publish"
             )
@@ -905,6 +907,9 @@ class JobMonitor:
                 "beta",
                 "stable",
             ]
+            and not self._is_job_reported(
+                pipeline, "update-repo", pipeline.update_repo_job_id
+            )
             and await self._report_published_job_status(
                 pipeline, pipeline.update_repo_job_id, "update-repo"
             )
@@ -912,6 +917,21 @@ class JobMonitor:
             updated = True
 
         return updated
+
+    @staticmethod
+    def _reported_jobs(pipeline: Pipeline) -> dict[str, int]:
+        return (pipeline.provider_data or {}).get(REPORTED_JOBS_KEY) or {}
+
+    def _is_job_reported(self, pipeline: Pipeline, job_type: str, job_id: int) -> bool:
+        return self._reported_jobs(pipeline).get(job_type) == job_id
+
+    def _mark_job_reported(
+        self, pipeline: Pipeline, job_type: str, job_id: int
+    ) -> None:
+        pipeline.provider_data = {
+            **(pipeline.provider_data or {}),
+            REPORTED_JOBS_KEY: {**self._reported_jobs(pipeline), job_type: job_id},
+        }
 
     async def _notify_flat_manager_job_completed(
         self, pipeline: Pipeline, job_type: str, job_id: int, success: bool
@@ -934,6 +954,7 @@ class JobMonitor:
             fallback_description=fallback,
             error_action="completion",
         )
+        self._mark_job_reported(pipeline, job_type, job_id)
 
     async def _create_job_failure_issue(
         self, pipeline: Pipeline, job_type: str, job_id: int, job_response: JobResponse
