@@ -141,9 +141,10 @@ class JobMonitor:
             for pipeline, result in zip(pipelines, results, strict=True)
         ):
             await db.commit()
-            from app.pipelines.build import BuildPipeline
 
-            await BuildPipeline().start_pending_builds()
+        from app.pipelines.build import BuildPipeline
+
+        await BuildPipeline().start_pending_builds()
 
         return {
             "checked_pipelines": len(pipelines),

@@ -382,6 +382,52 @@ async def test_check_and_update_pipeline_jobs_keeps_running_when_github_jobs_una
 
 
 @pytest.mark.asyncio
+async def test_monitor_drains_due_pending_builds_when_no_active_pipelines(
+    db_session_maker,
+):
+    now = datetime.now(UTC).timestamp()
+    due = Pipeline(
+        app_id="org.test.Due",
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        params={"ref": "refs/pull/1/head", "start_after": now - 1},
+    )
+    future = Pipeline(
+        app_id="org.test.Future",
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        params={"ref": "refs/pull/2/head", "start_after": now + 300},
+    )
+    async with db_session_maker() as db:
+        db.add_all([due, future])
+        await db.commit()
+
+    async def start_pending(pipeline_id):
+        async with db_session_maker() as db:
+            row = await db.get(Pipeline, pipeline_id)
+            row.status = PipelineStatus.RUNNING
+            await db.commit()
+            return row
+
+    from app.pipelines.build import BuildPipeline
+
+    with (
+        patch("app.pipelines.build.settings.max_concurrent_builds", 0),
+        patch.object(
+            BuildPipeline, "start_pipeline", side_effect=start_pending
+        ) as start,
+    ):
+        async with db_session_maker() as db:
+            result = await JobMonitor(db=db).check_all_active_pipelines(db)
+
+    assert result == {"checked_pipelines": 0, "updated_pipelines": 0}
+    start.assert_awaited_once_with(due.id)
+    async with db_session_maker() as db:
+        assert (await db.get(Pipeline, due.id)).status == PipelineStatus.RUNNING
+        assert (await db.get(Pipeline, future.id)).status == PipelineStatus.PENDING
+
+
+@pytest.mark.asyncio
 async def test_check_jobs_cancels_timed_out_running_builds(
     db_session_maker, run_check_all_active_pipelines
 ):

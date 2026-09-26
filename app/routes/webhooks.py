@@ -17,9 +17,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import settings
 from app.database import get_db
 from app.models import InactiveRepoSnapshot
-from app.models.pipeline import Pipeline, PipelineStatus
+from app.models.pipeline import Pipeline, PipelineStatus, PipelineTrigger
 from app.models.webhook_event import WebhookEvent, WebhookSource
-from app.pipelines.build import BuildPipeline, app_build_types, cancel_pipeline
+from app.pipelines.build import (
+    PR_BUILD_DEBOUNCE_SECONDS,
+    BuildPipeline,
+    app_build_types,
+    cancel_pipeline,
+)
 from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.github_actions import GitHubActionsService
 from app.services.test_build_penalty import (
@@ -40,6 +45,7 @@ from app.utils.github import (
     parse_build_ref_from_log,
     set_pr_labels,
     update_commit_status,
+    validate_pipeline_commit_params,
 )
 
 logger = structlog.get_logger(__name__)
@@ -85,6 +91,148 @@ DRAFT_PR_TEST_BUILD_MSG = (
     "restriction applies. Returning to draft removes pending automatic builds, but "
     "active builds continue. Switching between draft and ready does not reset build history."
 )
+
+
+async def notify_debounced_pr_build(pipeline: Pipeline) -> None:
+    params = pipeline.params or {}
+    sha = params.get("sha")
+    git_repo = params.get("repo")
+    pr_number = params.get("pr_number")
+    if not sha or not git_repo or not pr_number:
+        return
+
+    target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
+    try:
+        await update_commit_status(
+            sha=sha,
+            state="pending",
+            git_repo=git_repo,
+            description="Build queued — waiting for the 5-minute quiet period",
+            target_url=target_url,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to set debounced PR build status", pipeline_id=str(pipeline.id)
+        )
+
+    try:
+        await create_pr_comment(
+            git_repo=git_repo,
+            pr_number=int(pr_number),
+            comment=(
+                "Test build queued. It will become eligible to start after a "
+                "5-minute quiet period. Each new push or build request resets the "
+                "timer; available capacity may delay the start further. An explicit "
+                "bot, build request follows the same delay."
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to post debounced PR build comment",
+            pipeline_id=str(pipeline.id),
+        )
+
+
+async def refresh_pending_explicit_pr_build(
+    event: WebhookEvent,
+) -> uuid.UUID | None:
+    payload = event.payload
+    pr = payload.get("pull_request", {})
+    pr_number = pr.get("number")
+    if type(pr_number) is not int or pr_number <= 0:
+        return None
+
+    pr_ref = f"refs/pull/{pr_number}/head"
+    async with get_db() as db:
+        result = await db.execute(
+            select(Pipeline)
+            .where(
+                Pipeline.app_id == event.repository.split("/", 1)[-1],
+                Pipeline.triggered_by == PipelineTrigger.WEBHOOK,
+                Pipeline.status == PipelineStatus.PENDING,
+                Pipeline.params["repo"].as_string() == event.repository,
+                Pipeline.params["ref"].as_string() == pr_ref,
+                Pipeline.params["explicit_pr_build"].as_boolean().is_(True),
+                Pipeline.flat_manager_repo == "test",
+            )
+            .order_by(Pipeline.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        matches = list(result.scalars())
+        if not matches:
+            return None
+
+        pipeline = max(matches, key=BuildPipeline._request_order)
+        for stale in matches:
+            if stale.id != pipeline.id:
+                stale.status = PipelineStatus.SUPERSEDED
+                stale.finished_at = datetime.now(UTC)
+
+        params = dict(pipeline.params or {})
+        head = pr.get("head", {})
+        base = pr.get("base", {})
+        sha = normalize_git_oid(head.get("sha") if isinstance(head, dict) else None)
+        base_ref = base.get("ref") if isinstance(base, dict) else None
+        base_sha = normalize_git_oid(
+            base.get("sha") if isinstance(base, dict) else None
+        )
+        invalid = (
+            settings.ff_disable_test_builds
+            or pr.get("state") == "closed"
+            or sha is None
+            or not isinstance(base_ref, str)
+            or not base_ref
+        )
+        if not invalid:
+            params.update(
+                {
+                    "sha": sha,
+                    "pr_target_branch": base_ref,
+                    "start_after": datetime.now(UTC).timestamp()
+                    + PR_BUILD_DEBOUNCE_SECONDS,
+                }
+            )
+            if base_sha is None:
+                params.pop("base_sha", None)
+            else:
+                params["base_sha"] = base_sha
+            try:
+                params = validate_pipeline_commit_params(params)
+            except ValueError:
+                invalid = True
+
+        if invalid:
+            now = datetime.now(UTC)
+            for pending in matches:
+                pending.status = PipelineStatus.CANCELLED
+                pending.finished_at = now
+            if settings.ff_disable_test_builds:
+                try:
+                    await create_pr_comment(
+                        git_repo=event.repository,
+                        pr_number=pr_number,
+                        comment=DISABLED_TEST_BUILDS_MSG.format(
+                            statuspage_url=settings.statuspage_url
+                        ),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to post disabled test build notice",
+                        repo=event.repository,
+                        pr_number=pr_number,
+                    )
+        else:
+            pipeline.params = params
+            await notify_debounced_pr_build(pipeline)
+
+        db.add(event)
+        await db.commit()
+        return pipeline.id
+
+
+async def cancel_automatic_pending_pr_builds(repository: str, pr_number: int) -> None:
+    await BuildPipeline().cancel_pending_pr_builds(repository, pr_number)
 
 
 async def ensure_draft_pr_comment(git_repo: str, pr_number: int) -> None:
@@ -999,6 +1147,22 @@ async def receive_github_webhook(
             return {"message": "Webhook received but ignored due to missing PR number."}
     is_push_event = "commits" in payload and payload.get("ref", "")
 
+    event = WebhookEvent(
+        id=delivery_id,
+        source=WebhookSource.GITHUB,
+        payload=payload,
+        repository=repo_name,
+        actor=actor_login,
+    )
+    if is_pr_event and payload.get("action") == "synchronize":
+        refreshed_id = await refresh_pending_explicit_pr_build(event)
+        if refreshed_id is not None:
+            return {
+                "message": "Webhook received",
+                "event_id": str(event.id),
+                "pipeline_id": str(refreshed_id),
+            }
+
     if (
         repo_name == "flathub/flathub"
         and payload.get("action") == "opened"
@@ -1032,6 +1196,10 @@ async def receive_github_webhook(
             return {"message": "Merge command received and processing."}
 
     if repo_name in ignored_repos and (is_pr_event or is_push_event):
+        if is_pr_event and payload.get("action") == "synchronize":
+            await cancel_automatic_pending_pr_builds(
+                repo_name, payload["pull_request"]["number"]
+            )
         return {"message": "Webhook received but ignored due to repository filter."}
 
     if is_pr_event and not draft_lifecycle:
@@ -1051,16 +1219,28 @@ async def receive_github_webhook(
                             repo=repo_name,
                             pr_number=pr_number,
                         )
+            if payload.get("action") == "synchronize":
+                await cancel_automatic_pending_pr_builds(
+                    repo_name, payload["pull_request"]["number"]
+                )
             return {
                 "message": "Pull request webhook received but ignored due to large app."
             }
 
         if actor_login in ("dependabot[bot]", "renovate[bot]"):
+            if payload.get("action") == "synchronize":
+                await cancel_automatic_pending_pr_builds(
+                    repo_name, payload["pull_request"]["number"]
+                )
             return {"message": "Webhook received but ignored due to actor filter."}
 
         if actor_login in ("github-actions[bot]",) and await is_submodule_only_pr(
             payload
         ):
+            if payload.get("action") == "synchronize":
+                await cancel_automatic_pending_pr_builds(
+                    repo_name, payload["pull_request"]["number"]
+                )
             return {"message": "Webhook received but ignored due to PR changes filter."}
 
         repository = repo_name.split("/")[1]
@@ -1080,6 +1260,10 @@ async def receive_github_webhook(
                             repo=repo_name,
                             pr_number=pr_number,
                         )
+            if payload.get("action") == "synchronize":
+                await cancel_automatic_pending_pr_builds(
+                    repo_name, payload["pull_request"]["number"]
+                )
             return {
                 "message": (
                     "Pull request webhook received but ignored due to inactivity."
@@ -1090,14 +1274,6 @@ async def receive_github_webhook(
     eol_data = None
     if is_pr_event and not draft_lifecycle:
         is_eol_only, eol_data = await is_eol_only_pr(payload)
-
-    event = WebhookEvent(
-        id=delivery_id,
-        source=WebhookSource.GITHUB,
-        payload=payload,
-        repository=repo_name,
-        actor=actor_login,
-    )
 
     pipeline_id = None
     if should_store_event(payload):
@@ -1114,12 +1290,15 @@ async def receive_github_webhook(
                         await db.commit()
 
             if is_eol_only:
+                if payload.get("action") == "synchronize":
+                    await cancel_automatic_pending_pr_builds(
+                        repo_name, payload["pull_request"]["number"]
+                    )
                 await handle_eol_only_pr(payload, eol_data)
                 return {
                     "message": "EOL-only PR - build skipped",
                     "event_id": str(event.id),
                 }
-
             pipeline_id = await create_pipeline(event)
 
         except Exception as e:
@@ -1145,7 +1324,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     app_id = f"{event.repository.split('/')[-1]}"
     params: dict[str, Any] = {"repo": event.repository}
     sha = None
-
+    explicit_pr_build = False
     payload_action = payload.get("action")
 
     if "pull_request" in payload and payload_action in [
@@ -1165,6 +1344,10 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 repo=event.repository,
                 action=payload.get("action"),
             )
+            if payload_action == "synchronize":
+                await cancel_automatic_pending_pr_builds(
+                    event.repository, pr.get("number")
+                )
             return None
 
         pr_number = pr.get("number")
@@ -1182,6 +1365,8 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 pr_number=pr_number,
                 repo=event.repository,
             )
+            if payload_action == "synchronize":
+                await cancel_automatic_pending_pr_builds(event.repository, pr_number)
             await create_pr_comment(
                 git_repo=event.repository,
                 pr_number=pr_number,
@@ -1198,6 +1383,8 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 pr_number=pr_number,
                 repo=event.repository,
             )
+            if payload_action == "synchronize":
+                await cancel_automatic_pending_pr_builds(event.repository, pr_number)
             return None
         base_sha = normalize_git_oid(pr.get("base", {}).get("sha"))
         params.update(
@@ -1475,6 +1662,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             )
             if base_sha is not None:
                 params["base_sha"] = base_sha
+            explicit_pr_build = True
 
         elif "bot, retry" in comment_body:
             if not issue_number or not issue_body:
@@ -1519,6 +1707,10 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     if pr_number and not is_penalty_exempt(app_id, event.actor):
         until = await get_penalty_until(event.repository, pr_number)
         if until is not None:
+            if payload_action == "synchronize":
+                await cancel_automatic_pending_pr_builds(
+                    event.repository, int(pr_number)
+                )
             if "comment" in payload:
                 if not await validate_retry_permissions(
                     event.repository, comment_author
@@ -1567,6 +1759,15 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                     until=until,
                 )
                 return None
+    if (
+        payload_action in ("opened", "synchronize", "reopened", "ready_for_review")
+        and "pull_request" in payload
+    ) or explicit_pr_build:
+        params["start_after"] = (
+            datetime.now(UTC).timestamp() + PR_BUILD_DEBOUNCE_SECONDS
+        )
+    if explicit_pr_build:
+        params["explicit_pr_build"] = True
 
     pipeline_service = BuildPipeline()
     pipeline = await pipeline_service.create_pipeline(
@@ -1578,6 +1779,14 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     if pipeline.status != PipelineStatus.PENDING:
         return None
     await pipeline_service.supersede_conflicting_test_pipelines(pipeline.id)
+    if "start_after" in pipeline.params:
+        async with get_db() as db:
+            current = await db.get(Pipeline, pipeline.id, with_for_update=True)
+            if current is None or current.status != PipelineStatus.PENDING:
+                return None
+            await notify_debounced_pr_build(current)
+        return pipeline.id
+
     should_queue_test_build = await pipeline_service.should_queue_test_build(
         pipeline.id
     )

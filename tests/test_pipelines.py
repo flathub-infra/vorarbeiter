@@ -76,6 +76,7 @@ async def test_start_pipeline(build_pipeline, mock_db, submission):
 
     mock_pipeline = MagicMock(spec=Pipeline)
     mock_pipeline.id = pipeline_id
+
     mock_pipeline.status = PipelineStatus.PENDING
     mock_pipeline.app_id = "org.flathub.Test"
     mock_pipeline.params = {
@@ -128,6 +129,39 @@ async def test_start_pipeline(build_pipeline, mock_db, submission):
         assert job_data["params"]["inputs"]["expected_submission_sha"] == "a" * 40
     else:
         assert "expected_submission_sha" not in job_data["params"]["inputs"]
+
+
+@pytest.mark.asyncio
+async def test_start_pipeline_keeps_debounced_request_pending_without_side_effects(
+    build_pipeline, mock_db
+):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.example.app",
+        params={
+            "repo": "flathub/org.example.app",
+            "ref": "refs/pull/1/head",
+            "sha": "a" * 40,
+            "start_after": datetime.now(UTC).timestamp() + 300,
+        },
+        status=PipelineStatus.PENDING,
+        provider_data={},
+    )
+    mock_db.get.return_value = pipeline
+    build_pipeline.provider.dispatch.reset_mock()
+    with (
+        patch("app.pipelines.build.get_db", create_mock_get_db(mock_db)),
+        patch.object(
+            build_pipeline.flat_manager, "create_build", AsyncMock()
+        ) as create_build,
+        pytest.raises(ValueError, match="waiting for the PR build debounce"),
+    ):
+        await build_pipeline.start_pipeline(pipeline.id)
+    create_build.assert_not_awaited()
+
+    assert pipeline.status == PipelineStatus.PENDING
+    assert pipeline.started_at is None
+    build_pipeline.provider.dispatch.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -227,6 +261,68 @@ async def test_start_pipeline_branch_mapping(
 
 
 @pytest.mark.asyncio
+async def test_status_callback_drains_due_persisted_pipelines_in_queue_order(
+    db_session_maker,
+):
+    completed = Pipeline(
+        app_id="org.flathub.Completed",
+        status=PipelineStatus.RUNNING,
+        params={"workflow_id": "build.yml"},
+        provider_data={},
+        callback_token="callback-token",
+    )
+    now = datetime.now(UTC).timestamp()
+    pending = [
+        Pipeline(
+            app_id=f"org.flathub.Pending{index}",
+            status=PipelineStatus.PENDING,
+            flat_manager_repo="test",
+            params={"ref": f"refs/pull/{index}/head", "start_after": now - 1},
+            provider_data={},
+        )
+        for index in (1, 2)
+    ]
+    async with db_session_maker() as db:
+        db.add_all([completed, *pending])
+        await db.commit()
+
+    @asynccontextmanager
+    async def get_db(*, use_replica: bool = False):
+        async with db_session_maker() as db:
+            yield db
+
+    started_ids = []
+
+    async def start_pipeline(pipeline_id):
+        started_ids.append(pipeline_id)
+        async with db_session_maker() as db:
+            row = await db.get(Pipeline, pipeline_id)
+            row.status = PipelineStatus.RUNNING
+            await db.commit()
+            return row
+
+    notifier = MagicMock()
+    notifier.handle_build_completion = AsyncMock()
+    build = BuildPipeline()
+    build.start_pipeline = AsyncMock(side_effect=start_pipeline)
+
+    with (
+        patch("app.pipelines.build.get_db", get_db),
+        patch("app.pipelines.build.settings.max_concurrent_builds", 0),
+        patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
+    ):
+        await build.handle_status_callback(completed.id, {"status": "success"})
+
+    assert started_ids == sorted(row.id for row in pending)
+    async with db_session_maker() as db:
+        assert (await db.get(Pipeline, completed.id)).status == PipelineStatus.SUCCEEDED
+        assert [(await db.get(Pipeline, row.id)).status for row in pending] == [
+            PipelineStatus.RUNNING,
+            PipelineStatus.RUNNING,
+        ]
+
+
+@pytest.mark.asyncio
 async def test_handle_status_callback_success(build_pipeline, mock_db, sample_pipeline):
     mock_db.get.return_value = sample_pipeline
 
@@ -240,71 +336,6 @@ async def test_handle_status_callback_success(build_pipeline, mock_db, sample_pi
     assert pipeline.status == PipelineStatus.SUCCEEDED
     assert pipeline.finished_at is not None
     build_pipeline.start_pending_builds.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_handle_status_callback_success_drains_oldest_pending_pipeline():
-    completed_pipeline = Pipeline(
-        id=uuid.uuid4(),
-        app_id="org.flathub.Completed",
-        status=PipelineStatus.RUNNING,
-        params={"workflow_id": "build.yml"},
-        created_at=datetime.now(UTC),
-        provider_data={},
-        callback_token="callback-token",
-    )
-    oldest_pending_id = uuid.uuid4()
-    newer_pending_id = uuid.uuid4()
-
-    callback_db = AsyncMock(spec=AsyncSession)
-    callback_db.get.return_value = completed_pipeline
-
-    pending_result = MagicMock()
-    pending_result.fetchall.return_value = [
-        (oldest_pending_id,),
-        (newer_pending_id,),
-    ]
-
-    pending_db = AsyncMock(spec=AsyncSession)
-    pending_db.execute = AsyncMock(return_value=pending_result)
-
-    db_sessions = [callback_db, pending_db]
-
-    @asynccontextmanager
-    async def sequenced_get_db(*, use_replica: bool = False):
-        if not db_sessions:
-            raise AssertionError("Unexpected get_db() call")
-        yield db_sessions.pop(0)
-
-    build_pipeline = BuildPipeline()
-    notifier = MagicMock()
-    notifier.handle_build_completion = AsyncMock()
-
-    async def _start_pipeline(pipeline_id):
-        started_pipeline = MagicMock(spec=Pipeline)
-        started_pipeline.id = pipeline_id
-        return started_pipeline
-
-    build_pipeline.start_pipeline = AsyncMock(side_effect=_start_pipeline)
-
-    with (
-        patch("app.pipelines.build.get_db", sequenced_get_db),
-        patch("app.pipelines.build.settings.max_concurrent_builds", 0),
-        patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
-    ):
-        pipeline, updates = await build_pipeline.handle_status_callback(
-            completed_pipeline.id, {"status": "success"}
-        )
-
-    assert pipeline.status == PipelineStatus.SUCCEEDED
-    assert updates["pipeline_status"] == "success"
-    started_ids = [
-        call.args[0] for call in build_pipeline.start_pipeline.await_args_list
-    ]
-    assert started_ids == [oldest_pending_id, newer_pending_id]
-    pending_query = str(pending_db.execute.await_args.args[0])  # ty: ignore[unresolved-attribute]
-    assert "ORDER BY created_at ASC" in pending_query
-    assert not db_sessions
 
 
 @pytest.mark.asyncio
@@ -1943,72 +1974,201 @@ async def test_supersede_conflicting_test_pipelines_by_ref(
 
 
 @pytest.mark.asyncio
-async def test_start_pending_builds_respects_capacity():
-    pending_pipeline_id_1 = uuid.uuid4()
-
-    count_result = MagicMock()
-    count_result.scalar.return_value = 1
-
-    pending_result = MagicMock()
-    pending_result.fetchall.return_value = [
-        (pending_pipeline_id_1,),
+async def test_start_pending_builds_selects_due_rows_and_respects_spot_capacity(
+    db_session_maker,
+):
+    now = datetime.now(UTC).timestamp()
+    pipelines = [
+        Pipeline(
+            app_id="org.example.default",
+            params={"ref": "refs/pull/1/head", "start_after": now - 1},
+            status=PipelineStatus.PENDING,
+            flat_manager_repo="test",
+            provider_data={},
+        ),
+        Pipeline(
+            app_id="org.example.medium",
+            params={
+                "ref": "refs/pull/2/head",
+                "build_type": "medium",
+                "start_after": now - 1,
+            },
+            status=PipelineStatus.PENDING,
+            flat_manager_repo="test",
+            provider_data={},
+        ),
+        Pipeline(
+            app_id="org.example.future",
+            params={
+                "ref": "refs/pull/3/head",
+                "build_type": "medium",
+                "start_after": now + 300,
+            },
+            status=PipelineStatus.PENDING,
+            flat_manager_repo="test",
+            provider_data={},
+        ),
     ]
-
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.execute = AsyncMock(side_effect=[count_result, pending_result])
+    async with db_session_maker() as db:
+        db.add_all(pipelines)
+        await db.commit()
+        ids = [row.id for row in pipelines]
 
     build_pipeline = BuildPipeline()
 
-    async def _start_pipeline(pipeline_id):
-        started = MagicMock(spec=Pipeline)
-        started.id = pipeline_id
-        return started
+    async def start(pipeline_id):
+        async with db_session_maker() as db:
+            row = await db.get(Pipeline, pipeline_id)
+            row.status = PipelineStatus.RUNNING
+            await db.commit()
+            return row
 
-    build_pipeline.start_pipeline = AsyncMock(side_effect=_start_pipeline)
+    build_pipeline.start_pipeline = AsyncMock(side_effect=start)
+    build_pipeline._count_running_spot_builds = AsyncMock(return_value=2)
 
-    with (
-        patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)),
-        patch("app.pipelines.build.settings.max_concurrent_builds", 2),
-    ):
+    with patch("app.pipelines.build.settings.max_concurrent_builds", 2):
         started_ids = await build_pipeline.start_pending_builds()
 
-    assert started_ids == [pending_pipeline_id_1]
-    build_pipeline.start_pipeline.assert_awaited_once_with(pending_pipeline_id_1)
-    pending_query_params = mock_db_session.execute.await_args_list[1].args[1]
-    assert pending_query_params["limit"] == 1
+    assert started_ids == [ids[0]]
+    build_pipeline.start_pipeline.assert_awaited_once_with(ids[0])
+    async with db_session_maker() as db:
+        states = [await db.get(Pipeline, pipeline_id) for pipeline_id in ids]
+    assert [row.status for row in states] == [
+        PipelineStatus.RUNNING,
+        PipelineStatus.PENDING,
+        PipelineStatus.PENDING,
+    ]
 
 
 @pytest.mark.asyncio
-async def test_start_pending_builds_unlimited():
-    pending_pipeline_id_1 = uuid.uuid4()
-    pending_pipeline_id_2 = uuid.uuid4()
-
-    pending_result = MagicMock()
-    pending_result.fetchall.return_value = [
-        (pending_pipeline_id_1,),
-        (pending_pipeline_id_2,),
-    ]
-
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.execute = AsyncMock(return_value=pending_result)
+async def test_start_pending_builds_starts_due_spot_rows_with_unlimited_capacity(
+    db_session_maker,
+):
+    now = datetime.now(UTC).timestamp()
+    due = Pipeline(
+        app_id="org.example.due",
+        params={
+            "ref": "refs/pull/1/head",
+            "build_type": "large",
+            "start_after": now - 1,
+        },
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    future = Pipeline(
+        app_id="org.example.future",
+        params={
+            "ref": "refs/pull/2/head",
+            "build_type": "large",
+            "start_after": now + 300,
+        },
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    async with db_session_maker() as db:
+        db.add_all([due, future])
+        await db.commit()
 
     build_pipeline = BuildPipeline()
 
-    async def _start_pipeline(pipeline_id):
-        started = MagicMock(spec=Pipeline)
-        started.id = pipeline_id
-        return started
+    async def start(pipeline_id):
+        async with db_session_maker() as db:
+            row = await db.get(Pipeline, pipeline_id)
+            row.status = PipelineStatus.RUNNING
+            await db.commit()
+            return row
 
-    build_pipeline.start_pipeline = AsyncMock(side_effect=_start_pipeline)
-
-    with (
-        patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)),
-        patch("app.pipelines.build.settings.max_concurrent_builds", 0),
-    ):
+    build_pipeline.start_pipeline = AsyncMock(side_effect=start)
+    with patch("app.pipelines.build.settings.max_concurrent_builds", 0):
         started_ids = await build_pipeline.start_pending_builds()
 
-    assert started_ids == [pending_pipeline_id_1, pending_pipeline_id_2]
-    assert build_pipeline.start_pipeline.await_count == 2
+    assert started_ids == [due.id]
+    async with db_session_maker() as db:
+        assert (await db.get(Pipeline, due.id)).status == PipelineStatus.RUNNING
+        assert (await db.get(Pipeline, future.id)).status == PipelineStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_debounced_replacement_order_keeps_newer_request(db_session_maker):
+    now = datetime.now(UTC).timestamp()
+    older = Pipeline(
+        app_id="org.example.app",
+        params={"ref": "refs/pull/1/head", "start_after": now + 180},
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    newer = Pipeline(
+        app_id="org.example.app",
+        params={"ref": "refs/pull/1/head", "start_after": now + 300},
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    async with db_session_maker() as db:
+        db.add_all([older, newer])
+        await db.commit()
+
+    build = BuildPipeline()
+    await build.supersede_conflicting_test_pipelines(older.id)
+    async with db_session_maker() as db:
+        assert (await db.get(Pipeline, older.id)).status == PipelineStatus.SUPERSEDED
+        assert (await db.get(Pipeline, newer.id)).status == PipelineStatus.PENDING
+
+    await build.supersede_conflicting_test_pipelines(newer.id)
+    async with db_session_maker() as db:
+        assert (await db.get(Pipeline, newer.id)).status == PipelineStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_start_pending_builds_starts_default_at_zero_spot_capacity(
+    db_session_maker,
+):
+    due_default = Pipeline(
+        app_id="org.example.default",
+        params={
+            "ref": "refs/pull/1/head",
+            "start_after": datetime.now(UTC).timestamp() - 1,
+        },
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    due_medium = Pipeline(
+        app_id="org.example.medium",
+        params={
+            "ref": "refs/pull/2/head",
+            "build_type": "medium",
+            "start_after": datetime.now(UTC).timestamp() - 1,
+        },
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    async with db_session_maker() as db:
+        db.add_all([due_default, due_medium])
+        await db.commit()
+
+    build = BuildPipeline()
+
+    async def start(pipeline_id):
+        async with db_session_maker() as db:
+            row = await db.get(Pipeline, pipeline_id)
+            row.status = PipelineStatus.RUNNING
+            await db.commit()
+            return row
+
+    build.start_pipeline = AsyncMock(side_effect=start)
+    build._count_running_spot_builds = AsyncMock(return_value=20)
+    with patch("app.pipelines.build.settings.max_concurrent_builds", 20):
+        started = await build.start_pending_builds()
+
+    assert started == [due_default.id]
+    async with db_session_maker() as db:
+        assert (await db.get(Pipeline, due_default.id)).status == PipelineStatus.RUNNING
+        assert (await db.get(Pipeline, due_medium.id)).status == PipelineStatus.PENDING
 
 
 @pytest.mark.asyncio
@@ -2094,25 +2254,29 @@ async def test_should_queue_test_build(
 
 
 @pytest.mark.asyncio
-async def test_start_pending_builds_at_zero_capacity():
-    count_result = MagicMock()
-    count_result.scalar.return_value = 20
+async def test_should_queue_debounced_default_build_without_capacity_check():
+    pipeline_id = uuid.uuid4()
+    pipeline = Pipeline(
+        id=pipeline_id,
+        app_id="org.example.app",
+        params={
+            "ref": "refs/pull/1/head",
+            "build_type": "default",
+            "start_after": datetime.now(UTC).timestamp() + 300,
+        },
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    db = AsyncMock(spec=AsyncSession)
+    db.get.return_value = pipeline
+    build = BuildPipeline()
+    build._can_start_test_spot_build = AsyncMock()
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.execute = AsyncMock(return_value=count_result)
+    with patch("app.pipelines.build.get_db", create_mock_get_db(db)):
+        assert await build.should_queue_test_build(pipeline_id) is True
 
-    build_pipeline = BuildPipeline()
-    build_pipeline.start_pipeline = AsyncMock()
-
-    with (
-        patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)),
-        patch("app.pipelines.build.settings.max_concurrent_builds", 20),
-    ):
-        started_ids = await build_pipeline.start_pending_builds()
-
-    assert started_ids == []
-    build_pipeline.start_pipeline.assert_not_awaited()
-    assert mock_db_session.execute.await_count == 1
+    build._can_start_test_spot_build.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2121,9 +2285,9 @@ async def test_start_pending_builds_handles_non_value_error():
     pending_id_2 = uuid.uuid4()
 
     pending_result = MagicMock()
-    pending_result.fetchall.return_value = [
-        (pending_id_1,),
-        (pending_id_2,),
+    pending_result.all.return_value = [
+        (pending_id_1, "default"),
+        (pending_id_2, "default"),
     ]
 
     mock_db_session = AsyncMock(spec=AsyncSession)

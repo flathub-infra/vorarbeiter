@@ -7,7 +7,7 @@ import httpx2 as httpx
 import sentry_sdk
 import structlog
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -65,6 +65,7 @@ FAST_BUILD_P90_THRESHOLD_MINUTES = 20.0
 FAST_BUILD_MIN_BUILDS = 3
 FAST_BUILD_LOOKBACK_DAYS = 90
 SPOT_BUILD_TYPES = ("medium", "large")
+PR_BUILD_DEBOUNCE_SECONDS = 300
 
 
 async def get_app_p90_build_time(db: AsyncSession, app_id: str) -> float | None:
@@ -298,18 +299,13 @@ class BuildPipeline:
             return pipeline
 
     async def _count_running_spot_builds(self, db: AsyncSession) -> int:
-        query = text("""
-            SELECT COUNT(*)
-            FROM pipeline
-            WHERE status = :status
-              AND params->>'build_type' = ANY(:spot_types)
-        """)
         result = await db.execute(
-            query,
-            {
-                "status": PipelineStatus.RUNNING.value,
-                "spot_types": list(SPOT_BUILD_TYPES),
-            },
+            select(func.count())
+            .select_from(Pipeline)
+            .where(
+                Pipeline.status == PipelineStatus.RUNNING,
+                Pipeline.params["build_type"].as_string().in_(SPOT_BUILD_TYPES),
+            )
         )
         return int(result.scalar() or 0)
 
@@ -319,6 +315,21 @@ class BuildPipeline:
 
         running_spot_builds = await self._count_running_spot_builds(db)
         return running_spot_builds < settings.max_concurrent_builds
+
+    @staticmethod
+    def _is_debouncing(pipeline: Pipeline) -> bool:
+        start_after = (pipeline.params or {}).get("start_after")
+        return start_after is not None and start_after > datetime.now(UTC).timestamp()
+
+    @staticmethod
+    def _request_order(pipeline: Pipeline) -> tuple[float, uuid.UUID]:
+        start_after = (pipeline.params or {}).get("start_after")
+        if start_after is not None:
+            return start_after - PR_BUILD_DEBOUNCE_SECONDS, pipeline.id
+        created_at = pipeline.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        return created_at.timestamp(), pipeline.id
 
     async def cancel_pending_pr_builds(self, git_repo: str, pr_number: int) -> None:
         async with get_db() as db:
@@ -377,6 +388,20 @@ class BuildPipeline:
             if pipeline.status != PipelineStatus.PENDING:
                 return
 
+            if (pipeline.params or {}).get("start_after") is not None:
+                newer = [
+                    row
+                    for row in locked
+                    if row.id != pipeline_id
+                    and (row.params or {}).get("start_after") is not None
+                    and row.status in (PipelineStatus.RUNNING, PipelineStatus.PENDING)
+                    and self._request_order(row) > self._request_order(pipeline)
+                ]
+                if newer:
+                    pipeline.status = PipelineStatus.SUPERSEDED
+                    await db.commit()
+                    return
+
             await self._supersede_conflicting_pipelines(
                 db=db,
                 pipeline=pipeline,
@@ -398,6 +423,9 @@ class BuildPipeline:
 
             if pipeline.flat_manager_repo != "test":
                 return False
+
+            if self._is_debouncing(pipeline):
+                return True
 
             if not self.is_spot_build_type((pipeline.params or {}).get("build_type")):
                 return False
@@ -451,6 +479,11 @@ class BuildPipeline:
 
             if pipeline.status != PipelineStatus.PENDING:
                 raise ValueError(f"Pipeline {pipeline_id} is not in PENDING state")
+
+            if self._is_debouncing(pipeline):
+                raise ValueError(
+                    f"Pipeline {pipeline_id} is waiting for the PR build debounce"
+                )
 
             pipeline.status = PipelineStatus.RUNNING
             pipeline.started_at = datetime.now(tz=UTC)
@@ -554,44 +587,43 @@ class BuildPipeline:
             return pipeline
 
     async def start_pending_builds(self) -> list[uuid.UUID]:
-        query = """
-            SELECT id
-            FROM pipeline
-            WHERE status = :pending_status
-              AND flat_manager_repo = 'test'
-              AND params->>'build_type' = ANY(:spot_types)
-            ORDER BY created_at ASC
-        """
-
-        params: dict[str, Any] = {
-            "pending_status": PipelineStatus.PENDING.value,
-            "spot_types": list(SPOT_BUILD_TYPES),
-        }
-        limit: int | None = None
+        now = datetime.now(UTC).timestamp()
+        query = (
+            select(Pipeline.id, Pipeline.params["build_type"].as_string())
+            .where(
+                Pipeline.status == PipelineStatus.PENDING,
+                Pipeline.flat_manager_repo == "test",
+                (
+                    Pipeline.params["build_type"].as_string().in_(SPOT_BUILD_TYPES)
+                    | Pipeline.params["start_after"].as_float().isnot(None)
+                ),
+                (
+                    Pipeline.params["start_after"].as_float().is_(None)
+                    | (Pipeline.params["start_after"].as_float() <= now)
+                ),
+            )
+            .order_by(Pipeline.created_at, Pipeline.id)
+        )
         async with get_db() as db:
+            remaining_capacity = None
             if settings.max_concurrent_builds > 0:
-                running_spot_builds = await self._count_running_spot_builds(db)
                 remaining_capacity = max(
-                    settings.max_concurrent_builds - running_spot_builds,
+                    settings.max_concurrent_builds
+                    - await self._count_running_spot_builds(db),
                     0,
                 )
-                if remaining_capacity == 0:
-                    return []
-                limit = remaining_capacity
-
-            if limit is not None:
-                query += "\nLIMIT :limit"
-                params["limit"] = limit
-
-            result = await db.execute(text(query), params)
-            rows = result.fetchall()
-            pending_pipeline_ids = [row[0] for row in rows]
+            rows = (await db.execute(query)).all()
 
         started_pipeline_ids: list[uuid.UUID] = []
-        for pending_pipeline_id in pending_pipeline_ids:
+        for pending_pipeline_id, build_type in rows:
+            is_spot = self.is_spot_build_type(build_type)
+            if is_spot and remaining_capacity == 0:
+                continue
             try:
                 started_pipeline = await self.start_pipeline(pending_pipeline_id)
                 started_pipeline_ids.append(started_pipeline.id)
+                if is_spot and remaining_capacity is not None:
+                    remaining_capacity -= 1
             except ValueError:
                 logger.info(
                     "Skipping pending pipeline that is no longer startable",
