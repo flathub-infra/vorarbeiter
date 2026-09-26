@@ -577,6 +577,10 @@ def is_initial_push(payload: dict[str, Any]) -> bool:
     )
 
 
+def is_build_command(comment: str) -> bool:
+    return any(line.strip() == "bot, build" for line in comment.splitlines())
+
+
 def should_store_event(payload: dict) -> bool:
     """
     Determine if a webhook event should be stored based on event type.
@@ -585,7 +589,7 @@ def should_store_event(payload: dict) -> bool:
     - A new PR is opened
     - A PR is updated
     - A new commit happens to master, beta or branch/*
-    - PR comment contains "bot, build" not inside quotes or inline code blocks
+    - PR comment has a line that is exactly "bot, build"
     - Issue comment contains "bot, retry" not inside quotes or inline code blocks
     - Comment contains "bot, ping admins" not inside quotes or inline code blocks
     """
@@ -673,7 +677,7 @@ def should_store_event(payload: dict) -> bool:
             comment_lines.append(line)
         filtered_comment = "\n".join(comment_lines)
 
-        if "bot, build" in filtered_comment:
+        if is_build_command(comment):
             return True
 
         if "bot, retry" in filtered_comment.lower():
@@ -1589,7 +1593,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
             return None
 
-        elif "bot, build" in comment_body:
+        elif is_build_command(payload.get("comment", {}).get("body", "")):
             if not pr_url or issue_number is None:
                 return None
 

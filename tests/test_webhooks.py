@@ -50,7 +50,7 @@ SAMPLE_COMMENT_PAYLOAD = {
     "repository": {"full_name": "test-owner/test-repo"},
     "sender": {"login": "test-actor"},
     "action": "created",
-    "comment": {"body": "please bot, build this"},
+    "comment": {"body": "bot, build"},
 }
 
 # Sample payload that should be ignored
@@ -259,7 +259,7 @@ def test_receive_github_webhook_reacts_to_bot_command(client: TestClient, mock_d
         "action": "created",
         "comment": {
             "id": 123456789,
-            "body": "please bot, build this",
+            "body": "bot, build",
             "user": {"login": "test-user"},
         },
         "issue": {
@@ -674,6 +674,26 @@ def test_should_store_event_comment_with_bot_build():
     from app.routes.webhooks import should_store_event
 
     assert should_store_event(SAMPLE_COMMENT_PAYLOAD) is True
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("bot, build", True),
+        ("  bot, build  ", True),
+        ("Thanks for the review!\r\nbot, build", True),
+        ("please bot, build this", False),
+        ("bot, build please", False),
+        ("`bot, build`", False),
+        ("> bot, build", False),
+        ("Bot, build", False),
+        ("bot,build", False),
+    ],
+)
+def test_is_build_command(body, expected):
+    from app.routes.webhooks import is_build_command
+
+    assert is_build_command(body) is expected
 
 
 def test_should_store_event_github_bot_flathub_repo():
@@ -1432,7 +1452,7 @@ async def test_create_pipeline_comment(db_session_maker):
         },
     }
     comment_payload["comment"] = {
-        "body": "please bot, build this",
+        "body": "bot, build",
         "id": 12345,
         "user": {"login": "test-user"},
         "html_url": "https://github.com/test-owner/test-repo/pull/42#comment-12345",
@@ -2483,7 +2503,7 @@ SAMPLE_COMMENT_CLOSED_PR_PAYLOAD = {
     "repository": {"full_name": "test-owner/test-repo"},
     "sender": {"login": "test-actor"},
     "action": "created",
-    "comment": {"body": "please bot, build this"},
+    "comment": {"body": "bot, build"},
     "issue": {
         "number": 42,
         "pull_request": {
