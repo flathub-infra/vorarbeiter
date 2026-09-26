@@ -83,12 +83,7 @@ INACTIVE_REPO_TEST_BUILD_MSG = (
     "inactivity. To request a test build, comment `bot, build` on this PR."
 )
 
-DEBOUNCED_PR_BUILD_MSG = (
-    "Test build queued. It will become eligible to start after a "
-    "5-minute quiet period. Each new push or build request resets the "
-    "timer; available capacity may delay the start further. An explicit "
-    "`bot, build` request follows the same delay."
-)
+TEST_BUILD_ENQUEUED_MSG = "🚧 Test build enqueued."
 
 DRAFT_PR_TEST_BUILD_MSG = (
     "Draft pull requests do not start automatic full builds when opened or updated. "
@@ -114,7 +109,7 @@ async def notify_debounced_pr_build(pipeline: Pipeline) -> None:
             sha=sha,
             state="pending",
             git_repo=git_repo,
-            description="Build queued — waiting for the 5-minute quiet period",
+            description="Build enqueued",
             target_url=target_url,
         )
     except Exception:
@@ -126,7 +121,7 @@ async def notify_debounced_pr_build(pipeline: Pipeline) -> None:
         await create_pr_comment(
             git_repo=git_repo,
             pr_number=int(pr_number),
-            comment=DEBOUNCED_PR_BUILD_MSG,
+            comment=TEST_BUILD_ENQUEUED_MSG,
         )
     except Exception:
         logger.exception(
@@ -1823,17 +1818,12 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
         if commit_sha and git_repo:
             target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
-            description = (
-                "Build queued — waiting for capacity"
-                if should_queue_test_build
-                else "Build enqueued"
-            )
             try:
                 await update_commit_status(
                     sha=commit_sha,
                     state="pending",
                     git_repo=git_repo,
-                    description=description,
+                    description="Build enqueued",
                     target_url=target_url,
                 )
             except Exception as e:
@@ -1869,15 +1859,10 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         if pr_number_str and git_repo:
             try:
                 pr_number = int(pr_number_str)
-                comment = (
-                    "🚧 Test build queued — waiting for capacity."
-                    if should_queue_test_build
-                    else "🚧 Test build [enqueued](https://github.com/flathub-infra/vorarbeiter/actions/workflows/build.yml)."
-                )
                 await create_pr_comment(
                     git_repo=git_repo,
                     pr_number=pr_number,
-                    comment=comment,
+                    comment=TEST_BUILD_ENQUEUED_MSG,
                 )
             except ValueError:
                 logger.error(

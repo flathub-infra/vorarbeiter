@@ -719,7 +719,7 @@ def test_should_not_store_flathubbot_comment(repo):
 @pytest.mark.parametrize(
     "message",
     [
-        "DEBOUNCED_PR_BUILD_MSG",
+        "TEST_BUILD_ENQUEUED_MSG",
         "DISABLED_TEST_BUILDS_MSG",
         "DRAFT_PR_TEST_BUILD_MSG",
         "INACTIVE_REPO_TEST_BUILD_MSG",
@@ -1577,8 +1577,8 @@ async def test_create_pipeline_debounces_spot_pr_request_before_capacity_check(
     service.should_queue_test_build.assert_not_awaited()
     assert status.await_args is not None
     assert comment.await_args is not None
-    assert "5-minute quiet period" in status.await_args.kwargs["description"]
-    assert "quiet period" in comment.await_args.kwargs["comment"]
+    assert status.await_args.kwargs["description"] == "Build enqueued"
+    assert comment.await_args.kwargs["comment"] == "🚧 Test build enqueued."
 
 
 @pytest.mark.asyncio
@@ -1638,8 +1638,8 @@ async def test_create_pipeline_debounces_default_pr_build_at_capacity(
     mock_pipeline_service.start_pipeline.assert_not_awaited()
     assert mock_status.await_args is not None
     assert mock_comment.await_args is not None
-    assert "5-minute quiet period" in mock_status.await_args.kwargs["description"]
-    assert "quiet period" in mock_comment.await_args.kwargs["comment"]
+    assert mock_status.await_args.kwargs["description"] == "Build enqueued"
+    assert mock_comment.await_args.kwargs["comment"] == "🚧 Test build enqueued."
 
 
 @pytest.mark.asyncio
@@ -4419,10 +4419,10 @@ async def test_automatic_pr_request_persists_debounced_pending_pipeline(
         status.assert_awaited_once()
         assert status.await_args is not None
         assert status.await_args.kwargs["state"] == "pending"
-        assert "5-minute quiet period" in status.await_args.kwargs["description"]
+        assert status.await_args.kwargs["description"] == "Build enqueued"
         comment.assert_awaited_once()
         assert comment.await_args is not None
-        assert "5-minute quiet period" in comment.await_args.kwargs["comment"]
+        assert comment.await_args.kwargs["comment"] == "🚧 Test build enqueued."
         provider.dispatch.assert_not_awaited()
 
 
