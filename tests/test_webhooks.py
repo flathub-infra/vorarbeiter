@@ -19,7 +19,7 @@ from app.routes.webhooks import is_submodule_only_pr
 from tests.conftest import MockHttpxClient, create_mock_get_db
 
 # Sample GitHub payloads (simplified)
-SAMPLE_GITHUB_PAYLOAD = {
+SAMPLE_GITHUB_PAYLOAD: dict[str, Any] = {
     "repository": {"full_name": "test-owner/test-repo"},
     "sender": {"login": "test-actor"},
     "action": "opened",
@@ -1445,10 +1445,14 @@ async def test_create_pipeline_queues_spot_test_build_at_capacity():
     mock_pipeline_service.start_pipeline.return_value = prepared_pipeline
 
     mock_db = AsyncMock(spec=AsyncSession)
+    mock_db.get.return_value = prepared_pipeline
     mock_get_db = create_mock_get_db(mock_db)
 
     with (
         patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
+        patch(
+            "app.routes.webhooks.is_runtime_update_pr", AsyncMock(return_value=False)
+        ),
         patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
         patch("app.routes.webhooks.get_db", mock_get_db),
         patch("app.pipelines.build.get_db", mock_get_db),
@@ -3629,3 +3633,223 @@ async def test_find_retry_base_sha_candidate_sets(
             result = await find_retry_base_sha(app_id, repo, ref, sha)
 
     assert result == expected
+
+
+@pytest.fixture
+def pr_lifecycle_event():
+    def make(action: str, draft: bool | None) -> WebhookEvent:
+        pull_request = {**SAMPLE_GITHUB_PAYLOAD["pull_request"]}
+        if draft is not None:
+            pull_request["draft"] = draft
+        return WebhookEvent(
+            id=uuid.uuid4(),
+            source=WebhookSource.GITHUB,
+            repository="test-owner/test-repo",
+            actor="test-actor",
+            payload={
+                **SAMPLE_GITHUB_PAYLOAD,
+                "action": action,
+                "pull_request": pull_request,
+            },
+        )
+
+    return make
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,started,covered",
+    [
+        (PipelineStatus.PENDING, False, True),
+        (PipelineStatus.RUNNING, True, True),
+        (PipelineStatus.FAILED, True, True),
+        (PipelineStatus.SUCCEEDED, True, True),
+        (PipelineStatus.CANCELLED, True, True),
+        (PipelineStatus.SUPERSEDED, True, True),
+        (PipelineStatus.CANCELLED, False, False),
+        (PipelineStatus.SUPERSEDED, False, False),
+    ],
+)
+async def test_ready_head_history(
+    db_session_maker, pr_lifecycle_event, status, started, covered
+):
+    from app.routes.webhooks import create_pipeline
+
+    event = pr_lifecycle_event("ready_for_review", False)
+    previous = Pipeline(
+        app_id="test-repo",
+        status=status,
+        params={"repo": event.repository, "ref": "refs/pull/123/head", "sha": "a" * 40},
+        started_at=datetime.now(UTC) if started else None,
+        provider_data={},
+    )
+    async with db_session_maker() as db:
+        db.add_all([event, previous])
+        await db.commit()
+    with (
+        patch(
+            "app.pipelines.build.get_app_p90_build_time", AsyncMock(return_value=None)
+        ),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()),
+        patch(
+            "app.pipelines.build.BuildPipeline.should_queue_test_build",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        pipeline_id = await create_pipeline(event)
+    assert (pipeline_id is None) == covered
+    if pipeline_id is not None:
+        async with db_session_maker() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            assert pipeline.params["action"] == "ready_for_review"
+            assert pipeline.status == PipelineStatus.PENDING
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action", ["opened", "synchronize", "reopened", "converted_to_draft"]
+)
+async def test_draft_event_cancels_pending_and_skips_dispatch(
+    db_session_maker, pr_lifecycle_event, action
+):
+    from app.routes.webhooks import create_pipeline
+
+    event = pr_lifecycle_event(action, True if action != "converted_to_draft" else None)
+    pending = Pipeline(
+        app_id="test-repo",
+        status=PipelineStatus.PENDING,
+        params={
+            "repo": event.repository,
+            "ref": "refs/pull/123/head",
+            "action": "opened",
+        },
+        provider_data={},
+    )
+    async with db_session_maker() as db:
+        db.add_all([event, pending])
+        await db.commit()
+    with patch("app.routes.webhooks.ensure_draft_pr_comment", AsyncMock()) as comment:
+        assert await create_pipeline(event) is None
+    comment.assert_awaited_once_with(event.repository, 123)
+    async with db_session_maker() as db:
+        current = await db.get(Pipeline, pending.id)
+        assert current.status == PipelineStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "repo,actor,base",
+    [
+        ("flathub/org.chromium.Chromium", "test-actor", "unsupported"),
+        ("flathub/org.test.App", "test-actor", "unsupported"),
+        ("flathub/org.test.App", "dependabot[bot]", "unsupported"),
+    ],
+)
+async def test_draft_conversion_bypasses_build_filters(
+    db_session_maker, repo, actor, base
+):
+
+    from app.routes import webhooks
+
+    payload = {
+        **SAMPLE_GITHUB_PAYLOAD,
+        "action": "converted_to_draft",
+        "repository": {"full_name": repo},
+        "sender": {"login": actor},
+        "pull_request": {
+            **SAMPLE_GITHUB_PAYLOAD["pull_request"],
+            "base": {"ref": base},
+        },
+    }
+    pending = Pipeline(
+        app_id=repo.split("/")[-1],
+        status=PipelineStatus.PENDING,
+        params={
+            "repo": repo,
+            "ref": "refs/pull/123/head",
+            "action": "ready_for_review",
+        },
+        provider_data={},
+    )
+    async with db_session_maker() as db:
+        db.add(pending)
+        await db.commit()
+    with (
+        patch.object(settings, "github_webhook_secret", ""),
+        patch.object(settings, "ff_disable_test_builds", True),
+        patch.object(webhooks, "ensure_draft_pr_comment", AsyncMock()) as comment,
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as api:
+            response = await api.post(
+                "/api/webhooks/github",
+                json=payload,
+                headers={"X-GitHub-Delivery": str(uuid.uuid4())},
+            )
+    assert response.status_code == 202
+    comment.assert_awaited_once_with(repo, 123)
+    async with db_session_maker() as db:
+        current = await db.get(Pipeline, pending.id)
+        assert current.status == PipelineStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_draft_comment_retries_after_failed_lookup(db_session_maker):
+    from app.routes.webhooks import ensure_draft_pr_comment
+
+    comments = []
+    client = MagicMock()
+    fail_lookup = True
+
+    async def request(method, url, **kwargs):
+        if method == "get":
+            if not comments and fail_lookup:
+                return None
+            response = MagicMock()
+            response.json.return_value = [{"body": body} for body in comments]
+            return response
+        comments.append(kwargs["json"]["body"])
+        return MagicMock()
+
+    client.request = AsyncMock(side_effect=request)
+    with patch("app.utils.github.get_github_client", return_value=client):
+        await ensure_draft_pr_comment("flathub/test", 23)
+        assert comments == []
+        fail_lookup = False
+        await ensure_draft_pr_comment("flathub/test", 23)
+        await ensure_draft_pr_comment("flathub/test", 23)
+    assert len(comments) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_queue_has_no_pending_status_or_comment(
+    db_session_maker, pr_lifecycle_event
+):
+    from app.pipelines.build import BuildPipeline
+    from app.routes.webhooks import create_pipeline
+
+    event = pr_lifecycle_event("ready_for_review", False)
+    async with db_session_maker() as db:
+        db.add(event)
+        await db.commit()
+
+    async def cancel_at_capacity(self, pipeline_id):
+        await BuildPipeline().cancel_pending_pr_builds(event.repository, 123)
+        return True
+
+    with (
+        patch(
+            "app.pipelines.build.get_app_p90_build_time", AsyncMock(return_value=None)
+        ),
+        patch(
+            "app.pipelines.build.BuildPipeline.should_queue_test_build",
+            cancel_at_capacity,
+        ),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()) as status,
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as comment,
+    ):
+        assert await create_pipeline(event) is None
+    status.assert_not_awaited()
+    comment.assert_not_awaited()

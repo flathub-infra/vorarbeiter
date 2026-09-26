@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Pipeline, PipelineStatus
+from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.services import github_actions_service
 from app.services.github_actions import GitHubActionsService
 from app.services.github_notifier import GitHubNotifier
@@ -320,6 +320,27 @@ class BuildPipeline:
         running_spot_builds = await self._count_running_spot_builds(db)
         return running_spot_builds < settings.max_concurrent_builds
 
+    async def cancel_pending_pr_builds(self, git_repo: str, pr_number: int) -> None:
+        async with get_db() as db:
+            result = await db.execute(
+                select(Pipeline)
+                .where(
+                    Pipeline.status == PipelineStatus.PENDING,
+                    Pipeline.triggered_by == PipelineTrigger.WEBHOOK,
+                    Pipeline.params["repo"].as_string() == git_repo,
+                    Pipeline.params["ref"].as_string() == f"refs/pull/{pr_number}/head",
+                    Pipeline.params["action"]
+                    .as_string()
+                    .in_(("opened", "synchronize", "reopened", "ready_for_review")),
+                )
+                .order_by(Pipeline.id)
+                .with_for_update()
+            )
+            for pipeline in result.scalars():
+                pipeline.status = PipelineStatus.CANCELLED
+                pipeline.finished_at = datetime.now(tz=UTC)
+            await db.commit()
+
     async def supersede_conflicting_test_pipelines(
         self, pipeline_id: uuid.UUID
     ) -> None:
@@ -331,10 +352,36 @@ class BuildPipeline:
             if pipeline.flat_manager_repo != "test":
                 return
 
+            ref = (pipeline.params or {}).get("ref")
+            if not ref:
+                return
+
+            result = await db.execute(
+                select(Pipeline)
+                .where(
+                    Pipeline.app_id == pipeline.app_id,
+                    Pipeline.params["ref"].as_string() == ref,
+                    (Pipeline.id == pipeline_id)
+                    | Pipeline.status.in_(
+                        [PipelineStatus.RUNNING, PipelineStatus.PENDING]
+                    ),
+                )
+                .order_by(Pipeline.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            locked = list(result.scalars())
+            pipeline = next((row for row in locked if row.id == pipeline_id), None)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+            if pipeline.status != PipelineStatus.PENDING:
+                return
+
             await self._supersede_conflicting_pipelines(
                 db=db,
                 pipeline=pipeline,
                 flat_manager_repo="test",
+                conflicting=[row for row in locked if row.id != pipeline_id],
             )
             await db.commit()
 
@@ -362,25 +409,20 @@ class BuildPipeline:
         db: AsyncSession,
         pipeline: Pipeline,
         flat_manager_repo: str,
+        conflicting: list[Pipeline] | None = None,
     ) -> None:
-        query = select(Pipeline).where(
-            Pipeline.app_id == pipeline.app_id,
-            Pipeline.status.in_([PipelineStatus.RUNNING, PipelineStatus.PENDING]),
-            Pipeline.id != pipeline.id,
-        )
+        if conflicting is None:
+            query = select(Pipeline).where(
+                Pipeline.app_id == pipeline.app_id,
+                Pipeline.status.in_([PipelineStatus.RUNNING, PipelineStatus.PENDING]),
+                Pipeline.id != pipeline.id,
+            )
 
-        if flat_manager_repo in ["stable", "beta"]:
-            query = query.where(Pipeline.flat_manager_repo == flat_manager_repo)
-        elif flat_manager_repo == "test":
-            ref = (pipeline.params or {}).get("ref")
-            if not ref:
+            if flat_manager_repo not in ["stable", "beta"]:
                 return
-            query = query.where(text("params->>'ref' = :ref")).params(ref=ref)
-        else:
-            return
-        result = await db.execute(query)
-        conflicting = list(result.scalars().all())
-
+            query = query.where(Pipeline.flat_manager_repo == flat_manager_repo)
+            result = await db.execute(query)
+            conflicting = list(result.scalars().all())
         for old_pipeline in conflicting:
             old_pipeline.status = PipelineStatus.SUPERSEDED
             logger.info(
@@ -403,7 +445,7 @@ class BuildPipeline:
         pipeline_id: uuid.UUID,
     ) -> Pipeline:
         async with get_db() as db:
-            pipeline = await db.get(Pipeline, pipeline_id)
+            pipeline = await db.get(Pipeline, pipeline_id, with_for_update=True)
             if not pipeline:
                 raise ValueError(f"Pipeline {pipeline_id} not found")
 

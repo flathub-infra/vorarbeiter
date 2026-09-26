@@ -4,6 +4,7 @@ import hmac
 import json
 import re
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
@@ -69,6 +70,49 @@ INACTIVE_REPO_TEST_BUILD_MSG = (
     "🚧 Pull requests in this repository are no longer built automatically due to "
     "inactivity. To request a test build, comment `bot, build` on this PR."
 )
+
+DRAFT_PR_TEST_BUILD_MSG = (
+    "Draft pull requests do not start automatic full builds when opened or updated. "
+    "To request a full build while this PR is a draft, comment `bot, build`; the usual "
+    "build rules still apply. Marking this PR ready for review requests an automatic "
+    "build unless that commit already received one or another automatic-build "
+    "restriction applies. Returning to draft removes pending automatic builds, but "
+    "active builds continue. Switching between draft and ready does not reset build history."
+)
+
+
+async def ensure_draft_pr_comment(git_repo: str, pr_number: int) -> None:
+    try:
+        async with get_db() as db:
+            if db.get_bind().dialect.name != "sqlite":
+                key = int.from_bytes(
+                    hashlib.sha256(
+                        f"draft-pr-comment:{git_repo}:{pr_number}".encode()
+                    ).digest()[:8],
+                    "big",
+                    signed=True,
+                )
+                await db.execute(
+                    text("SELECT pg_advisory_xact_lock(:key)"), {"key": key}
+                )
+            posted = await add_issue_comment(
+                git_repo=git_repo,
+                issue_number=pr_number,
+                comment=DRAFT_PR_TEST_BUILD_MSG,
+                check_duplicates=True,
+            )
+            if not posted:
+                logger.warning(
+                    "Could not check or post draft PR policy comment",
+                    repo=git_repo,
+                    pr_number=pr_number,
+                )
+    except Exception:
+        logger.exception(
+            "Failed to post draft PR policy comment",
+            repo=git_repo,
+            pr_number=pr_number,
+        )
 
 
 async def is_inactive_repository(repository: str) -> bool:
@@ -398,7 +442,15 @@ def should_store_event(payload: dict) -> bool:
         # no point in triggerring a build from that
         # If ref is None for whatever reason it falls back to returning True
         target_ref = payload.get("pull_request", {}).get("base", {}).get("ref")
-        if pr_action in ["opened", "synchronize", "reopened"]:
+        if pr_action in [
+            "opened",
+            "synchronize",
+            "reopened",
+            "ready_for_review",
+            "converted_to_draft",
+        ]:
+            if pr_action == "converted_to_draft":
+                return True
             return (
                 not target_ref
                 or target_ref in ("master", "beta")
@@ -928,7 +980,17 @@ async def receive_github_webhook(
         "opened",
         "synchronize",
         "reopened",
+        "ready_for_review",
+        "converted_to_draft",
     ]
+    draft_lifecycle = is_pr_event and (
+        payload.get("action") == "converted_to_draft"
+        or payload["pull_request"].get("draft") is True
+    )
+    if is_pr_event:
+        pr_number = payload["pull_request"].get("number")
+        if type(pr_number) is not int or pr_number <= 0:
+            return {"message": "Webhook received but ignored due to missing PR number."}
     is_push_event = "commits" in payload and payload.get("ref", "")
 
     if (
@@ -966,7 +1028,7 @@ async def receive_github_webhook(
     if repo_name in ignored_repos and (is_pr_event or is_push_event):
         return {"message": "Webhook received but ignored due to repository filter."}
 
-    if is_pr_event:
+    if is_pr_event and not draft_lifecycle:
         if repo_name.split("/")[1] in app_build_types:
             if payload.get("action") == "opened":
                 pr_number = payload.get("pull_request", {}).get("number")
@@ -1020,7 +1082,7 @@ async def receive_github_webhook(
 
     is_eol_only = False
     eol_data = None
-    if is_pr_event:
+    if is_pr_event and not draft_lifecycle:
         is_eol_only, eol_data = await is_eol_only_pr(payload)
 
     event = WebhookEvent(
@@ -1084,6 +1146,8 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         "opened",
         "synchronize",
         "reopened",
+        "ready_for_review",
+        "converted_to_draft",
     ]:
         pr = payload.get("pull_request", {})
         pr_state = pr.get("state")
@@ -1098,6 +1162,13 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             return None
 
         pr_number = pr.get("number")
+        if type(pr_number) is not int or pr_number <= 0:
+            return None
+
+        if payload_action == "converted_to_draft" or pr.get("draft") is True:
+            await BuildPipeline().cancel_pending_pr_builds(event.repository, pr_number)
+            await ensure_draft_pr_comment(event.repository, pr_number)
+            return None
 
         if settings.ff_disable_test_builds:
             logger.info(
@@ -1126,13 +1197,33 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         params.update(
             {
                 "ref": f"refs/pull/{pr_number}/head",
-                "pr_number": str(pr_number) if pr_number is not None else "",
+                "pr_number": str(pr_number),
                 "action": str(payload.get("action", "")),
                 "pr_target_branch": pr.get("base", {}).get("ref", "master"),
             }
         )
         if base_sha is not None:
             params["base_sha"] = base_sha
+        if payload_action == "ready_for_review":
+            async with get_db() as db:
+                result = await db.execute(
+                    select(Pipeline).where(
+                        Pipeline.params["repo"].as_string() == event.repository,
+                        Pipeline.params["ref"].as_string()
+                        == f"refs/pull/{pr_number}/head",
+                        Pipeline.params["sha"].as_string() == sha,
+                    )
+                )
+                for previous in result.scalars():
+                    if previous.status not in (
+                        PipelineStatus.CANCELLED,
+                        PipelineStatus.SUPERSEDED,
+                    ) or (
+                        previous.started_at is not None
+                        or previous.build_id is not None
+                        or (previous.provider_data or {}).get("run_id") is not None
+                    ):
+                        return None
 
         if payload_action == "opened":
             try:
@@ -1425,76 +1516,97 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         webhook_event_id=event.id,
     )
     pipeline = await pipeline_service.prepare_pipeline_for_start(pipeline.id)
+    if pipeline.status != PipelineStatus.PENDING:
+        return None
     await pipeline_service.supersede_conflicting_test_pipelines(pipeline.id)
     should_queue_test_build = await pipeline_service.should_queue_test_build(
         pipeline.id
     )
 
-    commit_sha = pipeline.params.get("sha")
-    git_repo = pipeline.params.get("repo")
+    async with get_db() if should_queue_test_build else nullcontext() as db:
+        if should_queue_test_build:
+            assert db is not None
+            current = await db.get(Pipeline, pipeline.id, with_for_update=True)
+            if current is None or current.status != PipelineStatus.PENDING:
+                return None
 
-    if commit_sha and git_repo:
-        target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
-        description = (
-            "Build queued — waiting for capacity"
-            if should_queue_test_build
-            else "Build enqueued"
-        )
-        try:
-            await update_commit_status(
-                sha=commit_sha,
-                state="pending",
-                git_repo=git_repo,
-                description=description,
-                target_url=target_url,
-            )
-        except Exception as e:
-            logger.exception(
-                "Error setting initial commit status",
-                pipeline_id=str(pipeline.id),
-                git_repo=git_repo,
-                commit_sha=commit_sha,
-                error=str(e),
-            )
-    elif commit_sha and not git_repo:
-        logger.error(
-            "Missing git_repo in params. Cannot update commit status.",
-            pipeline_id=str(pipeline.id),
-        )
+        commit_sha = pipeline.params.get("sha")
+        git_repo = pipeline.params.get("repo")
 
-    if not should_queue_test_build:
-        pipeline = await pipeline_service.start_pipeline(pipeline_id=pipeline.id)
-
-    pr_number_str = pipeline.params.get("pr_number")
-    if pr_number_str and git_repo:
-        try:
-            pr_number = int(pr_number_str)
-            comment = (
-                "🚧 Test build queued — waiting for capacity."
+        if commit_sha and git_repo:
+            target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
+            description = (
+                "Build queued — waiting for capacity"
                 if should_queue_test_build
-                else "🚧 Test build [enqueued](https://github.com/flathub-infra/vorarbeiter/actions/workflows/build.yml)."
+                else "Build enqueued"
             )
-            await create_pr_comment(
-                git_repo=git_repo,
-                pr_number=pr_number,
-                comment=comment,
-            )
-        except ValueError:
+            try:
+                await update_commit_status(
+                    sha=commit_sha,
+                    state="pending",
+                    git_repo=git_repo,
+                    description=description,
+                    target_url=target_url,
+                )
+            except Exception as e:
+                logger.exception(
+                    "Error setting initial commit status",
+                    pipeline_id=str(pipeline.id),
+                    git_repo=git_repo,
+                    commit_sha=commit_sha,
+                    error=str(e),
+                )
+        elif commit_sha and not git_repo:
             logger.error(
-                "Invalid PR number. Skipping PR comment.",
-                pr_number=pr_number_str,
+                "Missing git_repo in params. Cannot update commit status.",
                 pipeline_id=str(pipeline.id),
             )
-        except Exception as e:
-            logger.exception(
-                "Error creating initial PR comment",
-                pipeline_id=str(pipeline.id),
-                error=str(e),
-            )
-    elif pr_number_str and not git_repo:
-        logger.error(
-            "Missing git_repo in params. Cannot create PR comment.",
-            pipeline_id=str(pipeline.id),
-        )
 
-    return pipeline.id
+        if not should_queue_test_build:
+            try:
+                pipeline = await pipeline_service.start_pipeline(
+                    pipeline_id=pipeline.id
+                )
+            except ValueError:
+                async with get_db() as retry_db:
+                    current = await retry_db.get(Pipeline, pipeline.id)
+                    if current and current.status in (
+                        PipelineStatus.CANCELLED,
+                        PipelineStatus.SUPERSEDED,
+                    ):
+                        return None
+                raise
+
+        pr_number_str = pipeline.params.get("pr_number")
+        if pr_number_str and git_repo:
+            try:
+                pr_number = int(pr_number_str)
+                comment = (
+                    "🚧 Test build queued — waiting for capacity."
+                    if should_queue_test_build
+                    else "🚧 Test build [enqueued](https://github.com/flathub-infra/vorarbeiter/actions/workflows/build.yml)."
+                )
+                await create_pr_comment(
+                    git_repo=git_repo,
+                    pr_number=pr_number,
+                    comment=comment,
+                )
+            except ValueError:
+                logger.error(
+                    "Invalid PR number. Skipping PR comment.",
+                    pr_number=pr_number_str,
+                    pipeline_id=str(pipeline.id),
+                )
+            except Exception as e:
+                logger.exception(
+                    "Error creating initial PR comment",
+                    pipeline_id=str(pipeline.id),
+                    error=str(e),
+                )
+        elif pr_number_str and not git_repo:
+            logger.error(
+                "Missing git_repo in params. Cannot create PR comment.",
+                pipeline_id=str(pipeline.id),
+            )
+
+        return pipeline.id

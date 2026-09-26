@@ -637,17 +637,33 @@ async def add_issue_comment(
     context = {"git_repo": git_repo, "issue_number": issue_number}
 
     if check_duplicates:
-        get_response = await client.request("get", url, context=context)
-        if get_response:
-            for existing in get_response.json():
-                if comment in existing.get("body", ""):
+        page = 1
+        while True:
+            get_response = await client.request(
+                "get",
+                url,
+                params={"per_page": 100, "page": page},
+                context=context,
+            )
+            if get_response is None:
+                return False
+            try:
+                comments = get_response.json()
+            except (ValueError, TypeError):
+                return False
+            if not isinstance(comments, list):
+                return False
+            for existing in comments:
+                if isinstance(existing, dict) and comment in existing.get("body", ""):
                     logger.info(
                         "Comment with same body already exists on GitHub issue. Skipping.",
                         git_repo=git_repo,
                         issue_number=issue_number,
                     )
                     return True
-
+            if len(comments) < 100:
+                break
+            page += 1
     response = await client.request(
         "post", url, json={"body": comment}, context=context
     )

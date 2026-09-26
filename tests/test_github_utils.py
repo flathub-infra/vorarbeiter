@@ -508,6 +508,37 @@ async def test_add_issue_comment_missing_issue_number(mock_settings, mock_httpx)
 
 
 @pytest.mark.asyncio
+async def test_checked_comment_finds_match_on_second_page():
+    client = MagicMock()
+    first = MagicMock()
+    first.json.return_value = [{"body": "unrelated"}] * 100
+    second = MagicMock()
+    second.json.return_value = [{"body": "draft policy"}]
+    client.request = AsyncMock(side_effect=[first, second])
+    with patch("app.utils.github.get_github_client", return_value=client):
+        assert await add_issue_comment(
+            "flathub/test", 3, "draft policy", check_duplicates=True
+        )
+    assert [
+        call.kwargs["params"]["page"] for call in client.request.await_args_list
+    ] == [1, 2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_page", [None, {"message": "error"}])
+async def test_checked_comment_does_not_post_after_unavailable_page(bad_page):
+    client = MagicMock()
+    response = MagicMock()
+    response.json.return_value = bad_page
+    client.request = AsyncMock(return_value=response if bad_page is not None else None)
+    with patch("app.utils.github.get_github_client", return_value=client):
+        assert not await add_issue_comment(
+            "flathub/test", 3, "draft policy", check_duplicates=True
+        )
+    client.request.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_detection(mock_settings):
     from app.utils.github import GitHubAPIClient
 

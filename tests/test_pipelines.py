@@ -89,7 +89,7 @@ async def test_start_pipeline(build_pipeline, mock_db, submission):
     mock_pipeline.flat_manager_repo = None
     build_pipeline._supersede_conflicting_pipelines = AsyncMock()
 
-    async def mock_get(model_class, model_id):
+    async def mock_get(model_class, model_id, *, with_for_update=False):
         if model_class is Pipeline and model_id == pipeline_id:
             return mock_pipeline
         return None
@@ -190,7 +190,9 @@ async def test_start_pipeline_branch_mapping(
 
     await build_pipeline.start_pipeline(pipeline_id)
 
-    mock_db_session.get.assert_called_once_with(Pipeline, pipeline_id)
+    mock_db_session.get.assert_called_once_with(
+        Pipeline, pipeline_id, with_for_update=True
+    )
     assert mock_pipeline.status == PipelineStatus.RUNNING
     assert mock_pipeline.started_at is not None
 
@@ -1899,113 +1901,45 @@ async def test_supersedes_pending_pipeline_without_build_id():
 
 
 @pytest.mark.asyncio
-async def test_supersede_conflicting_test_pipelines_by_ref():
-    new_pipeline_id = uuid.uuid4()
-    old_pipeline_id = uuid.uuid4()
-
+@pytest.mark.parametrize(
+    "old_ref,expected",
+    [
+        ("refs/pull/123/head", PipelineStatus.SUPERSEDED),
+        ("refs/pull/456/head", PipelineStatus.RUNNING),
+    ],
+)
+async def test_supersede_conflicting_test_pipelines_by_ref(
+    db_session_maker, old_ref, expected
+):
     old_pipeline = Pipeline(
-        id=old_pipeline_id,
         app_id="org.example.app",
-        params={"ref": "refs/pull/123/head"},
+        params={"ref": old_ref},
         status=PipelineStatus.RUNNING,
         flat_manager_repo="test",
         build_id=111,
         provider_data={"run_id": "12345"},
-        callback_token=str(uuid.uuid4()),
     )
-
     new_pipeline = Pipeline(
-        id=new_pipeline_id,
         app_id="org.example.app",
         params={"ref": "refs/pull/123/head", "build_type": "medium"},
         status=PipelineStatus.PENDING,
         flat_manager_repo="test",
         provider_data={},
-        callback_token=str(uuid.uuid4()),
     )
+    async with db_session_maker() as db:
+        db.add_all([old_pipeline, new_pipeline])
+        await db.commit()
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = new_pipeline
+    with patch("app.pipelines.build.cancel_pipeline", new_callable=AsyncMock) as cancel:
+        await BuildPipeline().supersede_conflicting_test_pipelines(new_pipeline.id)
 
-    mock_execute_result = MagicMock()
-    mock_execute_result.scalars.return_value.all.return_value = [old_pipeline]
-    mock_db_session.execute.return_value = mock_execute_result
-
-    mock_flat_manager = MagicMock()
-    mock_flat_manager.purge = AsyncMock()
-
-    with (
-        patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)),
-        patch("app.pipelines.build.GitHubActionsService") as mock_actions_class,
-    ):
-        mock_actions_class.return_value.cancel = AsyncMock()
-        build_pipeline = BuildPipeline()
-        build_pipeline.flat_manager = mock_flat_manager
-
-        await build_pipeline.supersede_conflicting_test_pipelines(new_pipeline_id)
-
-    assert old_pipeline.status == PipelineStatus.SUPERSEDED
-    mock_flat_manager.purge.assert_awaited_once_with(111)
-    mock_actions_class.return_value.cancel.assert_awaited_once_with(
-        str(old_pipeline_id), {"run_id": "12345"}
-    )
-    query = mock_db_session.execute.await_args.args[0]
-    assert "refs/pull/123/head" in query.compile().params.values()
-
-
-@pytest.mark.asyncio
-async def test_supersede_conflicting_test_pipelines_does_not_supersede_different_ref():
-    new_pipeline_id = uuid.uuid4()
-    old_pipeline_id = uuid.uuid4()
-
-    old_pipeline = Pipeline(
-        id=old_pipeline_id,
-        app_id="org.example.app",
-        params={"ref": "refs/pull/456/head"},
-        status=PipelineStatus.RUNNING,
-        flat_manager_repo="test",
-        build_id=111,
-        provider_data={"run_id": "12345"},
-        callback_token=str(uuid.uuid4()),
-    )
-
-    new_pipeline = Pipeline(
-        id=new_pipeline_id,
-        app_id="org.example.app",
-        params={"ref": "refs/pull/123/head", "build_type": "medium"},
-        status=PipelineStatus.PENDING,
-        flat_manager_repo="test",
-        provider_data={},
-        callback_token=str(uuid.uuid4()),
-    )
-
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = new_pipeline
-
-    mock_execute_result = MagicMock()
-    mock_execute_result.scalars.return_value.all.return_value = []
-    mock_db_session.execute.return_value = mock_execute_result
-
-    mock_flat_manager = MagicMock()
-    mock_flat_manager.purge = AsyncMock()
-
-    with (
-        patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)),
-        patch("app.pipelines.build.GitHubActionsService") as mock_actions_class,
-    ):
-        mock_actions_class.return_value.cancel = AsyncMock()
-        build_pipeline = BuildPipeline()
-        build_pipeline.flat_manager = mock_flat_manager
-
-        await build_pipeline.supersede_conflicting_test_pipelines(new_pipeline_id)
-
-    assert old_pipeline.status == PipelineStatus.RUNNING
-    mock_flat_manager.purge.assert_not_awaited()
-    mock_actions_class.return_value.cancel.assert_not_awaited()
-    query = mock_db_session.execute.await_args.args[0]
-    query_params = query.compile().params.values()
-    assert "refs/pull/123/head" in query_params
-    assert "refs/pull/456/head" not in query_params
+    async with db_session_maker() as db:
+        current = await db.get(Pipeline, old_pipeline.id)
+        assert current.status == expected
+    if expected == PipelineStatus.SUPERSEDED:
+        cancel.assert_awaited_once()
+    else:
+        cancel.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2079,43 +2013,39 @@ async def test_start_pending_builds_unlimited():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "flat_manager_repo, should_supersede",
+    "new_repo,new_status",
     [
-        ("stable", False),
-        ("test", True),
+        ("stable", PipelineStatus.PENDING),
+        ("test", PipelineStatus.CANCELLED),
     ],
 )
-async def test_supersede_conflicting_test_pipelines(
-    flat_manager_repo, should_supersede
+async def test_supersede_skips_non_test_or_cancelled_new_pipeline(
+    db_session_maker, new_repo, new_status
 ):
-    pipeline_id = uuid.uuid4()
-    pipeline = Pipeline(
-        id=pipeline_id,
+    old = Pipeline(
         app_id="org.example.app",
-        params={"ref": "refs/pull/1/head", "build_type": "medium"},
-        status=PipelineStatus.PENDING,
-        flat_manager_repo=flat_manager_repo,
+        params={"ref": "refs/pull/1/head"},
+        status=PipelineStatus.RUNNING,
+        flat_manager_repo="test",
         provider_data={},
-        callback_token=str(uuid.uuid4()),
     )
+    new = Pipeline(
+        app_id="org.example.app",
+        params={"ref": "refs/pull/1/head"},
+        status=new_status,
+        flat_manager_repo=new_repo,
+        provider_data={},
+    )
+    async with db_session_maker() as db:
+        db.add_all([old, new])
+        await db.commit()
 
-    mock_db_session = AsyncMock(spec=AsyncSession)
-    mock_db_session.get.return_value = pipeline
-
-    build_pipeline = BuildPipeline()
-    build_pipeline._supersede_conflicting_pipelines = AsyncMock()
-
-    with patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)):
-        await build_pipeline.supersede_conflicting_test_pipelines(pipeline_id)
-
-    if should_supersede:
-        build_pipeline._supersede_conflicting_pipelines.assert_awaited_once_with(
-            db=mock_db_session,
-            pipeline=pipeline,
-            flat_manager_repo="test",
-        )
-    else:
-        build_pipeline._supersede_conflicting_pipelines.assert_not_awaited()
+    with patch("app.pipelines.build.cancel_pipeline", new_callable=AsyncMock) as cancel:
+        await BuildPipeline().supersede_conflicting_test_pipelines(new.id)
+    async with db_session_maker() as db:
+        current = await db.get(Pipeline, old.id)
+        assert current.status == PipelineStatus.RUNNING
+    cancel.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2230,12 +2160,78 @@ async def test_supersede_skips_when_test_pipeline_has_no_ref():
     )
 
     mock_db_session = AsyncMock(spec=AsyncSession)
+    mock_db_session.get.return_value = pipeline
 
     build_pipeline = BuildPipeline()
-    await build_pipeline._supersede_conflicting_pipelines(
-        db=mock_db_session,
-        pipeline=pipeline,
-        flat_manager_repo="test",
-    )
+    with patch("app.pipelines.build.get_db", create_mock_get_db(mock_db_session)):
+        await build_pipeline.supersede_conflicting_test_pipelines(pipeline.id)
 
     mock_db_session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_pr_builds_selects_only_automatic_pending(
+    db_session_maker,
+):
+    rows = [
+        Pipeline(
+            app_id="test-repo",
+            params={"repo": repo, "ref": ref, "action": action},
+            status=status,
+            triggered_by=PipelineTrigger.WEBHOOK,
+            provider_data={"run_id": "123"} if status == PipelineStatus.RUNNING else {},
+            build_id=42 if status == PipelineStatus.RUNNING else None,
+        )
+        for repo, ref, action, status in (
+            (
+                "test-owner/test-repo",
+                "refs/pull/123/head",
+                "opened",
+                PipelineStatus.PENDING,
+            ),
+            (
+                "test-owner/test-repo",
+                "refs/pull/123/head",
+                None,
+                PipelineStatus.PENDING,
+            ),
+            (
+                "test-owner/test-repo",
+                "refs/pull/123/head",
+                "synchronize",
+                PipelineStatus.RUNNING,
+            ),
+            ("other/test-repo", "refs/pull/123/head", "opened", PipelineStatus.PENDING),
+            (
+                "test-owner/test-repo",
+                "refs/pull/124/head",
+                "opened",
+                PipelineStatus.PENDING,
+            ),
+        )
+    ]
+    async with db_session_maker() as db:
+        db.add_all(rows)
+        await db.commit()
+
+    with patch("app.pipelines.build.get_app_p90_build_time", new_callable=AsyncMock):
+        build = BuildPipeline()
+        await build.cancel_pending_pr_builds("test-owner/test-repo", 123)
+        async with db_session_maker() as db:
+            current = [await db.get(Pipeline, row.id) for row in rows]
+        assert [row.status for row in current] == [
+            PipelineStatus.CANCELLED,
+            PipelineStatus.PENDING,
+            PipelineStatus.RUNNING,
+            PipelineStatus.PENDING,
+            PipelineStatus.PENDING,
+        ]
+        assert current[0].finished_at is not None
+        assert current[2].build_id == 42
+        assert current[2].provider_data == {"run_id": "123"}
+        build.flat_manager.create_build = AsyncMock()
+        build.provider.dispatch = AsyncMock()
+        with pytest.raises(ValueError, match="not in PENDING state"):
+            await build.start_pipeline(rows[0].id)
+        build.flat_manager.create_build.assert_not_awaited()
+        build.provider.dispatch.assert_not_awaited()
