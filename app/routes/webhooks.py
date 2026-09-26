@@ -83,6 +83,13 @@ INACTIVE_REPO_TEST_BUILD_MSG = (
     "inactivity. To request a test build, comment `bot, build` on this PR."
 )
 
+DEBOUNCED_PR_BUILD_MSG = (
+    "Test build queued. It will become eligible to start after a "
+    "5-minute quiet period. Each new push or build request resets the "
+    "timer; available capacity may delay the start further. An explicit "
+    "`bot, build` request follows the same delay."
+)
+
 DRAFT_PR_TEST_BUILD_MSG = (
     "Draft pull requests do not start automatic full builds when opened or updated. "
     "To request a full build while this PR is a draft, comment `bot, build`; the usual "
@@ -119,12 +126,7 @@ async def notify_debounced_pr_build(pipeline: Pipeline) -> None:
         await create_pr_comment(
             git_repo=git_repo,
             pr_number=int(pr_number),
-            comment=(
-                "Test build queued. It will become eligible to start after a "
-                "5-minute quiet period. Each new push or build request resets the "
-                "timer; available capacity may delay the start further. An explicit "
-                "bot, build request follows the same delay."
-            ),
+            comment=DEBOUNCED_PR_BUILD_MSG,
         )
     except Exception:
         logger.exception(
@@ -637,6 +639,9 @@ def should_store_event(payload: dict) -> bool:
     if "comment" in payload:
         repo_full_name = payload.get("repository", {}).get("full_name")
         comment_author = payload.get("comment", {}).get("user", {}).get("login")
+
+        if comment_author == "flathubbot":
+            return False
 
         if comment_author in ("github-actions[bot]",) and repo_full_name not in (
             "flathub/flathub",

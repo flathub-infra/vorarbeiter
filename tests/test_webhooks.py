@@ -682,6 +682,46 @@ def test_should_store_event_github_bot_flathub_repo():
     assert should_store_event(SAMPLE_GITHUB_ACTIONS_BOT_FLATHUB_PAYLOAD) is True
 
 
+@pytest.mark.parametrize("repo", ["test-owner/test-repo", "flathub/flathub"])
+def test_should_not_store_flathubbot_comment(repo):
+    from app.routes.webhooks import should_store_event
+
+    payload = {
+        "repository": {"full_name": repo},
+        "sender": {"login": "flathubbot"},
+        "action": "created",
+        "comment": {"body": "bot, build", "user": {"login": "flathubbot"}},
+    }
+
+    assert should_store_event(payload) is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "DEBOUNCED_PR_BUILD_MSG",
+        "DISABLED_TEST_BUILDS_MSG",
+        "DRAFT_PR_TEST_BUILD_MSG",
+        "INACTIVE_REPO_TEST_BUILD_MSG",
+        "LARGE_APP_TEST_BUILD_MSG",
+    ],
+)
+def test_bot_messages_are_not_commands(message):
+    from app.routes import webhooks
+
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "sender": {"login": "test-actor"},
+        "action": "created",
+        "comment": {
+            "body": getattr(webhooks, message),
+            "user": {"login": "test-actor"},
+        },
+    }
+
+    assert webhooks.should_store_event(payload) is False
+
+
 def test_should_not_store_event():
     """Test should_store_event returns False for other events."""
     from app.routes.webhooks import should_store_event
