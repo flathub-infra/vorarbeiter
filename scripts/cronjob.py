@@ -24,6 +24,7 @@ COMMANDS = (
     "inactive-repos-refresh",
     "prune-beta",
     "prune-stable",
+    "webhook-deliveries-reconcile",
 )
 
 
@@ -142,6 +143,19 @@ async def refresh_inactive_repos() -> dict[str, Any]:
     }
 
 
+async def reconcile_webhook_deliveries() -> dict[str, Any]:
+    from app.services import webhook_reconciler
+
+    try:
+        return await webhook_reconciler.reconcile_webhook_deliveries()
+    except Exception as error:
+        structlog.get_logger(__name__).exception(
+            "Webhook delivery reconciliation failed"
+        )
+        sentry_sdk.capture_exception(error)
+        raise
+
+
 async def close_flat_manager_client() -> None:
     from app.utils import flat_manager
 
@@ -168,6 +182,8 @@ async def dispatch(command: str) -> dict[str, Any]:
             return await prune_repo("beta")
         case "prune-stable":
             return await prune_repo("stable")
+        case "webhook-deliveries-reconcile":
+            return await reconcile_webhook_deliveries()
 
     raise ValueError(f"Unknown command: {command}")
 

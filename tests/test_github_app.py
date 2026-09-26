@@ -11,21 +11,21 @@ from app.utils.github_app import (
 
 
 @pytest.mark.asyncio
-async def test_missing_scanner_configuration_is_rejected():
+async def test_missing_github_app_configuration_is_rejected():
     auth = GitHubAppInstallationAuth()
 
     with (
-        patch("app.utils.github_app.settings.inactive_repos_github_app_id", None),
+        patch("app.utils.github_app.settings.github_app_id", None),
         patch(
-            "app.utils.github_app.settings.inactive_repos_github_app_installation_id",
+            "app.utils.github_app.settings.github_app_installation_id",
             None,
         ),
         patch(
-            "app.utils.github_app.settings.inactive_repos_github_app_private_key_file",
+            "app.utils.github_app.settings.github_app_private_key_file",
             None,
         ),
         pytest.raises(
-            GitHubAppAuthenticationError, match="Missing scanner configuration"
+            GitHubAppAuthenticationError, match="Missing GitHub App configuration"
         ),
     ):
         await auth.get_client()
@@ -50,12 +50,10 @@ async def test_installation_token_is_cached_until_refresh_margin():
             "app.utils.github_app.GitHubAPIClient",
             side_effect=[exchange_client, scanner_client],
         ) as client_type,
-        patch("app.utils.github_app.settings.inactive_repos_github_app_id", 1),
+        patch("app.utils.github_app.settings.github_app_id", 1),
+        patch("app.utils.github_app.settings.github_app_installation_id", 2),
         patch(
-            "app.utils.github_app.settings.inactive_repos_github_app_installation_id", 2
-        ),
-        patch(
-            "app.utils.github_app.settings.inactive_repos_github_app_private_key_file",
+            "app.utils.github_app.settings.github_app_private_key_file",
             "/private-key.pem",
         ),
     ):
@@ -103,12 +101,10 @@ async def test_invalidated_installation_token_is_exchanged_again():
                 second_scanner,
             ],
         ),
-        patch("app.utils.github_app.settings.inactive_repos_github_app_id", 1),
+        patch("app.utils.github_app.settings.github_app_id", 1),
+        patch("app.utils.github_app.settings.github_app_installation_id", 2),
         patch(
-            "app.utils.github_app.settings.inactive_repos_github_app_installation_id", 2
-        ),
-        patch(
-            "app.utils.github_app.settings.inactive_repos_github_app_private_key_file",
+            "app.utils.github_app.settings.github_app_private_key_file",
             "/private-key.pem",
         ),
     ):
@@ -146,12 +142,10 @@ async def test_rate_limited_token_exchange_retries_once_and_succeeds():
             side_effect=[first_exchange, second_exchange, scanner_client],
         ),
         patch("app.utils.github_app.asyncio.sleep", new=AsyncMock()) as mock_sleep,
-        patch("app.utils.github_app.settings.inactive_repos_github_app_id", 1),
+        patch("app.utils.github_app.settings.github_app_id", 1),
+        patch("app.utils.github_app.settings.github_app_installation_id", 2),
         patch(
-            "app.utils.github_app.settings.inactive_repos_github_app_installation_id", 2
-        ),
-        patch(
-            "app.utils.github_app.settings.inactive_repos_github_app_private_key_file",
+            "app.utils.github_app.settings.github_app_private_key_file",
             "/private-key.pem",
         ),
     ):

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 import httpx2 as httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -202,6 +203,49 @@ def test_receive_github_webhook_success(client: TestClient, mock_db):
 
         assert mock_db.add.called
         assert mock_db.commit.called
+
+
+def test_receive_github_webhook_redelivery_is_idempotent(client: TestClient, mock_db):
+    delivery_id = str(uuid.uuid4())
+    mock_db.commit.side_effect = IntegrityError("INSERT", {}, Exception("duplicate"))
+    create_pipeline = AsyncMock()
+
+    with (
+        patch("app.routes.webhooks.get_db", create_mock_get_db(mock_db)),
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch("app.routes.webhooks.create_pipeline", create_pipeline),
+    ):
+        response = client.post(
+            "/api/webhooks/github",
+            json=SAMPLE_PUSH_PAYLOAD,
+            headers={"X-GitHub-Delivery": delivery_id},
+        )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "message": "Webhook already received",
+        "event_id": delivery_id,
+    }
+    create_pipeline.assert_not_awaited()
+
+
+def test_receive_github_webhook_database_error_is_500(client: TestClient, mock_db):
+    mock_db.commit.side_effect = OperationalError("INSERT", {}, Exception("down"))
+    create_pipeline = AsyncMock()
+
+    with (
+        patch("app.routes.webhooks.get_db", create_mock_get_db(mock_db)),
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch("app.routes.webhooks.create_pipeline", create_pipeline),
+    ):
+        response = client.post(
+            "/api/webhooks/github",
+            json=SAMPLE_PUSH_PAYLOAD,
+            headers={"X-GitHub-Delivery": str(uuid.uuid4())},
+        )
+
+    assert response.status_code == 500
+    create_pipeline.assert_not_awaited()
 
 
 def test_receive_github_webhook_reacts_to_bot_command(client: TestClient, mock_db):

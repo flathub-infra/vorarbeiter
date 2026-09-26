@@ -1,22 +1,49 @@
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, Protocol
 
 import httpx2 as httpx
 import jwt
 import structlog
 
 from app.config import settings
-from app.utils.github import GitHubAPIClient
+from app.utils.github import GitHubAPIClient, GitHubAPIResult
 
 logger = structlog.get_logger(__name__)
 
 TOKEN_EXCHANGE_RATE_LIMIT_RETRIES = 1
+SERVER_RETRIES = 3
+RATE_LIMIT_MAX_ATTEMPTS = 15
+RATE_LIMIT_MAX_TOTAL_DELAY = 21600.0
 
 
 class GitHubAppAuthenticationError(RuntimeError):
     pass
+
+
+class GitHubAppRequestError(RuntimeError):
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class GitHubAppLegalRestrictionError(GitHubAppRequestError):
+    pass
+
+
+class InstallationClient(Protocol):
+    async def request_with_result(
+        self, method: str, url: str, **kwargs: Any
+    ) -> GitHubAPIResult: ...
+
+
+class InstallationAuth(Protocol):
+    async def get_client(self) -> InstallationClient: ...
+
+    def invalidate(self) -> None: ...
 
 
 class GitHubAppInstallationAuth:
@@ -28,19 +55,19 @@ class GitHubAppInstallationAuth:
         self._client: GitHubAPIClient | None = None
 
     def _configuration(self) -> tuple[int, int, Path]:
-        app_id = settings.inactive_repos_github_app_id
-        installation_id = settings.inactive_repos_github_app_installation_id
-        key_file = settings.inactive_repos_github_app_private_key_file
+        app_id = settings.github_app_id
+        installation_id = settings.github_app_installation_id
+        key_file = settings.github_app_private_key_file
         missing = []
         if app_id is None:
-            missing.append("INACTIVE_REPOS_GITHUB_APP_ID")
+            missing.append("GITHUB_APP_ID")
         if installation_id is None:
-            missing.append("INACTIVE_REPOS_GITHUB_APP_INSTALLATION_ID")
+            missing.append("GITHUB_APP_INSTALLATION_ID")
         if not key_file:
-            missing.append("INACTIVE_REPOS_GITHUB_APP_PRIVATE_KEY_FILE")
+            missing.append("GITHUB_APP_PRIVATE_KEY_FILE")
         if missing:
             raise GitHubAppAuthenticationError(
-                f"Missing scanner configuration: {', '.join(missing)}"
+                f"Missing GitHub App configuration: {', '.join(missing)}"
             )
         assert app_id is not None
         assert installation_id is not None
@@ -52,7 +79,7 @@ class GitHubAppInstallationAuth:
             private_key = key_file.read_text(encoding="utf-8")
         except OSError as error:
             raise GitHubAppAuthenticationError(
-                f"Cannot read scanner private key file: {key_file}"
+                f"Cannot read GitHub App private key file: {key_file}"
             ) from error
         now = datetime.now(UTC)
         return jwt.encode(
@@ -169,3 +196,135 @@ class GitHubAppInstallationAuth:
         self._token = None
         self._expires_at = None
         self._client = None
+
+
+def _is_rate_limited(result: GitHubAPIResult) -> bool:
+    if result.error_type == "rate_limit":
+        return True
+    response = result.response
+    if response is None:
+        return False
+    if response.status_code == 429:
+        return True
+    if response.status_code != 403:
+        return False
+    if response.headers.get("X-RateLimit-Remaining") == "0":
+        return True
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return (
+        isinstance(body, dict) and "rate limit" in str(body.get("message", "")).lower()
+    )
+
+
+def _rate_limit_delay(result: GitHubAPIResult) -> float:
+    if result.retry_after is not None:
+        return result.retry_after
+    response = result.response
+    if response is None:
+        return 60.0
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return max(float(retry_after), 0)
+        except ValueError:
+            pass
+    reset = response.headers.get("X-RateLimit-Reset")
+    if reset:
+        try:
+            return max(float(reset) - time.time(), 0) + 1
+        except ValueError:
+            pass
+    return 60.0
+
+
+async def request_with_installation_auth(
+    auth: InstallationAuth,
+    method: str,
+    url: str,
+    *,
+    context: dict[str, Any],
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    server_retries: int = SERVER_RETRIES,
+    max_rate_limit_attempts: int = RATE_LIMIT_MAX_ATTEMPTS,
+    max_rate_limit_total_delay: float = RATE_LIMIT_MAX_TOTAL_DELAY,
+    **kwargs: Any,
+) -> httpx.Response:
+    """Send a request with an installation token and return the 2xx response.
+
+    Refreshes the token once on 401, waits out rate limits and retries server
+    errors. Raises GitHubAppLegalRestrictionError (a GitHubAppRequestError
+    subclass) on 451 and GitHubAppRequestError for any other failure, with
+    status_code set when GitHub answered. Token exchange failures in
+    auth.get_client() propagate as GitHubAppAuthenticationError.
+    """
+    authentication_retried = False
+    rate_limit_attempts = 0
+    rate_limit_total_delay = 0.0
+    server_attempt = 0
+    while True:
+        client = await auth.get_client()
+        result = await client.request_with_result(
+            method,
+            url,
+            context=context,
+            raise_for_status=False,
+            **kwargs,
+        )
+        if _is_rate_limited(result):
+            delay = _rate_limit_delay(result)
+            rate_limit_attempts += 1
+            rate_limit_total_delay += delay
+            if (
+                rate_limit_attempts > max_rate_limit_attempts
+                or rate_limit_total_delay > max_rate_limit_total_delay
+            ):
+                raise GitHubAppRequestError(
+                    f"GitHub rate limit retries exhausted for {url}"
+                )
+            logger.warning(
+                "GitHub App request rate limited",
+                delay=delay,
+                rate_limit_attempts=rate_limit_attempts,
+                rate_limit_total_delay=round(rate_limit_total_delay, 1),
+                **context,
+            )
+            await sleep(delay)
+            continue
+        response = result.response
+        if response is None:
+            raise GitHubAppRequestError(
+                f"GitHub request failed for {url}: {result.error_type or 'request error'}"
+            )
+        if response.status_code == 401:
+            if authentication_retried:
+                raise GitHubAppRequestError(
+                    f"Persistent GitHub authentication failure for {url}",
+                    status_code=response.status_code,
+                )
+            auth.invalidate()
+            authentication_retried = True
+            continue
+        if response.status_code >= 500:
+            if server_attempt >= server_retries:
+                raise GitHubAppRequestError(
+                    f"GitHub server retries exhausted for {url}",
+                    status_code=response.status_code,
+                )
+            delay = min(2**server_attempt, 2)
+            server_attempt += 1
+            await sleep(delay)
+            continue
+        if response.status_code == 451:
+            raise GitHubAppLegalRestrictionError(
+                f"GitHub legally restricted access to {url}",
+                status_code=response.status_code,
+            )
+        if not 200 <= response.status_code < 300:
+            raise GitHubAppRequestError(
+                f"GitHub request failed with HTTP {response.status_code} for {url}",
+                status_code=response.status_code,
+            )
+        return response

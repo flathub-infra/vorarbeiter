@@ -1,9 +1,8 @@
 import asyncio
-import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any
 
 import structlog
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -11,18 +10,22 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import InactiveRepoSnapshot
-from app.utils.github import GitHubAPIResult
-from app.utils.github_app import GitHubAppInstallationAuth
+from app.utils.github_app import (
+    RATE_LIMIT_MAX_ATTEMPTS,
+    RATE_LIMIT_MAX_TOTAL_DELAY,
+    SERVER_RETRIES,
+    GitHubAppInstallationAuth,
+    GitHubAppLegalRestrictionError,
+    GitHubAppRequestError,
+    InstallationAuth,
+    request_with_installation_auth,
+)
 
 logger = structlog.get_logger(__name__)
 
 BOT_AUTHORS = {"dependabot[bot]", "flathubbot", "github-actions[bot]"}
 PAGE_SIZE = 100
 PR_THRESHOLD = 5
-SERVER_RETRIES = 3
-
-RATE_LIMIT_MAX_ATTEMPTS = 15
-RATE_LIMIT_MAX_TOTAL_DELAY = 21600.0
 
 
 class InactiveRepoScanError(RuntimeError):
@@ -45,140 +48,40 @@ class InactiveRepoScanResult:
     unobservable_repositories: list[str] = field(default_factory=list)
 
 
-class ScannerClient(Protocol):
-    async def request_with_result(
-        self, method: str, url: str, **kwargs: Any
-    ) -> GitHubAPIResult: ...
-
-
-class ScannerAuth(Protocol):
-    async def get_client(self) -> ScannerClient: ...
-
-    def invalidate(self) -> None: ...
-
-
 class InactiveRepoScanner:
     def __init__(
         self,
-        auth: ScannerAuth | None = None,
+        auth: InstallationAuth | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.auth = auth or GitHubAppInstallationAuth()
         self.sleep = sleep
 
-    def _rate_limit_delay(self, result: GitHubAPIResult) -> float:
-        if result.retry_after is not None:
-            return result.retry_after
-        response = result.response
-        if response is None:
-            return 60.0
-        retry_after = response.headers.get("Retry-After")
-        if retry_after:
-            try:
-                return max(float(retry_after), 0)
-            except ValueError:
-                pass
-        reset = response.headers.get("X-RateLimit-Reset")
-        if reset:
-            try:
-                return max(float(reset) - time.time(), 0) + 1
-            except ValueError:
-                pass
-        return 60.0
-
-    def _is_rate_limited(self, result: GitHubAPIResult) -> bool:
-        if result.error_type == "rate_limit":
-            return True
-        response = result.response
-        if response is None:
-            return False
-        if response.status_code == 429:
-            return True
-        if response.status_code != 403:
-            return False
-        if response.headers.get("X-RateLimit-Remaining") == "0":
-            return True
-        try:
-            body = response.json()
-        except ValueError:
-            return False
-        return (
-            isinstance(body, dict)
-            and "rate limit" in str(body.get("message", "")).lower()
-        )
-
     async def _request_json(
         self, url: str, *, params: dict[str, Any], context: dict[str, Any]
     ) -> Any:
-        authentication_retried = False
-        rate_limit_attempts = 0
-        rate_limit_total_delay = 0.0
-        server_attempt = 0
-        while True:
-            client = await self.auth.get_client()
-            result = await client.request_with_result(
+        try:
+            response = await request_with_installation_auth(
+                self.auth,
                 "get",
                 url,
                 context=context,
-                raise_for_status=False,
+                sleep=self.sleep,
+                server_retries=SERVER_RETRIES,
+                max_rate_limit_attempts=RATE_LIMIT_MAX_ATTEMPTS,
+                max_rate_limit_total_delay=RATE_LIMIT_MAX_TOTAL_DELAY,
                 params=params,
             )
-            if self._is_rate_limited(result):
-                delay = self._rate_limit_delay(result)
-                rate_limit_attempts += 1
-                rate_limit_total_delay += delay
-                if (
-                    rate_limit_attempts > RATE_LIMIT_MAX_ATTEMPTS
-                    or rate_limit_total_delay > RATE_LIMIT_MAX_TOTAL_DELAY
-                ):
-                    raise InactiveRepoScanError(
-                        f"GitHub rate limit retries exhausted for {url}"
-                    )
-                logger.warning(
-                    "Inactive repository scan rate limited",
-                    delay=delay,
-                    rate_limit_attempts=rate_limit_attempts,
-                    rate_limit_total_delay=round(rate_limit_total_delay, 1),
-                    **context,
-                )
-                await self.sleep(delay)
-                continue
-            response = result.response
-            if response is None:
-                raise InactiveRepoScanError(
-                    f"GitHub request failed for {url}: {result.error_type or 'request error'}"
-                )
-            if response.status_code == 401:
-                if authentication_retried:
-                    raise InactiveRepoScanError(
-                        f"Persistent GitHub authentication failure for {url}"
-                    )
-                self.auth.invalidate()
-                authentication_retried = True
-                continue
-            if response.status_code >= 500:
-                if server_attempt >= SERVER_RETRIES:
-                    raise InactiveRepoScanError(
-                        f"GitHub server retries exhausted for {url}"
-                    )
-                delay = min(2**server_attempt, 2)
-                server_attempt += 1
-                await self.sleep(delay)
-                continue
-            if response.status_code == 451:
-                raise GitHubLegalRestrictionError(
-                    f"GitHub legally restricted access to {url}"
-                )
-            if not 200 <= response.status_code < 300:
-                raise InactiveRepoScanError(
-                    f"GitHub request failed with HTTP {response.status_code} for {url}"
-                )
-            try:
-                return response.json()
-            except ValueError as error:
-                raise InactiveRepoScanError(
-                    f"GitHub returned invalid JSON for {url}"
-                ) from error
+        except GitHubAppLegalRestrictionError as error:
+            raise GitHubLegalRestrictionError(str(error)) from error
+        except GitHubAppRequestError as error:
+            raise InactiveRepoScanError(str(error)) from error
+        try:
+            return response.json()
+        except ValueError as error:
+            raise InactiveRepoScanError(
+                f"GitHub returned invalid JSON for {url}"
+            ) from error
 
     async def _pages(
         self, url: str, *, params: dict[str, Any], context: dict[str, Any]

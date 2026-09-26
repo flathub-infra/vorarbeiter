@@ -12,7 +12,7 @@ import httpx2 as httpx
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from sqlalchemy import select, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.config import settings
 from app.database import get_db
@@ -1278,9 +1278,21 @@ async def receive_github_webhook(
     pipeline_id = None
     if should_store_event(payload):
         try:
-            async with get_db() as db:
-                db.add(event)
-                await db.commit()
+            try:
+                async with get_db() as db:
+                    db.add(event)
+                    await db.commit()
+            except IntegrityError:
+                # Redelivery of a delivery that was already stored.
+                logger.info(
+                    "Webhook delivery already received",
+                    event_id=str(event.id),
+                    repository=repo_name,
+                )
+                return {
+                    "message": "Webhook already received",
+                    "event_id": str(event.id),
+                }
 
             if "comment" in payload:
                 comment_id = payload.get("comment", {}).get("id")
