@@ -1,10 +1,11 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
+from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
 
@@ -920,3 +921,43 @@ async def test_create_validation_failure_issue_review_rejected_skipped(
             [flathub_hooks_check],
         )
         mock_issue.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failures,paused", [(2, False), (3, True)])
+async def test_failure_comment_penalty_notice(
+    github_notifier, db_session_maker, failures, paused
+):
+    from app.services.test_build_penalty import BUILDING_LOCALLY_URL
+
+    now = datetime.now(UTC)
+    async with db_session_maker() as db:
+        for index in range(failures):
+            event = WebhookEvent(
+                source=WebhookSource.GITHUB,
+                repository="flathub/org.test.App",
+                actor="contributor",
+                payload={},
+            )
+            db.add(event)
+            await db.flush()
+            pipeline = Pipeline(
+                app_id="org.test.App",
+                params={"repo": "flathub/org.test.App", "pr_number": "42"},
+                flat_manager_repo="test",
+                status=PipelineStatus.FAILED,
+                webhook_event_id=event.id,
+                created_at=now + timedelta(seconds=index),
+                finished_at=now,
+                log_url=None,
+            )
+            db.add(pipeline)
+        await db.commit()
+
+    with patch("app.services.github_notifier.create_pr_comment") as comment:
+        await github_notifier.notify_pr_build_complete(pipeline, "failure")
+
+    text = comment.call_args.kwargs["comment"]
+    assert text.startswith("❌ [Test build]")
+    assert ("The last 3 test builds failed" in text) is paused
+    assert (BUILDING_LOCALLY_URL in text) is paused

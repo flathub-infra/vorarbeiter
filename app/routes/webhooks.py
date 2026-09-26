@@ -22,6 +22,12 @@ from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import BuildPipeline, app_build_types, cancel_pipeline
 from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.github_actions import GitHubActionsService
+from app.services.test_build_penalty import (
+    BUILDING_LOCALLY_URL,
+    format_penalty_notice,
+    get_penalty_until,
+    is_penalty_exempt,
+)
 from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_repo
 from app.utils.github import (
     add_comment_reaction,
@@ -1508,6 +1514,59 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
 
     if sha:
         params["sha"] = sha
+
+    pr_number = params.get("pr_number")
+    if pr_number and not is_penalty_exempt(app_id, event.actor):
+        until = await get_penalty_until(event.repository, pr_number)
+        if until is not None:
+            if "comment" in payload:
+                if not await validate_retry_permissions(
+                    event.repository, comment_author
+                ):
+                    await create_pr_comment(
+                        git_repo=event.repository,
+                        pr_number=int(pr_number),
+                        comment=format_penalty_notice(until),
+                    )
+                    logger.info(
+                        "Test build paused",
+                        repo=event.repository,
+                        pr_number=pr_number,
+                        until=until,
+                    )
+                    return None
+            else:
+                if sha is None:
+                    logger.warning(
+                        "Missing PR head SHA, skipping paused commit status",
+                        repo=event.repository,
+                        pr_number=pr_number,
+                    )
+                    return None
+                try:
+                    await update_commit_status(
+                        sha=sha,
+                        state="error",
+                        git_repo=event.repository,
+                        context="builds/x86_64",
+                        description=f"Test builds paused until {until:%H:%M} UTC after {settings.test_build_failure_streak_limit} failed builds",
+                        target_url=BUILDING_LOCALLY_URL,
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "Error setting paused commit status",
+                        repo=event.repository,
+                        pr_number=pr_number,
+                        commit_sha=sha,
+                        error=str(e),
+                    )
+                logger.info(
+                    "Test build paused",
+                    repo=event.repository,
+                    pr_number=pr_number,
+                    until=until,
+                )
+                return None
 
     pipeline_service = BuildPipeline()
     pipeline = await pipeline_service.create_pipeline(

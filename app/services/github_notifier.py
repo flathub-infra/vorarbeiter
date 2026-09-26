@@ -4,8 +4,15 @@ from typing import Any
 import structlog
 
 from app.config import settings
+from app.database import get_db
 from app.models import Pipeline
+from app.models.webhook_event import WebhookEvent
 from app.services.build_failure_issue import BuildFailureIssueService
+from app.services.test_build_penalty import (
+    format_penalty_notice,
+    get_penalty_until,
+    is_penalty_exempt,
+)
 from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
     create_github_issue,
@@ -231,6 +238,20 @@ class GitHubNotifier:
                     )
             elif status == "failure":
                 comment = f"❌ [Test build]({log_url}) failed.\n\n{footnote}"
+                if pipeline.flat_manager_repo == "test" and not is_penalty_exempt(
+                    pipeline.app_id, None
+                ):
+                    actor = None
+                    if pipeline.webhook_event_id is not None:
+                        async with get_db(use_replica=False) as db:
+                            event = await db.get(
+                                WebhookEvent, pipeline.webhook_event_id
+                            )
+                            actor = event.actor if event else None
+                    if not is_penalty_exempt(pipeline.app_id, actor):
+                        until = await get_penalty_until(git_repo, pr_number)
+                        if until is not None:
+                            comment += f"\n\n{format_penalty_notice(until)}"
             elif status == "cancelled":
                 comment = f"❌ [Test build]({log_url}) was cancelled.\n\n{footnote}"
             elif status == "commit_failure":

@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     ff_admin_ping_comment: bool = True
     ff_disable_test_builds: bool = False
     max_concurrent_builds: int = 15
+    test_build_failure_streak_limit: int = 3
+    test_build_penalty_minutes: int = 60
 
     model_config = SettingsConfigDict(
         env_file=".env",

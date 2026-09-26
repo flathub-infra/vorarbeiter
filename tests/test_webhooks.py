@@ -1209,7 +1209,7 @@ async def test_handle_eol_only_push_republish():
 
 
 @pytest.mark.asyncio
-async def test_create_pipeline_pr():
+async def test_create_pipeline_pr(db_session_maker):
     """Test creating a pipeline from a PR webhook event."""
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
@@ -1324,7 +1324,7 @@ async def test_create_pipeline_push():
 
 
 @pytest.mark.asyncio
-async def test_create_pipeline_comment():
+async def test_create_pipeline_comment(db_session_maker):
     """Test creating a pipeline from a comment webhook event."""
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
@@ -1411,7 +1411,7 @@ async def test_create_pipeline_comment():
 
 
 @pytest.mark.asyncio
-async def test_create_pipeline_queues_spot_test_build_at_capacity():
+async def test_create_pipeline_queues_spot_test_build_at_capacity(db_session_maker):
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
     webhook_event = WebhookEvent(
@@ -1477,7 +1477,9 @@ async def test_create_pipeline_queues_spot_test_build_at_capacity():
 
 
 @pytest.mark.asyncio
-async def test_create_pipeline_starts_default_test_build_even_at_capacity():
+async def test_create_pipeline_starts_default_test_build_even_at_capacity(
+    db_session_maker,
+):
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
     webhook_event = WebhookEvent(
@@ -1534,7 +1536,9 @@ async def test_create_pipeline_starts_default_test_build_even_at_capacity():
 
 
 @pytest.mark.asyncio
-async def test_create_pipeline_continues_when_update_commit_status_raises():
+async def test_create_pipeline_continues_when_update_commit_status_raises(
+    db_session_maker,
+):
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
     webhook_event = WebhookEvent(
@@ -1758,7 +1762,7 @@ async def test_create_pipeline_admin_ping(flag_enabled, should_post):
     "flag_enabled",
     [True, False],
 )
-async def test_create_pipeline_disable_test_builds_pr(flag_enabled):
+async def test_create_pipeline_disable_test_builds_pr(flag_enabled, db_session_maker):
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
     webhook_event = WebhookEvent(
@@ -1825,7 +1829,9 @@ async def test_create_pipeline_disable_test_builds_pr(flag_enabled):
     "flag_enabled",
     [True, False],
 )
-async def test_create_pipeline_disable_test_builds_bot_build(flag_enabled):
+async def test_create_pipeline_disable_test_builds_bot_build(
+    flag_enabled, db_session_maker
+):
     event_id = uuid.uuid4()
     comment_payload: dict[str, Any] = dict(SAMPLE_COMMENT_PAYLOAD)
     comment_payload["issue"] = {
@@ -2618,7 +2624,7 @@ async def test_create_pipeline_bot_build_merged_pr():
 
 
 @pytest.mark.asyncio
-async def test_create_pipeline_bot_build_open_pr_continues():
+async def test_create_pipeline_bot_build_open_pr_continues(db_session_maker):
     """Test that create_pipeline continues normally for 'bot, build' on open PR."""
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
@@ -3106,7 +3112,7 @@ async def test_create_pipeline_bot_cancel_no_pr_url():
     ],
 )
 async def test_create_pipeline_pr_stores_target_branch(
-    base_ref, expected_pr_target_branch
+    base_ref, expected_pr_target_branch, db_session_maker
 ):
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
@@ -3177,7 +3183,7 @@ async def test_create_pipeline_pr_stores_target_branch(
     ],
 )
 async def test_create_pipeline_bot_build_stores_target_branch(
-    base_ref, expected_pr_target_branch
+    base_ref, expected_pr_target_branch, db_session_maker
 ):
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
@@ -3333,7 +3339,7 @@ async def test_is_runtime_update_pr(repo, files, expected):
 
 
 @pytest.mark.asyncio
-async def test_create_pipeline_labels_runtime_update_pr():
+async def test_create_pipeline_labels_runtime_update_pr(db_session_maker):
     event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
 
@@ -3541,7 +3547,7 @@ async def test_create_pipeline_push_ignores_branch_lifecycle():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["opened", "synchronize"])
-async def test_create_pipeline_pr_persists_base_sha(action):
+async def test_create_pipeline_pr_persists_base_sha(action, db_session_maker):
     from app.routes.webhooks import create_pipeline
 
     head_sha = "1" * 40 if action == "opened" else "2" * 40
@@ -3853,3 +3859,218 @@ async def test_cancelled_queue_has_no_pending_status_or_comment(
         assert await create_pipeline(event) is None
     status.assert_not_awaited()
     comment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "actor,app_id,paused",
+    [
+        ("contributor", "org.example.App", True),
+        ("flathubbot", "org.example.App", False),
+        ("contributor", "org.chromium.Chromium", False),
+    ],
+)
+async def test_pr_penalty_gate(actor, app_id, paused):
+    from app.routes.webhooks import create_pipeline
+    from app.services.test_build_penalty import BUILDING_LOCALLY_URL
+
+    repo = f"flathub/{app_id}"
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        repository=repo,
+        actor=actor,
+        payload={
+            "action": "synchronize",
+            "pull_request": {
+                "number": 42,
+                "head": {"sha": "a" * 40},
+                "base": {"ref": "master"},
+            },
+        },
+    )
+    pipeline = Pipeline(
+        id=uuid.uuid4(), app_id=app_id, params={}, status=PipelineStatus.PENDING
+    )
+    service = AsyncMock()
+    service.create_pipeline.return_value = pipeline
+    service.prepare_pipeline_for_start.return_value = pipeline
+    service.start_pipeline.return_value = pipeline
+    service.should_queue_test_build.return_value = False
+    until = datetime(2026, 9, 26, 13, 0, tzinfo=UTC)
+    with (
+        patch(
+            "app.routes.webhooks.get_penalty_until", AsyncMock(return_value=until)
+        ) as penalty,
+        patch("app.routes.webhooks.BuildPipeline", return_value=service),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()) as status,
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as comment,
+    ):
+        result = await create_pipeline(event)
+
+    if paused:
+        assert result is None
+        service.create_pipeline.assert_not_awaited()
+        status.assert_awaited_once_with(
+            sha="a" * 40,
+            state="error",
+            git_repo=repo,
+            context="builds/x86_64",
+            description="Test builds paused until 13:00 UTC after 3 failed builds",
+            target_url=BUILDING_LOCALLY_URL,
+        )
+        comment.assert_not_awaited()
+        penalty.assert_awaited_once_with(repo, "42")
+    else:
+        assert result == pipeline.id
+        service.create_pipeline.assert_awaited_once()
+        penalty.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collaborator", [False, True])
+async def test_comment_penalty_gate(collaborator):
+    from app.routes.webhooks import create_pipeline
+    from app.services.test_build_penalty import BUILDING_LOCALLY_URL
+
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        source=WebhookSource.GITHUB,
+        repository="flathub/org.example.App",
+        actor="contributor",
+        payload={
+            "comment": {"body": "bot, build", "user": {"login": "contributor"}},
+            "issue": {
+                "number": 42,
+                "pull_request": {"url": "https://api.github.com/pulls/42"},
+            },
+        },
+    )
+    response = MagicMock()
+    response.json.return_value = {
+        "state": "open",
+        "head": {"sha": "a" * 40},
+        "base": {"ref": "master"},
+    }
+    github = AsyncMock()
+    github.request.return_value = response
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.example.App",
+        params={},
+        status=PipelineStatus.PENDING,
+    )
+    service = AsyncMock()
+    service.create_pipeline.return_value = pipeline
+    service.prepare_pipeline_for_start.return_value = pipeline
+    service.start_pipeline.return_value = pipeline
+    service.should_queue_test_build.return_value = False
+    with (
+        patch("app.routes.webhooks.get_github_client", return_value=github),
+        patch(
+            "app.routes.webhooks.get_penalty_until",
+            AsyncMock(return_value=datetime(2026, 9, 26, 13, 0, tzinfo=UTC)),
+        ),
+        patch(
+            "app.routes.webhooks.validate_retry_permissions",
+            AsyncMock(return_value=collaborator),
+        ) as permissions,
+        patch("app.routes.webhooks.BuildPipeline", return_value=service),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as comment,
+    ):
+        result = await create_pipeline(event)
+
+    permissions.assert_awaited_once_with(event.repository, "contributor")
+    if collaborator:
+        assert result == pipeline.id
+        service.create_pipeline.assert_awaited_once()
+    else:
+        assert result is None
+        service.create_pipeline.assert_not_awaited()
+        assert comment.await_args is not None
+        assert BUILDING_LOCALLY_URL in comment.await_args.kwargs["comment"]
+
+
+@pytest.mark.asyncio
+async def test_paused_pr_event_reads_failed_builds_from_database(db_session_maker):
+    from datetime import timedelta
+
+    from app.routes.webhooks import create_pipeline
+    from app.services.test_build_penalty import BUILDING_LOCALLY_URL
+
+    repo = "flathub/org.example.App"
+    now = datetime.now(UTC)
+    async with db_session_maker() as db:
+        for index in range(3):
+            db.add(
+                Pipeline(
+                    app_id="org.example.App",
+                    params={"repo": repo, "pr_number": "42"},
+                    flat_manager_repo="test",
+                    status=PipelineStatus.FAILED,
+                    created_at=now + timedelta(seconds=index),
+                    finished_at=now,
+                )
+            )
+        await db.commit()
+
+    event = WebhookEvent(
+        source=WebhookSource.GITHUB,
+        repository=repo,
+        actor="contributor",
+        payload={
+            "action": "synchronize",
+            "pull_request": {
+                "number": 42,
+                "head": {"sha": "a" * 40},
+                "base": {"ref": "master"},
+            },
+        },
+    )
+    with (
+        patch("app.routes.webhooks.BuildPipeline") as service,
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()) as status,
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as comment,
+    ):
+        assert await create_pipeline(event) is None
+
+    service.assert_not_called()
+    comment.assert_not_awaited()
+    assert status.await_args is not None
+    assert status.await_args.kwargs["state"] == "error"
+    assert status.await_args.kwargs["target_url"] == BUILDING_LOCALLY_URL
+
+
+@pytest.mark.asyncio
+async def test_paused_pr_still_skips_build_when_commit_status_fails():
+    from app.routes.webhooks import create_pipeline
+
+    event = WebhookEvent(
+        source=WebhookSource.GITHUB,
+        repository="flathub/org.example.App",
+        actor="contributor",
+        payload={
+            "action": "synchronize",
+            "pull_request": {
+                "number": 42,
+                "head": {"sha": "a" * 40},
+                "base": {"ref": "master"},
+            },
+        },
+    )
+    with (
+        patch(
+            "app.routes.webhooks.get_penalty_until",
+            AsyncMock(return_value=datetime.now(UTC)),
+        ),
+        patch("app.routes.webhooks.BuildPipeline") as service,
+        patch(
+            "app.routes.webhooks.update_commit_status",
+            AsyncMock(side_effect=RuntimeError("GitHub unavailable")),
+        ) as status,
+    ):
+        assert await create_pipeline(event) is None
+
+    status.assert_awaited_once()
+    service.assert_not_called()
