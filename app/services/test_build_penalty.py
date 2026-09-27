@@ -37,11 +37,15 @@ async def get_penalty_until(
     if limit <= 0:
         return None
 
+    conditions = []
+    if repo != "flathub/flathub":
+        conditions.append(Pipeline.app_id == repo.split("/")[-1])
+
     query = (
         select(Pipeline.status, Pipeline.finished_at)
         .outerjoin(WebhookEvent, Pipeline.webhook_event_id == WebhookEvent.id)
         .where(
-            Pipeline.app_id == repo.split("/")[-1],
+            *conditions,
             Pipeline.flat_manager_repo == "test",
             Pipeline.params["repo"].as_string() == repo,
             Pipeline.params["pr_number"].as_string() == str(pr_number),

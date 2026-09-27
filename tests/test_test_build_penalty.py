@@ -19,6 +19,7 @@ async def add_builds(
     pr=4,
     actors=None,
     age=0,
+    app_id=None,
 ):
     async with db_session_maker() as db:
         for index, status in enumerate(statuses):
@@ -33,7 +34,7 @@ async def add_builds(
             finished = NOW - timedelta(minutes=age + len(statuses) - 1 - index)
             db.add(
                 Pipeline(
-                    app_id=repo.split("/")[-1],
+                    app_id=app_id or repo.split("/")[-1],
                     params={"repo": repo, "pr_number": str(pr)},
                     flat_manager_repo="test",
                     status=status,
@@ -57,6 +58,21 @@ async def test_three_failures_pause_until_latest_finish(db_session_maker):
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_submission_with_renamed_app_id(db_session_maker):
+    await add_builds(
+        db_session_maker,
+        [PipelineStatus.FAILED] * 3,
+        repo="flathub/flathub",
+        pr=10400,
+        app_id="io.github.example.App",
+    )
+    assert await get_penalty_until("flathub/flathub", 10400, NOW) == NOW + timedelta(
+        minutes=60
+    )
+    assert await get_penalty_until("flathub/flathub", 10401, NOW) is None
 
 
 @pytest.mark.asyncio
