@@ -2269,6 +2269,95 @@ async def test_parse_failure_issue_invalid():
     assert result is None
 
 
+def rejection_issue_body(build_id: int, pipeline_id: uuid.UUID) -> str:
+    return (
+        f"A change in [build {build_id}](https://builds.flathub.org/api/pipelines/"
+        f"{pipeline_id}/log_url) has been reviewed by the Flathub team "
+        "(@flathub/build-moderation), and rejected for the following reason:\n"
+        "\n> Is there any reason it can't use the Secrets portal?\n"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flat_manager_repo", "ref"),
+    [("stable", "refs/heads/master"), ("beta", "refs/heads/beta")],
+)
+async def test_parse_failure_issue_build_rejection(
+    db_session_maker, flat_manager_repo, ref
+):
+    from app.routes.webhooks import parse_failure_issue
+
+    pipeline_id = uuid.uuid4()
+    async with db_session_maker() as db:
+        db.add(
+            Pipeline(
+                id=pipeline_id,
+                app_id="test-app",
+                params={"repo": "flathub/test-app", "ref": ref, "sha": "a" * 40},
+                flat_manager_repo=flat_manager_repo,
+                build_id=324427,
+                status=PipelineStatus.FAILED,
+            )
+        )
+        await db.commit()
+
+        with patch("app.routes.webhooks.get_db", create_mock_get_db(db)):
+            result = await parse_failure_issue(
+                rejection_issue_body(324427, pipeline_id), "flathub/test-app"
+            )
+
+    assert result == {
+        "sha": "a" * 40,
+        "repo": "flathub/test-app",
+        "ref": ref,
+        "flat_manager_repo": flat_manager_repo,
+        "issue_type": "build_rejection",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("build_id", "repo", "flat_manager_repo", "exists"),
+    [
+        (324427, "flathub/test-app", "stable", False),
+        (1, "flathub/test-app", "stable", True),
+        (324427, "flathub/other-app", "stable", True),
+        (324427, "flathub/test-app", "test", True),
+    ],
+)
+async def test_parse_failure_issue_build_rejection_mismatch(
+    db_session_maker, build_id, repo, flat_manager_repo, exists
+):
+    from app.routes.webhooks import parse_failure_issue
+
+    pipeline_id = uuid.uuid4()
+    async with db_session_maker() as db:
+        if exists:
+            db.add(
+                Pipeline(
+                    id=pipeline_id,
+                    app_id="test-app",
+                    params={
+                        "repo": repo,
+                        "ref": "refs/heads/master",
+                        "sha": "a" * 40,
+                    },
+                    flat_manager_repo=flat_manager_repo,
+                    build_id=324427,
+                    status=PipelineStatus.FAILED,
+                )
+            )
+            await db.commit()
+
+        with patch("app.routes.webhooks.get_db", create_mock_get_db(db)):
+            result = await parse_failure_issue(
+                rejection_issue_body(build_id, pipeline_id), "flathub/test-app"
+            )
+
+    assert result is None
+
+
 def test_should_store_event_bot_retry():
     from app.routes.webhooks import should_store_event
 
@@ -2429,6 +2518,68 @@ async def test_handle_issue_retry_permission_denied():
         _args, kwargs = mock_comment.call_args
         assert "does not have permission" in kwargs["comment"]
         get_retry_params.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("org_member", [True, False])
+async def test_handle_issue_retry_build_rejection_requires_org_member(org_member):
+    from app.routes.webhooks import handle_issue_retry
+
+    pipeline_id = uuid.uuid4()
+    mock_pipeline = Pipeline(
+        id=pipeline_id, app_id="test-app", params={}, status=PipelineStatus.PENDING
+    )
+    mock_pipeline_service = AsyncMock()
+    mock_pipeline_service.create_pipeline.return_value = mock_pipeline
+    mock_pipeline_service.start_pipeline.return_value = mock_pipeline
+    rejection_params = {
+        "sha": "a" * 40,
+        "repo": "flathub/test-app",
+        "ref": "refs/heads/master",
+        "flat_manager_repo": "stable",
+        "issue_type": "build_rejection",
+    }
+
+    with (
+        patch("app.routes.webhooks.is_issue_edited", AsyncMock(return_value=False)),
+        patch(
+            "app.routes.webhooks.is_org_member", AsyncMock(return_value=org_member)
+        ) as is_org_member,
+        patch(
+            "app.routes.webhooks.validate_retry_permissions",
+            AsyncMock(return_value=True),
+        ) as validate_permissions,
+        patch(
+            "app.routes.webhooks.BuildFailureIssueService.get_retry_params",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.routes.webhooks.parse_failure_issue",
+            AsyncMock(return_value=rejection_params),
+        ),
+        patch("app.routes.webhooks.find_retry_base_sha", AsyncMock(return_value=None)),
+        patch("app.routes.webhooks.BuildPipeline", return_value=mock_pipeline_service),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+        patch("app.routes.webhooks.add_issue_comment", AsyncMock()) as add_comment,
+        patch("app.routes.webhooks.close_github_issue", AsyncMock()),
+    ):
+        result = await handle_issue_retry(
+            git_repo="flathub/test-app",
+            issue_number=93,
+            issue_body=rejection_issue_body(324427, uuid.uuid4()),
+            comment_author="maintainer",
+            webhook_event_id=uuid.uuid4(),
+        )
+
+    is_org_member.assert_awaited_once_with("flathub", "maintainer")
+    validate_permissions.assert_not_awaited()
+    if org_member:
+        assert result == pipeline_id
+        mock_pipeline_service.create_pipeline.assert_awaited_once()
+    else:
+        assert result is None
+        mock_pipeline_service.create_pipeline.assert_not_awaited()
+        assert "does not have permission" in add_comment.call_args.kwargs["comment"]
 
 
 @pytest.mark.asyncio

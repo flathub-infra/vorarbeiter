@@ -69,6 +69,12 @@ JOB_FAILURE_PATTERN = re.compile(
     r"The (\w+) job for `.+?` failed in the (\w+) repository\.\n\n.*?-? ?Commit SHA: ([0-9a-fA-F]+)",
     re.DOTALL,
 )
+# Sync with backend/app/moderation.py -> create_github_build_rejection_issue()
+BUILD_REJECTION_PATTERN = re.compile(
+    r"A change in \[build (\d+)\]\(\S+/api/pipelines/"
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+    r"/log_url\) has been reviewed by the Flathub team"
+)
 DISABLED_TEST_BUILDS_MSG = (
     "🚧 Test builds are currently disabled. Once the maintenance is over, this build "
     "can be retried by posting a `bot, build` comment. Please refer to "
@@ -324,6 +330,30 @@ async def parse_failure_issue(issue_body: str, git_repo: str) -> dict | None:
             "job_type": job_type,
         }
 
+    rejection_match = BUILD_REJECTION_PATTERN.search(issue_body)
+    if rejection_match:
+        build_id, pipeline_id = rejection_match.groups()
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, uuid.UUID(pipeline_id))
+        if (
+            pipeline is None
+            or pipeline.build_id != int(build_id)
+            or pipeline.flat_manager_repo not in ("stable", "beta")
+        ):
+            return None
+        params = pipeline.params or {}
+        sha = normalize_git_oid(params.get("sha"))
+        ref = params.get("ref")
+        if sha is None or not isinstance(ref, str) or params.get("repo") != git_repo:
+            return None
+        return {
+            "sha": sha,
+            "repo": git_repo,
+            "ref": ref,
+            "flat_manager_repo": pipeline.flat_manager_repo,
+            "issue_type": "build_rejection",
+        }
+
     return None
 
 
@@ -467,7 +497,11 @@ async def handle_issue_retry(
         )
         return None
 
-    if not await validate_retry_permissions(git_repo, comment_author):
+    if BUILD_REJECTION_PATTERN.search(issue_body):
+        allowed = await is_org_member("flathub", comment_author)
+    else:
+        allowed = await validate_retry_permissions(git_repo, comment_author)
+    if not allowed:
         logger.warning(
             "User does not have permission to trigger retries",
             user=comment_author,
