@@ -385,6 +385,17 @@ async def find_retry_base_sha(
     return baselines.pop()
 
 
+async def is_org_member(org: str, user_login: str) -> bool:
+    client = get_github_client()
+    response = await client.request(
+        "get",
+        f"https://api.github.com/orgs/{org}/members/{user_login}",
+        context={"user": user_login, "org": org},
+        raise_for_status=False,
+    )
+    return response is not None and response.status_code == 204
+
+
 async def validate_retry_permissions(git_repo: str, user_login: str) -> bool:
     client = get_github_client()
     context = {"user": user_login, "repo": git_repo}
@@ -405,12 +416,7 @@ async def validate_retry_permissions(git_repo: str, user_login: str) -> bool:
             repo=git_repo,
         )
 
-        org = git_repo.split("/")[0]
-        org_url = f"https://api.github.com/orgs/{org}/members/{user_login}"
-        org_response = await client.request(
-            "get", org_url, context=context, raise_for_status=False
-        )
-        return org_response is not None and org_response.status_code == 204
+        return await is_org_member(git_repo.split("/")[0], user_login)
 
     logger.warning(
         "Unexpected response checking user permissions",
@@ -1677,7 +1683,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             )
             if base_sha is not None:
                 params["base_sha"] = base_sha
-            explicit_pr_build = True
+            explicit_pr_build = not await is_org_member("flathub", comment_author)
 
         elif "bot, retry" in comment_body:
             if not issue_number or not issue_body:

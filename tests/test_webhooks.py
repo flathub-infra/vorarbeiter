@@ -1526,6 +1526,77 @@ async def test_create_pipeline_comment(db_session_maker):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("org_member", [True, False])
+async def test_create_pipeline_bot_build_debounce_skips_org_members(
+    db_session_maker, org_member
+):
+    event_id = uuid.uuid4()
+    comment_payload: dict[str, Any] = dict(SAMPLE_COMMENT_PAYLOAD)
+    comment_payload["issue"] = {
+        "number": 42,
+        "pull_request": {
+            "url": "https://api.github.com/repos/test-owner/test-repo/pulls/42"
+        },
+    }
+    comment_payload["comment"] = {
+        "body": "bot, build",
+        "id": 12345,
+        "user": {"login": "test-user"},
+    }
+    webhook_event = WebhookEvent(
+        id=event_id,
+        source=WebhookSource.GITHUB,
+        payload=comment_payload,
+        repository="test-owner/test-repo",
+        actor="test-user",
+    )
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="test-repo",
+        params={},
+        webhook_event_id=event_id,
+        status=PipelineStatus.PENDING,
+    )
+    service = AsyncMock()
+    service.create_pipeline.return_value = pipeline
+    service.prepare_pipeline_for_start.return_value = pipeline
+    service.should_queue_test_build.return_value = False
+    service.start_pipeline.return_value = pipeline
+    db = AsyncMock(spec=AsyncSession)
+    db.get.return_value = pipeline
+    get_db = create_mock_get_db(db)
+    pr_response = MagicMock()
+    pr_response.json.return_value = {
+        "head": {"sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+        "base": {"ref": "master"},
+        "state": "open",
+    }
+    github_client = AsyncMock()
+    github_client.request.return_value = pr_response
+
+    with (
+        patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
+        patch("app.routes.webhooks.BuildPipeline", return_value=service),
+        patch("app.routes.webhooks.get_db", get_db),
+        patch("app.pipelines.build.get_db", get_db),
+        patch("app.routes.webhooks.get_github_client", return_value=github_client),
+        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()),
+        patch(
+            "app.routes.webhooks.is_org_member", AsyncMock(return_value=org_member)
+        ) as is_member,
+    ):
+        from app.routes.webhooks import create_pipeline
+
+        await create_pipeline(webhook_event)
+
+    is_member.assert_awaited_once_with("flathub", "test-user")
+    params = service.create_pipeline.call_args.kwargs["params"]
+    assert ("start_after" in params) is not org_member
+    assert ("explicit_pr_build" in params) is not org_member
+
+
+@pytest.mark.asyncio
 async def test_create_pipeline_debounces_spot_pr_request_before_capacity_check(
     db_session_maker,
 ):
