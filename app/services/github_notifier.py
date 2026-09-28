@@ -69,6 +69,9 @@ class GitHubNotifier:
             case "cancelled":
                 description = "Build cancelled"
                 github_state = "failure"
+            case "superseded":
+                description = "Superseded by a newer build"
+                github_state = "error"
             case _:
                 description = f"Build status: {status}."
                 github_state = "failure"
@@ -489,6 +492,23 @@ class GitHubNotifier:
 
         if pipeline.params.get("pr_number"):
             await self.notify_pr_build_started(pipeline, log_url)
+
+    async def handle_build_superseded(self, pipeline: Pipeline) -> None:
+        await self.notify_build_status(pipeline, "superseded")
+
+        pr_number_str = pipeline.params.get("pr_number")
+        git_repo = pipeline.params.get("repo")
+        if not pr_number_str or not git_repo:
+            return
+
+        build = (
+            f"[Test build]({pipeline.log_url})" if pipeline.log_url else "Test build"
+        )
+        await create_pr_comment(
+            git_repo=git_repo,
+            pr_number=int(pr_number_str),
+            comment=f"❌ {build} was cancelled because a newer build was queued.",
+        )
 
     async def handle_build_committed(
         self,

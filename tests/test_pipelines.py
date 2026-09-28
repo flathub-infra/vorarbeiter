@@ -1974,6 +1974,51 @@ async def test_supersede_conflicting_test_pipelines_by_ref(
 
 
 @pytest.mark.asyncio
+async def test_supersede_reports_only_running_pr_builds(db_session_maker):
+    ref = "refs/pull/7/head"
+    running = Pipeline(
+        app_id="org.example.app",
+        params={"ref": ref, "repo": "flathub/org.example.app", "pr_number": "7"},
+        status=PipelineStatus.RUNNING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    pending = Pipeline(
+        app_id="org.example.app",
+        params={"ref": ref, "repo": "flathub/org.example.app", "pr_number": "7"},
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    new = Pipeline(
+        app_id="org.example.app",
+        params={"ref": ref, "repo": "flathub/org.example.app", "pr_number": "7"},
+        status=PipelineStatus.PENDING,
+        flat_manager_repo="test",
+        provider_data={},
+    )
+    async with db_session_maker() as db:
+        db.add_all([running, pending, new])
+        await db.commit()
+
+    with (
+        patch("app.pipelines.build.cancel_pipeline", new_callable=AsyncMock),
+        patch(
+            "app.pipelines.build.GitHubNotifier.handle_build_superseded",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("GitHub down"),
+        ) as superseded,
+    ):
+        await BuildPipeline().supersede_conflicting_test_pipelines(new.id)
+
+    superseded.assert_awaited_once()
+    assert superseded.await_args_list[0].args[0].id == running.id
+    async with db_session_maker() as db:
+        assert (await db.get(Pipeline, running.id)).status == PipelineStatus.SUPERSEDED
+        assert (await db.get(Pipeline, pending.id)).status == PipelineStatus.SUPERSEDED
+
+
+@pytest.mark.asyncio
 async def test_start_pending_builds_selects_due_rows_and_respects_spot_capacity(
     db_session_maker,
 ):

@@ -402,13 +402,28 @@ class BuildPipeline:
                     await db.commit()
                     return
 
+            conflicting = [row for row in locked if row.id != pipeline_id]
+            interrupted = [
+                row
+                for row in conflicting
+                if row.status == PipelineStatus.RUNNING
+                and (row.params or {}).get("pr_number")
+            ]
             await self._supersede_conflicting_pipelines(
                 db=db,
                 pipeline=pipeline,
                 flat_manager_repo="test",
-                conflicting=[row for row in locked if row.id != pipeline_id],
+                conflicting=conflicting,
             )
             await db.commit()
+
+        for row in interrupted:
+            try:
+                await GitHubNotifier().handle_build_superseded(row)
+            except Exception:
+                logger.exception(
+                    "Failed to report superseded build", pipeline_id=str(row.id)
+                )
 
     async def should_queue_test_build(self, pipeline_id: uuid.UUID) -> bool:
         """Check if a test spot build should be queued instead of started immediately.

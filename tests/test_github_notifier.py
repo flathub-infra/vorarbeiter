@@ -389,6 +389,37 @@ async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "log_url,build",
+    [
+        ("https://example.com/logs/123", "[Test build](https://example.com/logs/123)"),
+        (None, "Test build"),
+    ],
+)
+async def test_handle_build_superseded(github_notifier, mock_pipeline, log_url, build):
+    mock_pipeline.log_url = log_url
+
+    with (
+        patch("app.services.github_notifier.update_commit_status") as mock_update,
+        patch("app.services.github_notifier.create_pr_comment") as mock_comment,
+    ):
+        await github_notifier.handle_build_superseded(mock_pipeline)
+
+    mock_update.assert_called_once_with(
+        sha="abc123def456",
+        state="error",
+        git_repo="flathub/org.test.App",
+        description="Superseded by a newer build",
+        target_url=log_url or "",
+    )
+    mock_comment.assert_called_once_with(
+        git_repo="flathub/org.test.App",
+        pr_number=42,
+        comment=f"❌ {build} was cancelled because a newer build was queued.",
+    )
+
+
+@pytest.mark.asyncio
 async def test_notify_pr_build_complete_commit_failure(github_notifier, mock_pipeline):
     mock_pipeline.commit_job_id = 12345
 
