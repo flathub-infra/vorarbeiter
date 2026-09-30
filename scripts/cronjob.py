@@ -25,6 +25,7 @@ COMMANDS = (
     "prune-beta",
     "prune-stable",
     "webhook-deliveries-reconcile",
+    "permission-assess",
 )
 
 
@@ -156,6 +157,12 @@ async def reconcile_webhook_deliveries() -> dict[str, Any]:
         raise
 
 
+async def assess_permissions() -> dict[str, Any]:
+    from app.services.permission_assessment import submit_pending_assessments
+
+    return await submit_pending_assessments()
+
+
 async def close_flat_manager_client() -> None:
     from app.utils import flat_manager
 
@@ -184,6 +191,8 @@ async def dispatch(command: str) -> dict[str, Any]:
             return await prune_repo("stable")
         case "webhook-deliveries-reconcile":
             return await reconcile_webhook_deliveries()
+        case "permission-assess":
+            return await assess_permissions()
 
     raise ValueError(f"Unknown command: {command}")
 
