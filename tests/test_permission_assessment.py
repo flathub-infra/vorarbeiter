@@ -15,6 +15,7 @@ from app.services.permission_assessment import (
     MAX_ATTEMPTS,
     PROVIDER_DATA_KEY,
     build_assessment_request,
+    build_push_assessment_request,
     submit_pending_assessments,
 )
 
@@ -316,3 +317,262 @@ async def test_fails_without_build_arches(configured, local_db, db_session_maker
     assert result["failed"] == 1
     stored = await load(db_session_maker, pipeline.id)
     assert stored.provider_data[PROVIDER_DATA_KEY]["attempts"] == 1
+
+
+PUSHED = "d" * 40
+PR_HEAD = "e" * 40
+
+
+def make_push_pipeline(ref="refs/heads/master", **overrides) -> Pipeline:
+    pipeline = make_pipeline(**{"flat_manager_repo": "stable", **overrides})
+    pipeline.params = {
+        "repo": "flathub/org.test.App",
+        "ref": ref,
+        "push": "true",
+        "sha": PUSHED,
+        "base_sha": BASE,
+    }
+    return pipeline
+
+
+def test_build_push_request_for_stable_merge():
+    pipeline = make_push_pipeline()
+
+    assert build_push_assessment_request(pipeline) == {
+        "pipeline_id": str(pipeline.id),
+        "build_id": 1234,
+        "forge_instance": "github.com",
+        "source_repository": "flathub/org.test.App",
+        "built_revision": PUSHED,
+        "target_git_branch": "master",
+        "base_revision": BASE,
+        "candidate_kind": "push",
+        "app_id": "org.test.App",
+        "destination_repo": "stable",
+        "destination_channel": "stable",
+        "flatpak_branch": "stable",
+        "matrix_succeeded": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("ref", "repo", "channel", "branch"),
+    [
+        ("refs/heads/beta", "beta", "beta", "beta"),
+        ("refs/heads/branch/24.08", "stable", "stable", "24.08"),
+    ],
+)
+def test_build_push_request_destination(ref, repo, channel, branch):
+    request = build_push_assessment_request(
+        make_push_pipeline(ref=ref, flat_manager_repo=repo)
+    )
+
+    assert request is not None
+    assert request["destination_repo"] == repo
+    assert request["destination_channel"] == channel
+    assert request["flatpak_branch"] == branch
+
+
+@pytest.mark.parametrize(
+    ("ref", "repo", "params"),
+    [
+        ("refs/heads/master", "test", {}),
+        ("refs/heads/master", "stable", {"push": None}),
+        ("refs/heads/master", "stable", {"sha": "bad"}),
+        ("refs/heads/master", "stable", {"repo": None}),
+        ("refs/tags/v1", "stable", {}),
+        ("refs/heads/feature", "stable", {}),
+        ("refs/heads/beta", "stable", {}),
+        ("refs/heads/master", "beta", {}),
+    ],
+)
+def test_build_push_request_ineligible(ref, repo, params):
+    pipeline = make_push_pipeline(ref=ref)
+    pipeline.flat_manager_repo = repo
+    pipeline.params = {**pipeline.params, **params}
+
+    assert build_push_assessment_request(pipeline) is None
+
+
+def pull(number=7, merged=True, base="master", merge_sha=PUSHED, head=PR_HEAD):
+    return {
+        "number": number,
+        "merged_at": "2026-10-01T20:00:00Z" if merged else None,
+        "base": {"ref": base},
+        "merge_commit_sha": merge_sha,
+        "head": {"sha": head},
+    }
+
+
+def github_returning(payload):
+    response = httpx.Response(200, json=payload)
+    client = AsyncMock()
+    client.request = AsyncMock(return_value=response)
+    return patch(
+        "app.services.permission_assessment.get_github_client", return_value=client
+    )
+
+
+@pytest.mark.asyncio
+async def test_merged_pull_request_links_unique_merge():
+    with github_returning([pull(), pull(number=8, merged=False)]):
+        linked = await permission_assessment._merged_pull_request(
+            "flathub/org.test.App", PUSHED, "master"
+        )
+
+    assert linked == {
+        "pull_request_number": 7,
+        "pull_request_url": "https://github.com/flathub/org.test.App/pull/7",
+        "pull_request_head_revision": PR_HEAD,
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        [pull(merged=False)],
+        [pull(base="beta")],
+        [pull(merge_sha="f" * 40)],
+        [pull(head="bad")],
+        [pull(), pull(number=8)],
+        {"message": "Not Found"},
+    ],
+)
+@pytest.mark.asyncio
+async def test_merged_pull_request_without_unique_merge(payload):
+    with github_returning(payload):
+        linked = await permission_assessment._merged_pull_request(
+            "flathub/org.test.App", PUSHED, "master"
+        )
+
+    assert linked == {}
+
+
+@pytest.mark.asyncio
+async def test_merged_pull_request_lookup_failure_raises():
+    client = AsyncMock()
+    client.request = AsyncMock(return_value=None)
+    with (
+        patch(
+            "app.services.permission_assessment.get_github_client",
+            return_value=client,
+        ),
+        pytest.raises(ValueError),
+    ):
+        await permission_assessment._merged_pull_request(
+            "flathub/org.test.App", PUSHED, "master"
+        )
+
+
+@pytest.mark.asyncio
+async def test_push_builds_ignored_without_flag(configured, local_db, db_session_maker):
+    await add(db_session_maker, make_push_pipeline())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("unexpected request")
+
+    with (
+        patch.object(settings, "ff_permission_assessment_push", False),
+        mock_http(handler),
+    ):
+        result = await submit_pending_assessments()
+
+    assert result == {"status": "completed", "submitted": 0, "skipped": 0, "failed": 0}
+
+
+@pytest.mark.asyncio
+async def test_submits_published_push_build_with_linked_pull_request(
+    configured, local_db, db_session_maker
+):
+    published = make_push_pipeline(status=PipelineStatus.PUBLISHED)
+    direct = make_push_pipeline(status=PipelineStatus.COMMITTED)
+    direct.params = {**direct.params, "sha": "1" * 40}
+    running = make_push_pipeline(status=PipelineStatus.RUNNING)
+    await add(db_session_maker, published, direct, running)
+    bodies = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies[body["pipeline_id"]] = body
+        return httpx.Response(
+            200,
+            json={
+                "assessment_id": len(bodies),
+                "outcome": "pending",
+                "snapshot_fingerprint": "f" * 64,
+                "error_code": None,
+                "linked_assessment_id": 3 if "pull_request_number" in body else None,
+                "linked_fingerprint_match": True
+                if "pull_request_number" in body
+                else None,
+            },
+        )
+
+    async def merged(git_repo, sha, target_branch):
+        assert (git_repo, target_branch) == ("flathub/org.test.App", "master")
+        return (
+            {
+                "pull_request_number": 7,
+                "pull_request_url": "https://github.com/flathub/org.test.App/pull/7",
+                "pull_request_head_revision": PR_HEAD,
+            }
+            if sha == PUSHED
+            else {}
+        )
+
+    with (
+        patch.object(settings, "ff_permission_assessment_push", True),
+        mock_http(handler),
+        patch(
+            "app.services.permission_assessment.get_build_job_arches",
+            AsyncMock(return_value=["x86_64"]),
+        ),
+        patch("app.services.permission_assessment._merged_pull_request", merged),
+    ):
+        result = await submit_pending_assessments()
+
+    assert result == {"status": "completed", "submitted": 2, "skipped": 0, "failed": 0}
+    assert set(bodies) == {str(published.id), str(direct.id)}
+    linked_body = bodies[str(published.id)]
+    assert linked_body["candidate_kind"] == "push"
+    assert linked_body["pull_request_number"] == 7
+    assert linked_body["pull_request_head_revision"] == PR_HEAD
+    assert linked_body["built_revision"] == PUSHED
+    assert "pull_request_number" not in bodies[str(direct.id)]
+
+    stored = await load(db_session_maker, published.id)
+    state = stored.provider_data[PROVIDER_DATA_KEY]
+    assert state["status"] == "submitted"
+    assert state["linked_assessment_id"] == 3
+    assert state["linked_fingerprint_match"] is True
+
+
+@pytest.mark.asyncio
+async def test_keeps_provider_data_written_during_run(
+    configured, local_db, db_session_maker
+):
+    pipeline = make_pipeline()
+    await add(db_session_maker, pipeline)
+
+    async def assess(pipeline_, request, client):
+        async with db_session_maker() as db:
+            row = await db.get(Pipeline, pipeline.id)
+            row.provider_data = {**row.provider_data, "reported_flat_manager_jobs": 1}
+            await db.commit()
+        return {
+            "status": "submitted",
+            "assessment_id": 9,
+            "outcome": "pending",
+            "snapshot_fingerprint": None,
+            "error_code": None,
+            "linked_assessment_id": None,
+            "linked_fingerprint_match": None,
+        }
+
+    with patch("app.services.permission_assessment._assess", assess):
+        await submit_pending_assessments()
+
+    stored = await load(db_session_maker, pipeline.id)
+    assert stored.provider_data["reported_flat_manager_jobs"] == 1
+    assert stored.provider_data[PROVIDER_DATA_KEY]["assessment_id"] == 9
