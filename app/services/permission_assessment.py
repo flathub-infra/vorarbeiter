@@ -4,12 +4,13 @@ from typing import Any
 import httpx2 as httpx
 import jwt
 import structlog
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
 from app.services.job_monitor import JobMonitor
+from app.utils.flat_manager import PublishedState, get_flat_manager_client
 from app.utils.github import (
     get_build_job_arches,
     get_github_client,
@@ -22,11 +23,6 @@ PROVIDER_DATA_KEY = "permission_assessment"
 MAX_ATTEMPTS = 3
 LOOKBACK = timedelta(hours=24)
 REQUEST_TIMEOUT = 300.0
-PUSH_STATUSES = (
-    PipelineStatus.COMMITTED,
-    PipelineStatus.PUBLISHING,
-    PipelineStatus.PUBLISHED,
-)
 
 
 def _destination(target_branch: str) -> tuple[str, str] | None:
@@ -187,6 +183,19 @@ def _finished(pipeline: Pipeline) -> bool:
     )
 
 
+async def _skip_reason(pipeline: Pipeline) -> str | None:
+    assert pipeline.build_id is not None
+    info = await get_flat_manager_client().get_build_info(pipeline.build_id)
+    refs = [item["ref_name"] for item in info["build_refs"]]
+    if refs and not any(ref.startswith("app/") for ref in refs):
+        return "no_app_ref"
+    if pipeline.flat_manager_repo != "test":
+        published_state = PublishedState(info["build"]["published_state"])
+        if published_state != PublishedState.UNPUBLISHED:
+            return f"published_state_{published_state.name.lower()}"
+    return None
+
+
 async def _assess(
     pipeline: Pipeline, request: dict[str, Any], client: httpx.AsyncClient
 ) -> dict[str, Any]:
@@ -233,24 +242,15 @@ async def submit_pending_assessments() -> dict[str, Any]:
 
     counts = {"submitted": 0, "skipped": 0, "failed": 0}
     cutoff = datetime.now(UTC) - LOOKBACK
-    scopes = [
-        and_(
-            Pipeline.status == PipelineStatus.COMMITTED,
-            Pipeline.flat_manager_repo == "test",
-        )
-    ]
+    repos = ["test"]
     if settings.ff_permission_assessment_push:
-        scopes.append(
-            and_(
-                Pipeline.status.in_(PUSH_STATUSES),
-                Pipeline.flat_manager_repo.in_(("stable", "beta")),
-            )
-        )
+        repos += ["stable", "beta"]
     async with get_db() as db:
         result = await db.execute(
             select(Pipeline)
             .where(
-                or_(*scopes),
+                Pipeline.status == PipelineStatus.COMMITTED,
+                Pipeline.flat_manager_repo.in_(repos),
                 Pipeline.build_id.isnot(None),
                 Pipeline.created_at > cutoff,
             )
@@ -276,19 +276,23 @@ async def submit_pending_assessments() -> dict[str, Any]:
                 else:
                     attempts = state.get("attempts", 0) + 1
                     try:
-                        if request["candidate_kind"] == "push":
-                            request = {
-                                **request,
-                                **await _merged_pull_request(
-                                    request["source_repository"],
-                                    request["built_revision"],
-                                    request["target_git_branch"],
-                                ),
+                        reason = await _skip_reason(pipeline)
+                        if reason is not None:
+                            state = {"status": "skipped", "reason": reason}
+                        else:
+                            if request["candidate_kind"] == "push":
+                                request = {
+                                    **request,
+                                    **await _merged_pull_request(
+                                        request["source_repository"],
+                                        request["built_revision"],
+                                        request["target_git_branch"],
+                                    ),
+                                }
+                            state = {
+                                **await _assess(pipeline, request, client),
+                                "attempts": attempts,
                             }
-                        state = {
-                            **await _assess(pipeline, request, client),
-                            "attempts": attempts,
-                        }
                     except Exception as e:
                         logger.exception(
                             "Failed to submit permission assessment",
@@ -303,19 +307,30 @@ async def submit_pending_assessments() -> dict[str, Any]:
                             "last_error": str(e),
                         }
                     else:
-                        logger.info(
-                            "Submitted permission assessment",
-                            pipeline_id=str(pipeline.id),
-                            app_id=pipeline.app_id,
-                            build_id=pipeline.build_id,
-                            assessment_id=state["assessment_id"],
-                            outcome=state["outcome"],
-                            error_code=state["error_code"],
-                            candidate_kind=request["candidate_kind"],
-                            pull_request_number=request.get("pull_request_number"),
-                            linked_assessment_id=state["linked_assessment_id"],
-                            linked_fingerprint_match=state["linked_fingerprint_match"],
-                        )
+                        if state["status"] == "skipped":
+                            logger.info(
+                                "Skipped permission assessment",
+                                pipeline_id=str(pipeline.id),
+                                app_id=pipeline.app_id,
+                                build_id=pipeline.build_id,
+                                reason=state["reason"],
+                            )
+                        else:
+                            logger.info(
+                                "Submitted permission assessment",
+                                pipeline_id=str(pipeline.id),
+                                app_id=pipeline.app_id,
+                                build_id=pipeline.build_id,
+                                assessment_id=state["assessment_id"],
+                                outcome=state["outcome"],
+                                error_code=state["error_code"],
+                                candidate_kind=request["candidate_kind"],
+                                pull_request_number=request.get("pull_request_number"),
+                                linked_assessment_id=state["linked_assessment_id"],
+                                linked_fingerprint_match=state[
+                                    "linked_fingerprint_match"
+                                ],
+                            )
                 state["updated_at"] = datetime.now(UTC).isoformat()
                 await db.refresh(pipeline, ["provider_data"], with_for_update=True)
                 provider_data = dict(pipeline.provider_data or {})

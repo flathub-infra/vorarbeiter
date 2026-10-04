@@ -140,6 +140,24 @@ def configured():
         yield
 
 
+def build_info(refs=("app/org.test.App/x86_64/stable",), published_state=0):
+    return {
+        "build": {"published_state": published_state},
+        "build_refs": [{"ref_name": ref} for ref in refs],
+    }
+
+
+@pytest.fixture(autouse=True)
+def flat_manager():
+    client = AsyncMock()
+    client.get_build_info.return_value = build_info()
+    with patch(
+        "app.services.permission_assessment.get_flat_manager_client",
+        return_value=client,
+    ):
+        yield client
+
+
 @pytest.fixture
 def local_db(db_session_maker):
     @asynccontextmanager
@@ -319,6 +337,35 @@ async def test_fails_without_build_arches(configured, local_db, db_session_maker
     assert stored.provider_data[PROVIDER_DATA_KEY]["attempts"] == 1
 
 
+@pytest.mark.asyncio
+async def test_skips_build_without_app_ref(
+    configured, local_db, db_session_maker, flat_manager
+):
+    pipeline = make_pipeline()
+    await add(db_session_maker, pipeline)
+    flat_manager.get_build_info.return_value = build_info(
+        refs=(
+            "runtime/org.test.App/x86_64/stable",
+            "runtime/org.test.App.Sources/x86_64/stable",
+        )
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("unexpected request")
+
+    with mock_http(handler):
+        first = await submit_pending_assessments()
+        second = await submit_pending_assessments()
+
+    assert first == {"status": "completed", "submitted": 0, "skipped": 1, "failed": 0}
+    assert second == {"status": "completed", "submitted": 0, "skipped": 0, "failed": 0}
+    flat_manager.get_build_info.assert_awaited_once_with(1234)
+    stored = await load(db_session_maker, pipeline.id)
+    state = stored.provider_data[PROVIDER_DATA_KEY]
+    assert state["status"] == "skipped"
+    assert state["reason"] == "no_app_ref"
+
+
 PUSHED = "d" * 40
 PR_HEAD = "e" * 40
 
@@ -481,15 +528,73 @@ async def test_push_builds_ignored_without_flag(configured, local_db, db_session
     assert result == {"status": "completed", "submitted": 0, "skipped": 0, "failed": 0}
 
 
+@pytest.mark.parametrize(
+    "status", [PipelineStatus.PUBLISHING, PipelineStatus.PUBLISHED]
+)
 @pytest.mark.asyncio
-async def test_submits_published_push_build_with_linked_pull_request(
+async def test_ignores_push_builds_after_publication_started(
+    configured, local_db, db_session_maker, flat_manager, status
+):
+    await add(db_session_maker, make_push_pipeline(status=status))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("unexpected request")
+
+    with (
+        patch.object(settings, "ff_permission_assessment_push", True),
+        mock_http(handler),
+    ):
+        result = await submit_pending_assessments()
+
+    assert result == {"status": "completed", "submitted": 0, "skipped": 0, "failed": 0}
+    flat_manager.get_build_info.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("published_state", "reason"),
+    [(1, "published_state_publishing"), (2, "published_state_published")],
+)
+@pytest.mark.asyncio
+async def test_skips_committed_push_build_published_in_flat_manager(
+    configured, local_db, db_session_maker, flat_manager, published_state, reason
+):
+    pipeline = make_push_pipeline()
+    await add(db_session_maker, pipeline)
+    flat_manager.get_build_info.return_value = build_info(
+        published_state=published_state
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("unexpected request")
+
+    with (
+        patch.object(settings, "ff_permission_assessment_push", True),
+        mock_http(handler),
+        patch(
+            "app.services.permission_assessment._merged_pull_request",
+            AsyncMock(side_effect=AssertionError("unexpected lookup")),
+        ),
+    ):
+        result = await submit_pending_assessments()
+
+    assert result == {"status": "completed", "submitted": 0, "skipped": 1, "failed": 0}
+    stored = await load(db_session_maker, pipeline.id)
+    assert stored.provider_data[PROVIDER_DATA_KEY] == {
+        "status": "skipped",
+        "reason": reason,
+        "updated_at": stored.provider_data[PROVIDER_DATA_KEY]["updated_at"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_submits_committed_push_builds_with_linked_pull_request(
     configured, local_db, db_session_maker
 ):
-    published = make_push_pipeline(status=PipelineStatus.PUBLISHED)
-    direct = make_push_pipeline(status=PipelineStatus.COMMITTED)
+    linked = make_push_pipeline()
+    direct = make_push_pipeline()
     direct.params = {**direct.params, "sha": "1" * 40}
     running = make_push_pipeline(status=PipelineStatus.RUNNING)
-    await add(db_session_maker, published, direct, running)
+    await add(db_session_maker, linked, direct, running)
     bodies = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -533,15 +638,15 @@ async def test_submits_published_push_build_with_linked_pull_request(
         result = await submit_pending_assessments()
 
     assert result == {"status": "completed", "submitted": 2, "skipped": 0, "failed": 0}
-    assert set(bodies) == {str(published.id), str(direct.id)}
-    linked_body = bodies[str(published.id)]
+    assert set(bodies) == {str(linked.id), str(direct.id)}
+    linked_body = bodies[str(linked.id)]
     assert linked_body["candidate_kind"] == "push"
     assert linked_body["pull_request_number"] == 7
     assert linked_body["pull_request_head_revision"] == PR_HEAD
     assert linked_body["built_revision"] == PUSHED
     assert "pull_request_number" not in bodies[str(direct.id)]
 
-    stored = await load(db_session_maker, published.id)
+    stored = await load(db_session_maker, linked.id)
     state = stored.provider_data[PROVIDER_DATA_KEY]
     assert state["status"] == "submitted"
     assert state["linked_assessment_id"] == 3
