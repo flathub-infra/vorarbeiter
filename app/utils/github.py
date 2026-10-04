@@ -430,6 +430,34 @@ async def create_pr_comment(
     return False
 
 
+async def get_pull_request(git_repo: str, pr_number: int) -> dict[str, Any] | None:
+    response = await get_github_client().request(
+        "get", f"https://api.github.com/repos/{git_repo}/pulls/{pr_number}"
+    )
+    return response.json() if response is not None else None
+
+
+async def upsert_pr_comment(
+    git_repo: str, pr_number: int, marker: str, body: str, create: bool
+) -> bool:
+    client = get_github_client()
+    base = f"https://api.github.com/repos/{git_repo}/issues"
+    response = await client.request(
+        "get", f"{base}/{pr_number}/comments", params={"per_page": 100}
+    )
+    if response is None:
+        return False
+    for comment in response.json():
+        if marker in (comment.get("body") or ""):
+            url, method = f"{base}/comments/{comment['id']}", "patch"
+            break
+    else:
+        url, method = f"{base}/{pr_number}/comments", "post"
+        if not create:
+            return True
+    return await client.request(method, url, json={"body": body}) is not None
+
+
 async def add_comment_reaction(
     git_repo: str,
     comment_id: int,

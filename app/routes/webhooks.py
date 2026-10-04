@@ -27,6 +27,7 @@ from app.pipelines.build import (
 )
 from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.github_actions import GitHubActionsService
+from app.services.permission_assessment import notify_target_changed
 from app.services.test_build_penalty import (
     BUILDING_LOCALLY_URL,
     format_penalty_notice,
@@ -1198,6 +1199,12 @@ async def receive_github_webhook(
         repository=repo_name,
         actor=actor_login,
     )
+    if (
+        payload.get("action") == "edited"
+        and "pull_request" in payload
+        and "base" in (payload.get("changes") or {})
+    ):
+        await notify_target_changed(payload)
     if is_pr_event and payload.get("action") == "synchronize":
         refreshed_id = await refresh_pending_explicit_pr_build(event)
         if refreshed_id is not None:

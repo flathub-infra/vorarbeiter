@@ -5,6 +5,7 @@ import httpx2 as httpx
 import jwt
 import structlog
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
@@ -14,7 +15,10 @@ from app.utils.flat_manager import PublishedState, get_flat_manager_client
 from app.utils.github import (
     get_build_job_arches,
     get_github_client,
+    get_pull_request,
     normalize_git_oid,
+    update_commit_status,
+    upsert_pr_comment,
 )
 
 logger = structlog.get_logger(__name__)
@@ -23,6 +27,26 @@ PROVIDER_DATA_KEY = "permission_assessment"
 MAX_ATTEMPTS = 3
 LOOKBACK = timedelta(hours=24)
 REQUEST_TIMEOUT = 300.0
+STATUS_LOOKBACK = timedelta(days=30)
+STATUS_CONTEXT = "flathub/permissions"
+COMMENT_MARKER = "<!-- flathub-permission-review -->"
+STATUSES = {
+    "accepted": ("success", "Permissions accepted"),
+    "pending": ("pending", "Permission review pending on Flathub"),
+    "rejected": ("failure", "Permissions rejected on Flathub"),
+    "error": ("error", "Permission assessment failed"),
+    "not_applicable": ("success", "No application permissions to review"),
+    "target_changed": ("pending", "Target branch changed; reassessing"),
+}
+ASSESSMENT_FIELDS = [
+    "assessment_id",
+    "outcome",
+    "snapshot_fingerprint",
+    "error_code",
+    "linked_assessment_id",
+    "linked_fingerprint_match",
+    "review_url",
+]
 
 
 def _destination(target_branch: str) -> tuple[str, str] | None:
@@ -83,6 +107,8 @@ def build_assessment_request(pipeline: Pipeline) -> dict[str, Any] | None:
     base = normalize_git_oid(params.get("base_sha"))
     if base is not None:
         request["base_revision"] = base
+    if reports := (pipeline.provider_data or {}).get("linter_reports"):
+        request["linter_reports"] = reports
     return request
 
 
@@ -125,6 +151,8 @@ def build_push_assessment_request(pipeline: Pipeline) -> dict[str, Any] | None:
     base = normalize_git_oid(params.get("base_sha"))
     if base is not None:
         request["base_revision"] = base
+    if reports := (pipeline.provider_data or {}).get("linter_reports"):
+        request["linter_reports"] = reports
     return request
 
 
@@ -208,22 +236,19 @@ async def _assess(
         raise ValueError("No build architectures found for workflow run")
 
     assert settings.permission_assessment_url is not None
-    response = await client.post(
-        settings.permission_assessment_url,
-        json={**request, "expected_arches": sorted(set(arches))},
-        headers={"Authorization": f"Bearer {_token()}"},
+    return _parse(
+        await client.post(
+            settings.permission_assessment_url,
+            json={**request, "expected_arches": sorted(set(arches))},
+            headers={"Authorization": f"Bearer {_token()}"},
+        )
     )
+
+
+def _parse(response: httpx.Response) -> dict[str, Any]:
     response.raise_for_status()
     body = response.json()
-    return {
-        "status": "submitted",
-        "assessment_id": body["assessment_id"],
-        "outcome": body["outcome"],
-        "snapshot_fingerprint": body.get("snapshot_fingerprint"),
-        "error_code": body.get("error_code"),
-        "linked_assessment_id": body.get("linked_assessment_id"),
-        "linked_fingerprint_match": body.get("linked_fingerprint_match"),
-    }
+    return {"status": "submitted", **{k: body.get(k) for k in ASSESSMENT_FIELDS}}
 
 
 def _is_candidate(pipeline: Pipeline) -> bool:
@@ -231,6 +256,121 @@ def _is_candidate(pipeline: Pipeline) -> bool:
     if pipeline.flat_manager_repo == "test":
         return bool(params.get("pr_number"))
     return params.get("push") == "true"
+
+
+def _enabled(target_branch: Any) -> bool:
+    destination = _destination(target_branch) if target_branch else None
+    return bool(destination and destination[0] in settings.permission_status_channels)
+
+
+async def _report(
+    request: dict[str, Any], state: dict[str, Any], outcome: str
+) -> dict[str, Any]:
+    url = state.get("review_url")
+    if (
+        request["candidate_kind"] != "head"
+        or not _enabled(request["target_git_branch"])
+        or state.get("reported") == [outcome, url]
+    ):
+        return state
+    status, description = STATUSES[outcome]
+    repo, head = request["source_repository"], request["pull_request_head_revision"]
+    ok = await update_commit_status(
+        head, status, repo, url, description, STATUS_CONTEXT
+    )
+    if ok and outcome in ("accepted", "pending", "rejected", "error"):
+        body = [COMMENT_MARKER, f"**Flathub permission review: {description}**", ""]
+        body += [f"Commit: `{head[:12]}`"] + ([f"Review: {url}"] if url else [])
+        ok = await upsert_pr_comment(
+            repo,
+            request["pull_request_number"],
+            COMMENT_MARKER,
+            "\n".join(body),
+            outcome != "accepted",
+        )
+    return {**state, "reported": [outcome, url]} if ok else state
+
+
+async def notify_target_changed(payload: dict[str, Any]) -> None:
+    pr = payload["pull_request"]
+    old = payload["changes"]["base"].get("ref", {}).get("from")
+    if _enabled(old) or _enabled(pr["base"]["ref"]):
+        state, description = STATUSES["target_changed"]
+        repo = payload["repository"]["full_name"]
+        await update_commit_status(
+            pr["head"]["sha"], state, repo, None, description, STATUS_CONTEXT
+        )
+
+
+async def _store(db: AsyncSession, pipeline: Pipeline, state: dict[str, Any]) -> None:
+    await db.refresh(pipeline, ["provider_data"], with_for_update=True)
+    data = pipeline.provider_data or {}
+    pipeline.provider_data = {**data, PROVIDER_DATA_KEY: state}
+    await db.commit()
+
+
+async def _refresh(
+    db: AsyncSession, pipeline: Pipeline, client: httpx.AsyncClient
+) -> None:
+    state = (pipeline.provider_data or {}).get(PROVIDER_DATA_KEY) or {}
+    request = build_assessment_request(pipeline)
+    if (
+        state.get("status") != "submitted"
+        or state.get("closed")
+        or request is None
+        or not _enabled(request["target_git_branch"])
+    ):
+        return
+    pr = await get_pull_request(
+        request["source_repository"], request["pull_request_number"]
+    )
+    if pr is None:
+        return
+    if pr["state"] != "open":
+        new = {**state, "closed": True}
+    elif pr["head"]["sha"] != request["pull_request_head_revision"]:
+        return
+    elif pr["base"]["ref"] != request["target_git_branch"]:
+        new = await _report(request, state, "target_changed")
+    else:
+        base = pr["base"]["sha"]
+        recorded = state.get("base_revision", request.get("base_revision"))
+        if recorded and base != recorded:
+            request = {**request, "base_revision": base}
+            new = {**state, **await _assess(pipeline, request, client)}
+            new["base_revision"] = base
+        else:
+            assert settings.permission_assessment_url is not None
+            url = settings.permission_assessment_url.rstrip("/").removesuffix("/assess")
+            response = await client.get(
+                f"{url}/{state['assessment_id']}",
+                headers={"Authorization": f"Bearer {_token()}"},
+            )
+            new = {**state, **_parse(response)}
+        new = await _report(request, new, new["outcome"])
+    if new != state:
+        await _store(db, pipeline, new)
+
+
+async def _refresh_statuses(db: AsyncSession, client: httpx.AsyncClient) -> None:
+    result = await db.execute(
+        select(Pipeline)
+        .where(
+            Pipeline.flat_manager_repo == "test",
+            Pipeline.created_at > datetime.now(UTC) - STATUS_LOOKBACK,
+        )
+        .order_by(Pipeline.created_at)
+    )
+    latest = {
+        (p.params.get("repo"), p.params["pr_number"]): p
+        for p in result.scalars()
+        if (p.params or {}).get("pr_number")
+    }
+    for pipeline in latest.values():
+        try:
+            await _refresh(db, pipeline, client)
+        except Exception:
+            logger.exception("Failed to refresh status", pipeline_id=str(pipeline.id))
 
 
 async def submit_pending_assessments() -> dict[str, Any]:
@@ -279,6 +419,8 @@ async def submit_pending_assessments() -> dict[str, Any]:
                         reason = await _skip_reason(pipeline)
                         if reason is not None:
                             state = {"status": "skipped", "reason": reason}
+                            if reason == "no_app_ref":
+                                state = await _report(request, state, "not_applicable")
                         else:
                             if request["candidate_kind"] == "push":
                                 request = {
@@ -306,6 +448,8 @@ async def submit_pending_assessments() -> dict[str, Any]:
                             "attempts": attempts,
                             "last_error": str(e),
                         }
+                        if attempts >= MAX_ATTEMPTS:
+                            state = await _report(request, state, "error")
                     else:
                         if state["status"] == "skipped":
                             logger.info(
@@ -332,11 +476,10 @@ async def submit_pending_assessments() -> dict[str, Any]:
                                 ],
                             )
                 state["updated_at"] = datetime.now(UTC).isoformat()
-                await db.refresh(pipeline, ["provider_data"], with_for_update=True)
-                provider_data = dict(pipeline.provider_data or {})
-                provider_data[PROVIDER_DATA_KEY] = state
-                pipeline.provider_data = provider_data
-                await db.commit()
+                await _store(db, pipeline, state)
                 counts[state["status"]] += 1
+
+            if settings.permission_status_channels:
+                await _refresh_statuses(db, client)
 
     return {"status": "completed", **counts}

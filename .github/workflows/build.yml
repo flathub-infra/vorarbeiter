@@ -45,6 +45,14 @@ on:
         description: 'Use spot instances'
         required: false
         default: 'true'
+      linter_review_report:
+        description: 'Report linter review reports'
+        required: false
+        default: 'false'
+      permission_review_integrated:
+        description: 'Run linter permission review'
+        required: false
+        default: 'false'
 
 jobs:
   check-event-type:
@@ -243,8 +251,22 @@ jobs:
             -e XDG_STATE_HOME=/work/.local/state \
             -e REF \
             -e PR_TARGET_BRANCH \
+            -e LINTER_REVIEW_REPORT=${{ inputs.linter_review_report }} \
+            -e PERMISSION_REVIEW_INTEGRATED=${{ inputs.permission_review_integrated }} \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-manifest $APP_ID
+
+      - name: Report manifest linter review report
+        if: ${{ always() && inputs.linter_review_report == 'true' }}
+        continue-on-error: true
+        run: |
+          f="${GITHUB_WORKSPACE}/work/linter-report-manifest.json"
+          [[ -f "$f" ]] || exit 0
+          TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$TOKEN"
+          jq -c '{kind: "manifest", arch: null, report: .}' "$f" | curl -fsS --retry 5 -X POST \
+            -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+            --data-binary @- "${{ inputs.callback_url }}/linter_report"
 
       - name: Store end-of-life fields
         run: |
@@ -638,8 +660,22 @@ jobs:
             -e REF \
             -e PR_TARGET_BRANCH \
             -e BUILD_ARCH \
+            -e LINTER_REVIEW_REPORT=${{ inputs.linter_review_report }} \
+            -e PERMISSION_REVIEW_INTEGRATED=${{ inputs.permission_review_integrated }} \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-build
+
+      - name: Report repo linter review report
+        if: ${{ always() && inputs.linter_review_report == 'true' }}
+        continue-on-error: true
+        run: |
+          f="${GITHUB_WORKSPACE}/work/linter-report-repo-${BUILD_ARCH}.json"
+          [[ -f "$f" ]] || exit 0
+          TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$TOKEN"
+          jq -c --arg arch "$BUILD_ARCH" '{kind: "repo", arch: $arch, report: .}' "$f" | curl -fsS --retry 5 -X POST \
+            -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+            --data-binary @- "${{ inputs.callback_url }}/linter_report"
 
       - name: Upload build
         run: |

@@ -135,7 +135,11 @@ validate-manifest app_id:
             ;;
     esac
 
-    flatpak-builder-lint --gha-format --exceptions --exceptions-repo "$exceptions_repo" manifest "$manifest"
+    lint_args=(--gha-format --exceptions --exceptions-repo "$exceptions_repo")
+    [ "${PERMISSION_REVIEW_INTEGRATED:-}" = "true" ] && lint_args+=(--permission-review)
+    [ "${LINTER_REVIEW_REPORT:-}" = "true" ] && lint_args+=(--review-report "$PWD/linter-report-manifest.json")
+
+    flatpak-builder-lint "${lint_args[@]}" manifest "$manifest"
 
 download-sources app_id:
     #!/usr/bin/env bash
@@ -267,6 +271,9 @@ validate-build:
     if [[ "$BUILD_ARCH" == "x86_64" && "$should_janitor" == "yes" ]]; then
         lint_args+=(--janitor-exceptions)
     fi
+
+    [ "${PERMISSION_REVIEW_INTEGRATED:-}" = "true" ] && lint_args+=(--permission-review)
+    [ "${LINTER_REVIEW_REPORT:-}" = "true" ] && lint_args+=(--review-report "$PWD/linter-report-repo-${BUILD_ARCH}.json")
 
     flatpak-builder-lint "${lint_args[@]}" repo repo
 

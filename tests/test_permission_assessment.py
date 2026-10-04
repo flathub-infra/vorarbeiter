@@ -1,6 +1,7 @@
 import json
 import uuid
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx2 as httpx
@@ -681,3 +682,135 @@ async def test_keeps_provider_data_written_during_run(
     stored = await load(db_session_maker, pipeline.id)
     assert stored.provider_data["reported_flat_manager_jobs"] == 1
     assert stored.provider_data[PROVIDER_DATA_KEY]["assessment_id"] == 9
+
+
+NEW_BASE = "d" * 40
+REVIEW_URL = "https://flathub.test/review/7"
+
+
+@pytest.fixture
+def gh():
+    pr = {
+        "state": "open",
+        "head": {"sha": HEAD},
+        "base": {"ref": "master", "sha": BASE},
+    }
+    get_pr = AsyncMock(return_value=pr)
+    status, comment = AsyncMock(return_value=True), AsyncMock(return_value=True)
+    with (
+        patch.object(settings, "permission_status_channels", ["stable"]),
+        patch.object(permission_assessment, "get_pull_request", get_pr),
+        patch.object(permission_assessment, "update_commit_status", status),
+        patch.object(permission_assessment, "upsert_pr_comment", comment),
+    ):
+        yield SimpleNamespace(pr=pr, get_pr=get_pr, status=status, comment=comment)
+
+
+def submitted(**state):
+    state = {"status": "submitted", "assessment_id": 7, "outcome": "pending", **state}
+    provider_data = {"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 99}
+    return make_pipeline(provider_data={**provider_data, PROVIDER_DATA_KEY: state})
+
+
+def assessment_server(outcome, requests=None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if requests is not None:
+            requests.append(request)
+        body = {"assessment_id": 7, "outcome": outcome, "review_url": REVIEW_URL}
+        return httpx.Response(200, json=body)
+
+    return mock_http(handler)
+
+
+@pytest.mark.parametrize(
+    "outcome, state, creates_comment",
+    [
+        ("accepted", "success", False),
+        ("pending", "pending", True),
+        ("rejected", "failure", True),
+        ("error", "error", True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_reports_outcome_once(
+    configured, local_db, db_session_maker, gh, outcome, state, creates_comment
+):
+    await add(db_session_maker, submitted())
+
+    with assessment_server(outcome):
+        await submit_pending_assessments()
+        await submit_pending_assessments()
+
+    gh.status.assert_awaited_once()
+    assert gh.status.await_args.args[:2] == (HEAD, state)
+    gh.comment.assert_awaited_once()
+    assert gh.comment.await_args.args[4] is creates_comment
+
+
+@pytest.mark.asyncio
+async def test_stale_head_reports_nothing(configured, local_db, db_session_maker, gh):
+    await add(db_session_maker, submitted())
+    gh.pr["head"]["sha"] = NEW_BASE
+
+    with assessment_server("accepted"):
+        await submit_pending_assessments()
+
+    gh.status.assert_not_awaited()
+    gh.comment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_base_change_resubmits_with_new_base(
+    configured, local_db, db_session_maker, gh
+):
+    pipeline = submitted()
+    await add(db_session_maker, pipeline)
+    gh.pr["base"]["sha"] = NEW_BASE
+    requests = []
+
+    with (
+        assessment_server("accepted", requests),
+        patch.object(
+            permission_assessment,
+            "get_build_job_arches",
+            AsyncMock(return_value=["x86_64"]),
+        ),
+    ):
+        await submit_pending_assessments()
+
+    assert [r.method for r in requests] == ["POST"]
+    assert json.loads(requests[0].content)["base_revision"] == NEW_BASE
+    stored = await load(db_session_maker, pipeline.id)
+    assert stored.provider_data[PROVIDER_DATA_KEY]["base_revision"] == NEW_BASE
+    assert gh.status.await_args.args[1] == "success"
+
+
+@pytest.mark.asyncio
+async def test_closed_pull_request_stops_tracking(
+    configured, local_db, db_session_maker, gh
+):
+    await add(db_session_maker, submitted())
+    gh.pr["state"] = "closed"
+
+    with assessment_server("accepted"):
+        await submit_pending_assessments()
+        await submit_pending_assessments()
+
+    gh.get_pr.assert_awaited_once()
+    gh.status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_no_github_calls_without_status_channels(
+    configured, local_db, db_session_maker, gh
+):
+    await add(db_session_maker, submitted())
+
+    with (
+        patch.object(settings, "permission_status_channels", []),
+        assessment_server("accepted"),
+    ):
+        await submit_pending_assessments()
+
+    gh.get_pr.assert_not_awaited()
+    gh.status.assert_not_awaited()

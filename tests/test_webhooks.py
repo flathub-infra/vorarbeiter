@@ -4949,3 +4949,50 @@ async def test_penalty_rejected_bot_build_creates_no_explicit_pipeline(
         ).all()
         assert pipelines == []
         comment.assert_awaited_once()
+
+
+@pytest.mark.parametrize("channels, expected", [(["stable"], 1), ([], 0)])
+@pytest.mark.asyncio
+async def test_edited_base_posts_pending_status(db_session_maker, channels, expected):
+    from starlette.requests import Request
+
+    from app.routes.webhooks import receive_github_webhook
+
+    payload = {
+        "repository": {"full_name": "test-owner/test-repo"},
+        "sender": {"login": "test-actor"},
+        "action": "edited",
+        "changes": {"base": {"ref": {"from": "master"}}},
+        "pull_request": {
+            "number": 42,
+            "state": "open",
+            "head": {"sha": "c" * 40},
+            "base": {"ref": "feature", "sha": "d" * 40},
+        },
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": json.dumps(payload).encode()}
+
+    async with db_session_maker() as db:
+        with (
+            patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
+            patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+            patch.object(settings, "permission_status_channels", channels),
+            patch(
+                "app.services.permission_assessment.update_commit_status", AsyncMock()
+            ) as status,
+        ):
+            request = Request({"type": "http", "headers": []}, receive)
+            await receive_github_webhook(
+                request, x_github_delivery=str(uuid.uuid4()), x_hub_signature_256=None
+            )
+
+    assert status.await_count == expected
+    if expected:
+        assert status.await_args is not None
+        assert status.await_args.args[:3] == (
+            "c" * 40,
+            "pending",
+            "test-owner/test-repo",
+        )

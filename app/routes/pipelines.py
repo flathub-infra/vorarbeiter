@@ -313,6 +313,19 @@ async def pipeline_cost_callback(
     )
 
 
+@pipelines_router.post("/pipelines/{pipeline_id:uuid}/callback/linter_report")
+async def pipeline_linter_report_callback(
+    pipeline_id: uuid.UUID,
+    data: dict[str, Any],
+    build_pipeline: VerifiedBuildPipeline,
+):
+    return await execute_callback_handler(
+        build_pipeline.handle_linter_report_callback,
+        pipeline_id,
+        data,
+    )
+
+
 @pipelines_router.get(
     "/pipelines/{pipeline_id:uuid}/log_url",
 )
