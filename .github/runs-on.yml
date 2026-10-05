@@ -2,6 +2,7 @@ runners:
   medium-amd64:
     cpu: [4, 16]
     ram: [32, 512]
+    volume: 80gb
     spot: price-capacity-optimized
     family: ["m7a", "m6a", "m7i", "m6i", "r7i", "r6i", "c7i", "c6i", "c7a", "c6a", "r7a", "r6a"]
 
