@@ -16,6 +16,8 @@ FROM debian:stable-slim
 ENV PATH="/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     PORT=8000
 
 RUN apt-get update && \
