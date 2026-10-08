@@ -526,6 +526,51 @@ async def test_check_jobs_cancels_timed_out_running_builds(
 
 
 @pytest.mark.asyncio
+async def test_check_jobs_expires_untracked_stale_pipelines(
+    db_session_maker, run_check_all_active_pipelines
+):
+    now = datetime.now(tz=UTC)
+    stale = now - timedelta(hours=48, minutes=1)
+    recent = now - timedelta(hours=47, minutes=59)
+    expected = {
+        (PipelineStatus.PENDING, stale, None, None): PipelineStatus.EXPIRED,
+        (PipelineStatus.SUCCEEDED, stale, None, None): PipelineStatus.EXPIRED,
+        (PipelineStatus.SUCCEEDED, stale, "build.yml", None): PipelineStatus.EXPIRED,
+        (PipelineStatus.PUBLISHING, stale, None, 7): PipelineStatus.EXPIRED,
+        (PipelineStatus.SUCCEEDED, stale, "reprocheck.yml", None): (
+            PipelineStatus.SUCCEEDED
+        ),
+        (PipelineStatus.PENDING, recent, None, None): PipelineStatus.PENDING,
+        (PipelineStatus.SUCCEEDED, recent, None, None): PipelineStatus.SUCCEEDED,
+        (PipelineStatus.COMMITTED, stale, None, None): PipelineStatus.COMMITTED,
+    }
+    pipelines = {
+        Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.App",
+            status=status,
+            created_at=created_at,
+            update_repo_job_id=update_repo_job_id,
+            params={"workflow_id": workflow_id} if workflow_id else {},
+        ): want
+        for (status, created_at, workflow_id, update_repo_job_id), want in (
+            expected.items()
+        )
+    }
+
+    async with db_session_maker() as session:
+        session.add_all(pipelines)
+        await session.commit()
+
+    with patch("app.pipelines.build.BuildPipeline.start_pending_builds"):
+        await run_check_all_active_pipelines(db_session_maker)
+
+    async with db_session_maker() as session:
+        for pipeline, want in pipelines.items():
+            assert (await session.get(Pipeline, pipeline.id)).status == want
+
+
+@pytest.mark.asyncio
 async def test_check_jobs_selects_reprochecks_at_timeout_boundaries(
     db_session_maker, run_check_all_active_pipelines
 ):

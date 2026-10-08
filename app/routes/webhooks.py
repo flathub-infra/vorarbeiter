@@ -1473,6 +1473,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                     if previous.status not in (
                         PipelineStatus.CANCELLED,
                         PipelineStatus.SUPERSEDED,
+                        PipelineStatus.EXPIRED,
                     ) or (
                         previous.started_at is not None
                         or previous.build_id is not None

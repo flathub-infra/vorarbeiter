@@ -829,6 +829,7 @@ class MergeService:
             PipelineStatus.FAILED,
             PipelineStatus.CANCELLED,
             PipelineStatus.SUPERSEDED,
+            PipelineStatus.EXPIRED,
         }:
             await self._post_comment(
                 pr_number,

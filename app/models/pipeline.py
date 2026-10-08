@@ -21,6 +21,7 @@ class PipelineStatus(Enum):
     COMMITTED = "committed"
     PUBLISHING = "publishing"
     SUPERSEDED = "superseded"
+    EXPIRED = "expired"
 
 
 class PipelineTrigger(Enum):

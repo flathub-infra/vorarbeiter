@@ -1,10 +1,12 @@
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import structlog
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
@@ -45,6 +47,7 @@ DEFAULT_BUILD_TIMEOUT = timedelta(hours=6)
 EXTENDED_BUILD_TIMEOUT = timedelta(hours=9)
 BUILD_TIMEOUT_SAFETY_MARGIN = timedelta(minutes=15)
 REPROCHECK_TIMEOUT = timedelta(hours=4)
+STALE_PIPELINE_TIMEOUT = timedelta(hours=48)
 REPORTED_JOBS_KEY = "reported_flat_manager_jobs"
 
 
@@ -62,6 +65,30 @@ class JobMonitor:
         reprocheck_running_cutoff = (
             now - REPROCHECK_TIMEOUT - BUILD_TIMEOUT_SAFETY_MARGIN
         )
+
+        workflow_id = Pipeline.params["workflow_id"].as_string()
+        expired = cast(
+            CursorResult[Any],
+            await db.execute(
+                update(Pipeline)
+                .where(
+                    Pipeline.created_at < now - STALE_PIPELINE_TIMEOUT,
+                    or_(
+                        Pipeline.status == PipelineStatus.PENDING,
+                        (Pipeline.status == PipelineStatus.SUCCEEDED)
+                        & or_(
+                            workflow_id.is_(None),
+                            workflow_id == "build.yml",
+                        ),
+                        (Pipeline.status == PipelineStatus.PUBLISHING)
+                        & Pipeline.update_repo_job_id.isnot(None),
+                    ),
+                )
+                .values(status=PipelineStatus.EXPIRED)
+            ),
+        )
+        if expired.rowcount:
+            logger.warning("Expired stale pipelines", count=expired.rowcount)
 
         query = select(Pipeline).where(
             or_(
