@@ -78,7 +78,7 @@ class JobMonitor:
                         (Pipeline.status == PipelineStatus.SUCCEEDED)
                         & or_(
                             workflow_id.is_(None),
-                            workflow_id == "build.yml",
+                            workflow_id != "reprocheck.yml",
                         ),
                         (Pipeline.status == PipelineStatus.PUBLISHING)
                         & Pipeline.update_repo_job_id.isnot(None),

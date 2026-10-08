@@ -536,6 +536,9 @@ async def test_check_jobs_expires_untracked_stale_pipelines(
         (PipelineStatus.PENDING, stale, None, None): PipelineStatus.EXPIRED,
         (PipelineStatus.SUCCEEDED, stale, None, None): PipelineStatus.EXPIRED,
         (PipelineStatus.SUCCEEDED, stale, "build.yml", None): PipelineStatus.EXPIRED,
+        (PipelineStatus.SUCCEEDED, stale, "runtimecache.yml", None): (
+            PipelineStatus.EXPIRED
+        ),
         (PipelineStatus.PUBLISHING, stale, None, 7): PipelineStatus.EXPIRED,
         (PipelineStatus.SUCCEEDED, stale, "reprocheck.yml", None): (
             PipelineStatus.SUCCEEDED
