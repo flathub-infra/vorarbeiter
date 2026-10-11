@@ -51,6 +51,14 @@ class RepoState(IntEnum):
     VALIDATING = 6
 
 
+class CheckStatus(IntEnum):
+    PENDING = 0
+    PASSED = 1
+    PASSED_WITH_WARNINGS = 2
+    FAILED = 3
+    REVIEW_REQUIRED = 4
+
+
 class BuildResponse(TypedDict):
     id: int
     status: str

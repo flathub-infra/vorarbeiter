@@ -7,7 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
-from app.utils.flat_manager import PublishedState, RepoState, get_flat_manager_client
+from app.utils.flat_manager import (
+    CheckStatus,
+    PublishedState,
+    RepoState,
+    get_flat_manager_client,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -262,6 +267,9 @@ class PublishingService:
         checks = build_info.get("checks", [])
         published_state = PublishedState(build_data["published_state"])
         repo_state = RepoState(build_data["repo_state"])
+        pipeline.review_required = any(
+            check.get("status") == CheckStatus.REVIEW_REQUIRED for check in checks
+        )
 
         if published_state == PublishedState.PUBLISHED:
             if pipeline.status != PipelineStatus.PUBLISHED:

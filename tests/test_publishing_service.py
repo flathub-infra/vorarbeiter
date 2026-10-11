@@ -434,6 +434,39 @@ async def test_handle_build_state_processing(publishing_service):
 
 
 @pytest.mark.asyncio
+async def test_handle_build_state_tracks_moderation_review(publishing_service):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        status=PipelineStatus.COMMITTED,
+        build_id=123,
+        params={},
+    )
+    held = {
+        "build": {"published_state": 0, "repo_state": 6},
+        "checks": [{"check_name": "flathub-hooks", "status": 4}],
+    }
+
+    await publishing_service._handle_build_state(
+        pipeline, held, PublishResult(), datetime.now(UTC)
+    )
+
+    assert pipeline.review_required is True
+    assert pipeline.status == PipelineStatus.COMMITTED
+
+    approved = {
+        "build": {"published_state": 0, "repo_state": 2},
+        "checks": [{"check_name": "flathub-hooks", "status": 1}],
+    }
+    with patch.object(publishing_service, "_try_publish_build") as mock_publish:
+        await publishing_service._handle_build_state(
+            pipeline, approved, PublishResult(), datetime.now(UTC)
+        )
+
+    assert pipeline.review_required is False
+    mock_publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_try_publish_build_error(publishing_service):
     pipeline = Pipeline(
         id=uuid.uuid4(),

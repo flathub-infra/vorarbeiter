@@ -26,6 +26,7 @@ def mock_pipeline():
         flat_manager_repo="stable",
         created_at=datetime.now(UTC),
         repro_pipeline_id=uuid.uuid4(),
+        review_required=False,
     )
 
 
@@ -452,6 +453,7 @@ def test_pipeline_to_summary_reprocheck_type(pipeline_service):
         triggered_by=PipelineTrigger.MANUAL,
         flat_manager_repo=None,
         created_at=datetime.now(UTC),
+        review_required=False,
     )
 
     summary = pipeline_service.pipeline_to_summary(pipeline)
@@ -469,6 +471,7 @@ def test_pipeline_to_summary_build_type_explicit(pipeline_service):
         triggered_by=PipelineTrigger.MANUAL,
         flat_manager_repo="stable",
         created_at=datetime.now(UTC),
+        review_required=False,
     )
 
     summary = pipeline_service.pipeline_to_summary(pipeline)
@@ -486,6 +489,7 @@ def test_pipeline_to_summary_build_type_no_workflow_id(pipeline_service):
         triggered_by=PipelineTrigger.MANUAL,
         flat_manager_repo="stable",
         created_at=datetime.now(UTC),
+        review_required=False,
     )
 
     summary = pipeline_service.pipeline_to_summary(pipeline)

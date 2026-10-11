@@ -171,6 +171,7 @@ class PipelineService:
             reprocheck_result_url=repro_result.get("result_url")
             if isinstance(repro_result.get("result_url"), str)
             else None,
+            review_required=pipeline.review_required,
             created_at=pipeline.created_at,
             started_at=pipeline.started_at,
             finished_at=pipeline.finished_at,

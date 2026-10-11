@@ -50,6 +50,7 @@ class PipelineSummary(BaseModel):
     failure_issue_url: str | None = None
     reprocheck_status_code: str | None = None
     reprocheck_result_url: str | None = None
+    review_required: bool = False
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
