@@ -698,7 +698,7 @@ def gh():
     get_pr = AsyncMock(return_value=pr)
     status, comment = AsyncMock(return_value=True), AsyncMock(return_value=True)
     with (
-        patch.object(settings, "permission_status_channels", ["stable"]),
+        patch.object(settings, "permission_status_repos", ["stable"]),
         patch.object(permission_assessment, "get_pull_request", get_pr),
         patch.object(permission_assessment, "update_commit_status", status),
         patch.object(permission_assessment, "upsert_pr_comment", comment),
@@ -807,7 +807,7 @@ async def test_no_github_calls_without_status_channels(
     await add(db_session_maker, submitted())
 
     with (
-        patch.object(settings, "permission_status_channels", []),
+        patch.object(settings, "permission_status_repos", []),
         assessment_server("accepted"),
     ):
         await submit_pending_assessments()

@@ -4951,9 +4951,9 @@ async def test_penalty_rejected_bot_build_creates_no_explicit_pipeline(
         comment.assert_awaited_once()
 
 
-@pytest.mark.parametrize("channels, expected", [(["stable"], 1), ([], 0)])
+@pytest.mark.parametrize("repos, expected", [(["stable"], 1), ([], 0)])
 @pytest.mark.asyncio
-async def test_edited_base_posts_pending_status(db_session_maker, channels, expected):
+async def test_edited_base_posts_pending_status(db_session_maker, repos, expected):
     from starlette.requests import Request
 
     from app.routes.webhooks import receive_github_webhook
@@ -4978,7 +4978,7 @@ async def test_edited_base_posts_pending_status(db_session_maker, channels, expe
         with (
             patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
             patch("app.routes.webhooks.settings.github_webhook_secret", ""),
-            patch.object(settings, "permission_status_channels", channels),
+            patch.object(settings, "permission_status_repos", repos),
             patch(
                 "app.services.permission_assessment.update_commit_status", AsyncMock()
             ) as status,

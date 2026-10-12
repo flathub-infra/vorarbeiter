@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     flat_manager_url: str = "https://hub.flathub.org"
     permission_assessment_url: str | None = None
     permission_assessment_secret: str | None = None
-    permission_status_channels: list[str] = []
+    permission_status_repos: list[str] = []
     statuspage_url: str = "https://status.flathub.org"
     sentry_dsn: str | None = None
     ff_reprocheck_issues: bool = False
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     ff_disable_test_builds: bool = False
     ff_permission_assessment_push: bool = False
     ff_linter_review_report: bool = False
-    permission_review_integrated_channels: list[str] = []
+    permission_review_integrated_repos: list[str] = []
     max_concurrent_builds: int = 15
     test_build_failure_streak_limit: int = 3
     test_build_penalty_minutes: int = 60

@@ -260,7 +260,7 @@ def _is_candidate(pipeline: Pipeline) -> bool:
 
 def _enabled(target_branch: Any) -> bool:
     destination = _destination(target_branch) if target_branch else None
-    return bool(destination and destination[0] in settings.permission_status_channels)
+    return bool(destination and destination[0] in settings.permission_status_repos)
 
 
 async def _report(
@@ -479,7 +479,7 @@ async def submit_pending_assessments() -> dict[str, Any]:
                 await _store(db, pipeline, state)
                 counts[state["status"]] += 1
 
-            if settings.permission_status_channels:
+            if settings.permission_status_repos:
                 await _refresh_statuses(db, client)
 
     return {"status": "completed", **counts}

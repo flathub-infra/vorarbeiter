@@ -571,11 +571,11 @@ class BuildPipeline:
                 inputs["linter_review_report"] = "true"
                 from app.services.permission_assessment import _destination
 
-                channel = flat_manager_repo
+                repo = flat_manager_repo
                 if flat_manager_repo == "test":
                     target = inputs["pr_target_branch"]
-                    channel = (_destination(target) or (None,))[0]
-                if channel in settings.permission_review_integrated_channels:
+                    repo = (_destination(target) or (None,))[0]
+                if repo in settings.permission_review_integrated_repos:
                     inputs["permission_review_integrated"] = "true"
 
             if requires_flat_manager:
