@@ -1715,11 +1715,23 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 )
                 return None
 
+            async with get_db() as db:
+                last_params = await db.scalar(
+                    select(Pipeline.params)
+                    .where(
+                        Pipeline.params["repo"].as_string() == repo,
+                        Pipeline.params["ref"].as_string() == pr_ref,
+                    )
+                    .order_by(Pipeline.created_at.desc())
+                    .limit(1)
+                )
+
             params.update(
                 {
                     "pr_number": str(issue_number),
                     "ref": pr_ref,
-                    "use_spot": False,
+                    "use_spot": app_id not in app_build_types
+                    and not (last_params or {}).get("infra_cancelled"),
                     "pr_target_branch": pr_target_branch,
                 }
             )

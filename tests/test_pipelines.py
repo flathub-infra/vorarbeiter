@@ -1052,6 +1052,7 @@ async def test_handle_status_callback_test_cancelled_does_not_retry(
         )
 
     assert pipeline.status == PipelineStatus.CANCELLED
+    assert pipeline.params.get("infra_cancelled", False) is classifier_result
     mock_check_cancelled.assert_awaited_once_with(sample_pipeline.provider_data)
     mock_create.assert_not_awaited()
     notifier.handle_build_completion.assert_awaited_once_with(

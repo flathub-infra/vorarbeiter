@@ -820,6 +820,9 @@ class BuildPipeline:
                     pipeline.status = PipelineStatus.CANCELLED
                     pipeline.finished_at = datetime.now(tz=UTC)
 
+            if infrastructure_cancellation and pipeline.flat_manager_repo == "test":
+                pipeline.params = {**pipeline.params, "infra_cancelled": True}
+
             await db.commit()
 
             if (

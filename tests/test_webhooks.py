@@ -4253,7 +4253,7 @@ async def test_pr_penalty_gate(actor, app_id, paused):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("collaborator", [False, True])
-async def test_comment_penalty_gate(collaborator):
+async def test_comment_penalty_gate(collaborator, db_session_maker):
     from app.routes.webhooks import create_pipeline
     from app.services.test_build_penalty import BUILDING_LOCALLY_URL
 
@@ -4289,21 +4289,23 @@ async def test_comment_penalty_gate(collaborator):
     service.prepare_pipeline_for_start.return_value = pipeline
     service.start_pipeline.return_value = pipeline
     service.should_queue_test_build.return_value = False
-    with (
-        patch("app.routes.webhooks.get_github_client", return_value=github),
-        patch(
-            "app.routes.webhooks.get_penalty_until",
-            AsyncMock(return_value=datetime(2026, 9, 26, 13, 0, tzinfo=UTC)),
-        ),
-        patch(
-            "app.routes.webhooks.validate_retry_permissions",
-            AsyncMock(return_value=collaborator),
-        ) as permissions,
-        patch("app.routes.webhooks.BuildPipeline", return_value=service),
-        patch("app.routes.webhooks.update_commit_status", AsyncMock()),
-        patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as comment,
-    ):
-        result = await create_pipeline(event)
+    async with db_session_maker() as db:
+        with (
+            patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
+            patch("app.routes.webhooks.get_github_client", return_value=github),
+            patch(
+                "app.routes.webhooks.get_penalty_until",
+                AsyncMock(return_value=datetime(2026, 9, 26, 13, 0, tzinfo=UTC)),
+            ),
+            patch(
+                "app.routes.webhooks.validate_retry_permissions",
+                AsyncMock(return_value=collaborator),
+            ) as permissions,
+            patch("app.routes.webhooks.BuildPipeline", return_value=service),
+            patch("app.routes.webhooks.update_commit_status", AsyncMock()),
+            patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as comment,
+        ):
+            result = await create_pipeline(event)
 
     permissions.assert_awaited_once_with(event.repository, "contributor")
     if collaborator:
@@ -4819,8 +4821,17 @@ async def test_synchronize_refreshes_explicit_request_before_filters(
 
 
 @pytest.mark.asyncio
-async def test_explicit_bot_build_persists_debounced_non_spot_pipeline(
-    db_session_maker,
+@pytest.mark.parametrize(
+    ("large_app", "previous_params", "expected_spot"),
+    [
+        (False, None, True),
+        (True, None, False),
+        (False, {"infra_cancelled": True}, False),
+        (False, {}, True),
+    ],
+)
+async def test_explicit_bot_build_persists_debounced_pipeline(
+    db_session_maker, large_app, previous_params, expected_spot
 ):
     from sqlalchemy import select
 
@@ -4852,8 +4863,25 @@ async def test_explicit_bot_build_persists_debounced_non_spot_pipeline(
 
     async with db_session_maker() as db:
         db.add(event)
+        if previous_params is not None:
+            db.add(
+                Pipeline(
+                    app_id="test-repo",
+                    status=PipelineStatus.CANCELLED,
+                    params={
+                        "repo": repo,
+                        "ref": "refs/pull/42/head",
+                        **previous_params,
+                    },
+                    flat_manager_repo="test",
+                )
+            )
         await db.commit()
         with (
+            patch(
+                "app.routes.webhooks.app_build_types",
+                {"test-repo": "large"} if large_app else {},
+            ),
             patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
             patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
             patch("app.pipelines.build.get_db", create_mock_get_db(db)),
@@ -4883,7 +4911,7 @@ async def test_explicit_bot_build_persists_debounced_non_spot_pipeline(
         assert pipeline.params["sha"] == "a" * 40
         assert pipeline.params["start_after"] > 0
         assert pipeline.params["explicit_pr_build"] is True
-        assert pipeline.params["use_spot"] is False
+        assert pipeline.params["use_spot"] is expected_spot
         status.assert_awaited_once()
         comment.assert_awaited_once()
         provider.dispatch.assert_not_awaited()
