@@ -282,6 +282,19 @@ upload url:
     set -euxo pipefail
     flat-manager-client push "{{url}}" repo
 
+prune-cache app_id:
+    #!/usr/bin/env bash
+    set -euxo pipefail
+    manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
+    checksums=$(flatpak-builder --show-manifest "$manifest" | jq -r '.. | objects | (.md5, .sha1, .sha256, .sha512) | strings')
+    for dir in .flatpak-builder/downloads/*/; do
+        [ -d "$dir" ] || continue
+        grep -qxF "$(basename "$dir")" <<< "$checksums" || rm -rf "$dir"
+    done
+    if [ -d .flatpak-builder/ccache ]; then
+        find .flatpak-builder/ccache -type f ! -newer .ccache-marker -delete
+    fi
+
 show-runtime app_id:
     #!/usr/bin/env bash
     set -euxo pipefail

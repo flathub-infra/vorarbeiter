@@ -581,6 +581,8 @@ jobs:
             fi
           done
 
+          echo "CACHE_SIZE_MAX=$SIZE_MAX" >> $GITHUB_ENV
+
           echo "Image size: $SIZE bytes"
 
           if [ "$SIZE" -gt "$SIZE_MAX" ]; then
@@ -622,6 +624,7 @@ jobs:
 
       - name: Build
         run: |
+          touch "${GITHUB_WORKSPACE}/work/.ccache-marker"
           docker run --rm \
             --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
             --security-opt apparmor=unconfined \
@@ -708,6 +711,24 @@ jobs:
               break
             fi
           done
+
+          docker run --rm \
+            --security-opt apparmor=unconfined \
+            --security-opt seccomp=${GITHUB_WORKSPACE}/flatpak.seccomp.json \
+            --entrypoint="" \
+            -e TMPDIR=/work/tmp \
+            -v "${GITHUB_WORKSPACE}/work:/work" \
+            -w /work \
+            -e APP_ID \
+            ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+            just -f .flathub.justfile prune-cache $APP_ID || exit 0
+
+          SIZE=$(du -sb .flatpak-builder | cut -f1)
+          echo "Cache size: $SIZE bytes"
+          if [ "$SIZE" -gt "${CACHE_SIZE_MAX:-0}" ]; then
+            echo "Cache exceeds ${CACHE_SIZE_MAX:-0} bytes. Skipping upload"
+            exit 0
+          fi
 
           app_id_lc=${APP_ID,,}
           oras login ghcr.io --password "${{ secrets.GITHUB_TOKEN }}" -u "${{ github.actor }}" || exit 0
