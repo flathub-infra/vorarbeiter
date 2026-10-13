@@ -458,3 +458,78 @@ async def test_reprocheck_callback_commits_before_starting_pending_builds(
     assert original.status == PipelineStatus.PUBLISHED
     assert original.repro_pipeline_id is None
     assert reprocheck.params["reprocheck_result"]["status_code"] == "0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auto_retried", [False, True])
+async def test_reprocheck_infrastructure_cancellation_retries_on_demand_once(
+    db_session_maker, auto_retried
+):
+    original_pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PUBLISHED,
+        params={},
+        flat_manager_repo="stable",
+        callback_token="original-token",
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.MANUAL,
+        provider_data={},
+    )
+    params = {
+        "workflow_id": "reprocheck.yml",
+        "build_pipeline_id": str(original_pipeline.id),
+        "build_type": "medium",
+        **({"auto_retried": True, "use_spot": False} if auto_retried else {}),
+    }
+    reprocheck_pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id=original_pipeline.app_id,
+        status=PipelineStatus.RUNNING,
+        params=params,
+        callback_token="reprocheck-token",
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.MANUAL,
+        provider_data={},
+    )
+    async with db_session_maker() as session:
+        session.add_all([original_pipeline, reprocheck_pipeline])
+        await session.commit()
+
+    with (
+        patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled",
+            AsyncMock(return_value=True),
+        ),
+        patch.object(
+            BuildPipeline, "start_pipeline", new_callable=AsyncMock
+        ) as start_pipeline,
+    ):
+        start_pipeline.side_effect = lambda pipeline_id: Pipeline(id=pipeline_id)
+        pipeline, updates = await BuildPipeline().handle_reprocheck_callback(
+            reprocheck_pipeline.id,
+            {"status": "failure", "build_pipeline_id": str(original_pipeline.id)},
+        )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    assert updates["pipeline_status"] == "cancelled"
+    async with db_session_maker() as session:
+        retries = list(
+            await session.scalars(
+                select(Pipeline).where(
+                    Pipeline.id.not_in([original_pipeline.id, reprocheck_pipeline.id])
+                )
+            )
+        )
+
+    if auto_retried:
+        assert retries == []
+        start_pipeline.assert_not_awaited()
+    else:
+        assert len(retries) == 1
+        assert retries[0].params == {
+            **params,
+            "auto_retried": True,
+            "use_spot": False,
+        }
+        start_pipeline.assert_awaited_once_with(pipeline_id=retries[0].id)

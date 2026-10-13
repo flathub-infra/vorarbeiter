@@ -772,6 +772,46 @@ class BuildPipeline:
 
             return pipeline, updates
 
+    async def _detect_infrastructure_cancellation(
+        self, pipeline: Pipeline, status_value: str
+    ) -> bool:
+        if status_value not in ["failure", "cancelled"]:
+            return False
+        try:
+            return await GitHubActionsService().check_run_was_cancelled(
+                pipeline.provider_data
+            )
+        except Exception as e:
+            logger.exception(
+                "Failed to check if build was cancelled",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
+            return False
+
+    async def _auto_retry_on_demand(self, pipeline: Pipeline) -> bool:
+        try:
+            retry_pipeline = await self.create_pipeline(
+                app_id=pipeline.app_id,
+                params={**pipeline.params, "auto_retried": True, "use_spot": False},
+                webhook_event_id=pipeline.webhook_event_id,
+            )
+            retry_pipeline = await self.start_pipeline(pipeline_id=retry_pipeline.id)
+        except Exception as e:
+            logger.exception(
+                "Failed to auto-retry cancelled build",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
+            return False
+        logger.info(
+            "Auto-retrying cancelled build",
+            original_pipeline_id=str(pipeline.id),
+            retry_pipeline_id=str(retry_pipeline.id),
+            flat_manager_repo=pipeline.flat_manager_repo,
+        )
+        return True
+
     async def handle_status_callback(
         self,
         pipeline_id: uuid.UUID,
@@ -786,21 +826,9 @@ class BuildPipeline:
 
             updates: dict[str, Any] = {}
 
-            infrastructure_cancellation = False
-            if status_value in ["failure", "cancelled"]:
-                github_actions = GitHubActionsService()
-                try:
-                    infrastructure_cancellation = (
-                        await github_actions.check_run_was_cancelled(
-                            pipeline.provider_data
-                        )
-                    )
-                except Exception as e:
-                    logger.exception(
-                        "Failed to check if build was cancelled",
-                        pipeline_id=str(pipeline_id),
-                        error=str(e),
-                    )
+            infrastructure_cancellation = (
+                await self._detect_infrastructure_cancellation(pipeline, status_value)
+            )
 
             match status_value:
                 case "success":
@@ -830,34 +858,10 @@ class BuildPipeline:
                 infrastructure_cancellation
                 and pipeline.flat_manager_repo in ["stable", "beta"]
                 and not pipeline.params.get("auto_retried")
+                and await self._auto_retry_on_demand(pipeline)
             ):
-                retry_params = pipeline.params.copy()
-                retry_params["auto_retried"] = True
-                retry_params["use_spot"] = False
-
-                try:
-                    retry_pipeline = await self.create_pipeline(
-                        app_id=pipeline.app_id,
-                        params=retry_params,
-                        webhook_event_id=pipeline.webhook_event_id,
-                    )
-                    retry_pipeline = await self.start_pipeline(
-                        pipeline_id=retry_pipeline.id
-                    )
-                    logger.info(
-                        "Auto-retrying cancelled build",
-                        original_pipeline_id=str(pipeline_id),
-                        retry_pipeline_id=str(retry_pipeline.id),
-                        flat_manager_repo=pipeline.flat_manager_repo,
-                    )
-                    await self.start_pending_builds()
-                    return pipeline, updates
-                except Exception as e:
-                    logger.exception(
-                        "Failed to auto-retry cancelled build",
-                        pipeline_id=str(pipeline_id),
-                        error=str(e),
-                    )
+                await self.start_pending_builds()
+                return pipeline, updates
             if (
                 status_value == "success"
                 and pipeline.params.get("workflow_id", "build.yml") == "build.yml"
@@ -928,6 +932,16 @@ class BuildPipeline:
             pipeline, parsed_data, status_value = await _validate_and_prepare_callback(
                 ReprocheckCallbackValidator, callback_data, pipeline_id, db
             )
+
+            if await self._detect_infrastructure_cancellation(pipeline, status_value):
+                status_value = "cancelled"
+                if not pipeline.params.get("auto_retried"):
+                    pipeline.status = PipelineStatus.CANCELLED
+                    pipeline.finished_at = datetime.now(tz=UTC)
+                    await db.commit()
+                    if await self._auto_retry_on_demand(pipeline):
+                        await self.start_pending_builds()
+                        return pipeline, {"pipeline_status": status_value}
 
             reprocheck_result = {}
             if parsed_data.status_code is not None:
