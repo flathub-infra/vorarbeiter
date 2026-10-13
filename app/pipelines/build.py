@@ -76,10 +76,11 @@ async def get_app_p90_build_time(db: AsyncSession, app_id: str) -> float | None:
         ) as p90_min
         FROM pipeline
         WHERE app_id = :app_id
-          AND status = 'published'
+          AND status IN ('published', 'succeeded', 'committed', 'publishing')
           AND finished_at IS NOT NULL
           AND started_at IS NOT NULL
           AND (params->>'build_type' IS NULL OR params->>'build_type' != 'large')
+          AND (params->>'workflow_id' IS NULL OR params->>'workflow_id' != 'reprocheck.yml')
           AND started_at > NOW() - INTERVAL '1 day' * :lookback_days
         HAVING COUNT(*) >= :min_builds
     """)
