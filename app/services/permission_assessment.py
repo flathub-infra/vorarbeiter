@@ -38,6 +38,14 @@ STATUSES = {
     "not_applicable": ("success", "No application permissions to review"),
     "target_changed": ("pending", "Target branch changed; reassessing"),
 }
+COMMENTS = {
+    "accepted": "The permissions in this pull request are approved.",
+    "pending": "This pull request changes the app's permissions. "
+    "A Flathub moderator will review the changes.",
+    "rejected": "A Flathub moderator rejected the permission changes "
+    "in this pull request.",
+    "error": "Flathub could not check the permissions of this build.",
+}
 ASSESSMENT_FIELDS = [
     "assessment_id",
     "outcome",
@@ -276,11 +284,11 @@ async def _report(
     status, description = STATUSES[outcome]
     repo, head = request["source_repository"], request["pull_request_head_revision"]
     ok = await update_commit_status(
-        head, status, repo, url, description, STATUS_CONTEXT
+        head, status, repo, None, description, STATUS_CONTEXT
     )
-    if ok and outcome in ("accepted", "pending", "rejected", "error"):
-        body = [COMMENT_MARKER, f"**Flathub permission review: {description}**", ""]
-        body += [f"Commit: `{head[:12]}`"] + ([f"Review: {url}"] if url else [])
+    if ok and outcome in COMMENTS:
+        body = [COMMENT_MARKER, COMMENTS[outcome], ""]
+        body += ["This check does not block merging."]
         ok = await upsert_pr_comment(
             repo,
             request["pull_request_number"],

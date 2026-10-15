@@ -742,8 +742,9 @@ async def test_reports_outcome_once(
         await submit_pending_assessments()
 
     gh.status.assert_awaited_once()
-    assert gh.status.await_args.args[:2] == (HEAD, state)
+    assert gh.status.await_args.args[:4] == (HEAD, state, "flathub/org.test.App", None)
     gh.comment.assert_awaited_once()
+    assert REVIEW_URL not in gh.comment.await_args.args[3]
     assert gh.comment.await_args.args[4] is creates_comment
 
 
