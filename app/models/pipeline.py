@@ -5,10 +5,10 @@ from enum import Enum
 from typing import Any
 
 import sqlalchemy
-from sqlalchemy import JSON, ForeignKey, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import JSON, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.webhook_event import Base
+from app.models.base import Base
 
 
 class PipelineStatus(Enum):
@@ -62,10 +62,7 @@ class Pipeline(Base):
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
-    webhook_event_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("webhookevent.id"), nullable=True, index=True
-    )
-    webhook_event = relationship("WebhookEvent", backref="pipelines")
+    actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     log_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     build_id: Mapped[int | None] = mapped_column(nullable=True)

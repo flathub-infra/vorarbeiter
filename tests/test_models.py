@@ -1,4 +1,3 @@
-import uuid
 from datetime import UTC, datetime
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
@@ -18,7 +17,6 @@ def test_pipeline_model_creation():
     assert pipeline.params == {"commit": "abc123"}
     assert pipeline.status == PipelineStatus.PENDING
     assert pipeline.triggered_by == PipelineTrigger.WEBHOOK
-    assert pipeline.webhook_event_id is None
     assert pipeline.created_at is not None
     assert pipeline.started_at is None
     assert pipeline.finished_at is None
@@ -39,14 +37,13 @@ def test_pipeline_model_with_manual_trigger():
 def test_pipeline_model_with_full_parameters():
     """Test Pipeline model creation with all parameters."""
     now = datetime.now(UTC)
-    webhook_id = uuid.uuid4()
 
     pipeline = Pipeline(
         app_id="org.flathub.Test",
         params={"commit": "abc123", "repo": "stable"},
         status=PipelineStatus.RUNNING,
         triggered_by=PipelineTrigger.WEBHOOK,
-        webhook_event_id=webhook_id,
+        actor="contributor",
         created_at=now,
         started_at=now,
     )
@@ -55,7 +52,7 @@ def test_pipeline_model_with_full_parameters():
     assert pipeline.params == {"commit": "abc123", "repo": "stable"}
     assert pipeline.status == PipelineStatus.RUNNING
     assert pipeline.triggered_by == PipelineTrigger.WEBHOOK
-    assert pipeline.webhook_event_id == webhook_id
+    assert pipeline.actor == "contributor"
     assert pipeline.created_at == now
     assert pipeline.started_at == now
     assert pipeline.finished_at is None

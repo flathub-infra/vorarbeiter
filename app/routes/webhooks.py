@@ -5,6 +5,7 @@ import json
 import re
 import uuid
 from contextlib import nullcontext
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,13 +13,12 @@ import httpx2 as httpx
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.database import get_db
 from app.models import InactiveRepoSnapshot
 from app.models.pipeline import Pipeline, PipelineStatus, PipelineTrigger
-from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.pipelines.build import (
     PR_BUILD_DEBOUNCE_SECONDS,
     BuildPipeline,
@@ -52,6 +52,15 @@ from app.utils.github import (
 logger = structlog.get_logger(__name__)
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+
+@dataclass(frozen=True)
+class WebhookEvent:
+    id: uuid.UUID
+    payload: dict[str, Any]
+    repository: str
+    actor: str
+
 
 BUILD_FAILURE_PATTERN = re.compile(
     r"The (stable|beta) build pipeline for `.+?` failed\.\s*\n"
@@ -230,7 +239,6 @@ async def refresh_pending_explicit_pr_build(
             pipeline.params = params
             await notify_debounced_pr_build(pipeline)
 
-        db.add(event)
         await db.commit()
         return pipeline.id
 
@@ -463,7 +471,6 @@ async def handle_issue_retry(
     issue_number: int,
     issue_body: str,
     comment_author: str,
-    webhook_event_id: uuid.UUID,
 ) -> uuid.UUID | None:
     if "/" not in git_repo:
         logger.warning(
@@ -553,7 +560,7 @@ async def handle_issue_retry(
         pipeline = await pipeline_service.create_pipeline(
             app_id=build_params["app_id"],
             params=build_params,
-            webhook_event_id=webhook_event_id,
+            actor=comment_author,
         )
 
         target_url = f"{settings.base_url}/api/pipelines/{pipeline.id}"
@@ -1111,6 +1118,21 @@ async def is_runtime_update_pr(payload: dict[str, Any]) -> bool:
     return False
 
 
+async def push_already_built(repository: str, ref: str, sha: str | None) -> bool:
+    async with get_db() as db:
+        latest_sha = await db.scalar(
+            select(Pipeline.params["sha"].as_string())
+            .where(
+                Pipeline.app_id == repository.split("/", 1)[-1],
+                Pipeline.params["repo"].as_string() == repository,
+                Pipeline.params["ref"].as_string() == ref,
+            )
+            .order_by(Pipeline.created_at.desc())
+            .limit(1)
+        )
+    return sha is not None and latest_sha == sha
+
+
 @webhooks_router.post(
     "/github",
     status_code=status.HTTP_202_ACCEPTED,
@@ -1194,7 +1216,6 @@ async def receive_github_webhook(
 
     event = WebhookEvent(
         id=delivery_id,
-        source=WebhookSource.GITHUB,
         payload=payload,
         repository=repo_name,
         actor=actor_login,
@@ -1329,11 +1350,9 @@ async def receive_github_webhook(
     pipeline_id = None
     if should_store_event(payload):
         try:
-            try:
-                async with get_db() as db:
-                    db.add(event)
-                    await db.commit()
-            except IntegrityError:
+            if is_push_event and await push_already_built(
+                repo_name, payload["ref"], payload.get("after")
+            ):
                 logger.info(
                     "Webhook delivery already received",
                     event_id=str(event.id),
@@ -1770,7 +1789,6 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                 issue_number=issue_number,
                 issue_body=issue_body,
                 comment_author=comment_author,
-                webhook_event_id=event.id,
             )
 
             return retry_pipeline_id
@@ -1848,7 +1866,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
     pipeline = await pipeline_service.create_pipeline(
         app_id=app_id,
         params=params,
-        webhook_event_id=event.id,
+        actor=event.actor,
     )
     pipeline = await pipeline_service.prepare_pipeline_for_start(pipeline.id)
     if pipeline.status != PipelineStatus.PENDING:

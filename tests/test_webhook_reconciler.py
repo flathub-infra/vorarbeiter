@@ -1,4 +1,3 @@
-import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
@@ -7,7 +6,6 @@ import httpx2 as httpx
 import pytest
 
 from app.models import Pipeline, PipelineTrigger
-from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.services.webhook_reconciler import MAX_ATTEMPTS, WebhookDeliveryReconciler
 from app.utils.github import GitHubAPIResult
 
@@ -105,7 +103,7 @@ def db(db_session_maker):
         async with db_session_maker() as session:
             yield session
 
-    with patch("app.services.webhook_reconciler.get_db", get_db):
+    with patch("app.routes.webhooks.get_db", get_db):
         yield db_session_maker
 
 
@@ -150,27 +148,6 @@ async def test_guid_with_successful_redelivery_is_ignored(db, sentry):
     result = await reconcile(github)
 
     assert result.failed_push_deliveries == 0
-    assert github.redeliveries == []
-
-
-@pytest.mark.asyncio
-async def test_already_stored_event_is_skipped(db, sentry):
-    async with db() as session:
-        session.add(
-            WebhookEvent(
-                id=uuid.UUID(GUID),
-                source=WebhookSource.GITHUB,
-                payload=push_payload(),
-                repository="flathub/dev.dergs.Tonearm",
-                actor="nilathedragon",
-            )
-        )
-        await session.commit()
-    github = FakeGitHub(failed=[delivery(1)])
-
-    result = await reconcile(github)
-
-    assert result.already_stored == [GUID]
     assert github.redeliveries == []
 
 

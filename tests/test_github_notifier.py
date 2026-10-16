@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
 
@@ -964,20 +963,12 @@ async def test_failure_comment_penalty_notice(
     now = datetime.now(UTC)
     async with db_session_maker() as db:
         for index in range(failures):
-            event = WebhookEvent(
-                source=WebhookSource.GITHUB,
-                repository="flathub/org.test.App",
-                actor="contributor",
-                payload={},
-            )
-            db.add(event)
-            await db.flush()
             pipeline = Pipeline(
                 app_id="org.test.App",
                 params={"repo": "flathub/org.test.App", "pr_number": "42"},
                 flat_manager_repo="test",
                 status=PipelineStatus.FAILED,
-                webhook_event_id=event.id,
+                actor="contributor",
                 created_at=now + timedelta(seconds=index),
                 finished_at=now,
                 log_url=None,

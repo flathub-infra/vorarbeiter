@@ -5,7 +5,6 @@ import pytest
 
 from app.config import settings
 from app.models.pipeline import Pipeline, PipelineStatus
-from app.models.webhook_event import WebhookEvent, WebhookSource
 from app.services.test_build_penalty import get_penalty_until, is_penalty_exempt
 
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
@@ -23,14 +22,6 @@ async def add_builds(
 ):
     async with db_session_maker() as db:
         for index, status in enumerate(statuses):
-            event = WebhookEvent(
-                source=WebhookSource.GITHUB,
-                repository=repo,
-                actor=(actors or {}).get(index, "contributor"),
-                payload={},
-            )
-            db.add(event)
-            await db.flush()
             finished = NOW - timedelta(minutes=age + len(statuses) - 1 - index)
             db.add(
                 Pipeline(
@@ -38,7 +29,7 @@ async def add_builds(
                     params={"repo": repo, "pr_number": str(pr)},
                     flat_manager_repo="test",
                     status=status,
-                    webhook_event_id=event.id,
+                    actor=(actors or {}).get(index, "contributor"),
                     created_at=finished,
                     finished_at=finished,
                 )

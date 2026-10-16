@@ -2,21 +2,21 @@ import hashlib
 import hmac
 import json
 import uuid
-from datetime import UTC, datetime
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import httpx2 as httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.main import app
 from app.models import InactiveRepoSnapshot, Pipeline, PipelineStatus, PipelineTrigger
-from app.models.webhook_event import WebhookEvent, WebhookSource
-from app.routes.webhooks import is_submodule_only_pr
+from app.routes.webhooks import WebhookEvent, is_submodule_only_pr
 from tests.conftest import MockHttpxClient, create_mock_get_db
 
 # Sample GitHub payloads (simplified)
@@ -201,17 +201,29 @@ def test_receive_github_webhook_success(client: TestClient, mock_db):
         assert response_data["message"] == "Webhook received"
         assert response_data["event_id"] == delivery_id
 
-        assert mock_db.add.called
-        assert mock_db.commit.called
 
-
-def test_receive_github_webhook_redelivery_is_idempotent(client: TestClient, mock_db):
+@pytest.mark.asyncio
+async def test_receive_github_webhook_redelivery_is_idempotent(
+    client: TestClient, db_session_maker
+):
     delivery_id = str(uuid.uuid4())
-    mock_db.commit.side_effect = IntegrityError("INSERT", {}, Exception("duplicate"))
-    create_pipeline = AsyncMock()
+    params = {
+        "repo": "test-owner/test-repo",
+        "ref": SAMPLE_PUSH_PAYLOAD["ref"],
+        "sha": SAMPLE_PUSH_PAYLOAD["after"],
+    }
+    async with db_session_maker() as db:
+        db.add(Pipeline(app_id="test-repo", params=params))
+        await db.commit()
 
+    @asynccontextmanager
+    async def get_db(*, use_replica: bool = False):
+        async with db_session_maker() as db:
+            yield db
+
+    create_pipeline = AsyncMock(return_value=None)
     with (
-        patch("app.routes.webhooks.get_db", create_mock_get_db(mock_db)),
+        patch("app.routes.webhooks.get_db", get_db),
         patch("app.routes.webhooks.settings.github_webhook_secret", ""),
         patch("app.routes.webhooks.create_pipeline", create_pipeline),
     ):
@@ -229,8 +241,61 @@ def test_receive_github_webhook_redelivery_is_idempotent(client: TestClient, moc
     create_pipeline.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_receive_github_webhook_rebuilds_when_ref_moves_back(
+    client: TestClient, db_session_maker
+):
+    delivery_id = str(uuid.uuid4())
+    params = {
+        "repo": "test-owner/test-repo",
+        "ref": SAMPLE_PUSH_PAYLOAD["ref"],
+        "sha": SAMPLE_PUSH_PAYLOAD["after"],
+    }
+    now = datetime.now(UTC)
+    async with db_session_maker() as db:
+        db.add(
+            Pipeline(
+                app_id="test-repo",
+                params=params,
+                created_at=now - timedelta(seconds=1),
+            )
+        )
+        db.add(
+            Pipeline(
+                app_id="test-repo",
+                params={**params, "sha": "d" * 40},
+                created_at=now,
+            )
+        )
+        await db.commit()
+
+    @asynccontextmanager
+    async def get_db(*, use_replica: bool = False):
+        async with db_session_maker() as db:
+            yield db
+
+    create_pipeline = AsyncMock(return_value=None)
+    with (
+        patch("app.routes.webhooks.get_db", get_db),
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch("app.routes.webhooks.create_pipeline", create_pipeline),
+    ):
+        response = client.post(
+            "/api/webhooks/github",
+            json=SAMPLE_PUSH_PAYLOAD,
+            headers={"X-GitHub-Delivery": delivery_id},
+        )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "message": "Webhook received",
+        "event_id": delivery_id,
+    }
+    create_pipeline.assert_awaited_once()
+
+
 def test_receive_github_webhook_database_error_is_500(client: TestClient, mock_db):
-    mock_db.commit.side_effect = OperationalError("INSERT", {}, Exception("down"))
+    mock_db.scalar.side_effect = OperationalError("SELECT", {}, Exception("down"))
     create_pipeline = AsyncMock()
 
     with (
@@ -1281,7 +1346,6 @@ async def test_handle_eol_only_push_republish():
 
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload={},
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1322,7 +1386,6 @@ async def test_create_pipeline_pr(db_session_maker):
     pipeline_id = uuid.uuid4()
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_GITHUB_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1337,7 +1400,6 @@ async def test_create_pipeline_pr(db_session_maker):
             "sha": "a" * 40,
             "start_after": 1,
         },
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
 
@@ -1386,7 +1448,6 @@ async def test_create_pipeline_push():
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=modified_payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1396,7 +1457,6 @@ async def test_create_pipeline_push():
         id=pipeline_id,
         app_id="org.flathub.test-repo",
         params={},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
 
@@ -1461,7 +1521,6 @@ async def test_create_pipeline_comment(db_session_maker):
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=comment_payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1471,7 +1530,6 @@ async def test_create_pipeline_comment(db_session_maker):
         id=pipeline_id,
         app_id="org.flathub.test-repo",
         params={},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
 
@@ -1545,7 +1603,6 @@ async def test_create_pipeline_bot_build_debounce_skips_org_members(
     }
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=comment_payload,
         repository="test-owner/test-repo",
         actor="test-user",
@@ -1554,7 +1611,6 @@ async def test_create_pipeline_bot_build_debounce_skips_org_members(
         id=uuid.uuid4(),
         app_id="test-repo",
         params={},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
     service = AsyncMock()
@@ -1604,7 +1660,6 @@ async def test_create_pipeline_debounces_spot_pr_request_before_capacity_check(
     pipeline_id = uuid.uuid4()
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_GITHUB_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1620,7 +1675,6 @@ async def test_create_pipeline_debounces_spot_pr_request_before_capacity_check(
             "build_type": "medium",
             "start_after": 1,
         },
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
         flat_manager_repo="test",
     )
@@ -1660,7 +1714,6 @@ async def test_create_pipeline_debounces_default_pr_build_at_capacity(
     pipeline_id = uuid.uuid4()
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_GITHUB_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1677,7 +1730,6 @@ async def test_create_pipeline_debounces_default_pr_build_at_capacity(
             "build_type": "default",
             "start_after": 1,
         },
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
         flat_manager_repo="test",
     )
@@ -1719,7 +1771,6 @@ async def test_debounced_pr_notification_continues_after_status_failure(
 ):
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_GITHUB_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1734,7 +1785,6 @@ async def test_debounced_pr_notification_continues_after_status_failure(
             "ref": "refs/pull/123/head",
             "start_after": 1,
         },
-        webhook_event_id=event.id,
         status=PipelineStatus.PENDING,
         flat_manager_repo="test",
     )
@@ -1774,7 +1824,6 @@ async def test_create_pipeline_starts_stable_build_even_at_capacity():
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=modified_payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1789,7 +1838,6 @@ async def test_create_pipeline_starts_stable_build_even_at_capacity():
             "ref": "refs/heads/master",
             "build_type": "medium",
         },
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
         flat_manager_repo="stable",
     )
@@ -1860,9 +1908,6 @@ async def test_receive_webhook_creates_pipeline(client, mock_db):
         assert response_data["event_id"] == delivery_id
         assert response_data["pipeline_id"] == str(pipeline_id)
 
-        assert mock_db.add.called
-        assert mock_db.commit.called
-
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -1890,7 +1935,6 @@ async def test_create_pipeline_admin_ping(flag_enabled, should_post):
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=comment_payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1934,7 +1978,6 @@ async def test_create_pipeline_disable_test_builds_pr(flag_enabled, db_session_m
     pipeline_id = uuid.uuid4()
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_GITHUB_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -1944,7 +1987,6 @@ async def test_create_pipeline_disable_test_builds_pr(flag_enabled, db_session_m
         id=pipeline_id,
         app_id="org.flathub.test-repo",
         params={},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
 
@@ -2018,7 +2060,6 @@ async def test_create_pipeline_disable_test_builds_bot_build(
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=comment_payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -2029,7 +2070,6 @@ async def test_create_pipeline_disable_test_builds_bot_build(
         id=pipeline_id,
         app_id="org.flathub.test-repo",
         params={},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
     mock_pipeline_service = AsyncMock()
@@ -2435,7 +2475,6 @@ async def test_validate_retry_permissions_denied(mock_httpx):
 async def test_handle_issue_retry_success():
     from app.routes.webhooks import handle_issue_retry
 
-    event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
 
     mock_pipeline = Pipeline(
@@ -2477,7 +2516,6 @@ async def test_handle_issue_retry_success():
             issue_number=123,
             issue_body=SAMPLE_ISSUE_BODY_STABLE,
             comment_author="test-user",
-            webhook_event_id=event_id,
         )
 
         assert result == pipeline_id
@@ -2492,8 +2530,6 @@ async def test_handle_issue_retry_success():
 @pytest.mark.asyncio
 async def test_handle_issue_retry_permission_denied():
     from app.routes.webhooks import handle_issue_retry
-
-    event_id = uuid.uuid4()
 
     with (
         patch("app.routes.webhooks.validate_retry_permissions", return_value=False),
@@ -2510,7 +2546,6 @@ async def test_handle_issue_retry_permission_denied():
             issue_number=123,
             issue_body=SAMPLE_ISSUE_BODY_STABLE,
             comment_author="unauthorized-user",
-            webhook_event_id=event_id,
         )
 
         assert result is None
@@ -2568,7 +2603,6 @@ async def test_handle_issue_retry_build_rejection_requires_org_member(org_member
             issue_number=93,
             issue_body=rejection_issue_body(324427, uuid.uuid4()),
             comment_author="maintainer",
-            webhook_event_id=uuid.uuid4(),
         )
 
     is_org_member.assert_awaited_once_with("flathub", "maintainer")
@@ -2586,7 +2620,6 @@ async def test_handle_issue_retry_build_rejection_requires_org_member(org_member
 async def test_handle_issue_retry_prefers_tracked_failure_metadata():
     from app.routes.webhooks import handle_issue_retry
 
-    event_id = uuid.uuid4()
     pipeline_id = uuid.uuid4()
     mock_pipeline = Pipeline(
         id=pipeline_id,
@@ -2629,7 +2662,6 @@ async def test_handle_issue_retry_prefers_tracked_failure_metadata():
             issue_number=123,
             issue_body="Legacy body with stale metadata",
             comment_author="test-user",
-            webhook_event_id=event_id,
         )
 
     assert result == pipeline_id
@@ -2663,7 +2695,6 @@ async def test_handle_issue_retry_edited_issue_aborts_before_lookup():
             issue_number=123,
             issue_body=SAMPLE_ISSUE_BODY_STABLE,
             comment_author="test-user",
-            webhook_event_id=uuid.uuid4(),
         )
 
     assert result is None
@@ -2677,7 +2708,6 @@ async def test_handle_issue_retry_edited_issue_aborts_before_lookup():
 async def test_handle_issue_retry_invalid_issue():
     from app.routes.webhooks import handle_issue_retry
 
-    event_id = uuid.uuid4()
     invalid_body = "This is not a build failure issue."
 
     with (
@@ -2695,7 +2725,6 @@ async def test_handle_issue_retry_invalid_issue():
             issue_number=123,
             issue_body=invalid_body,
             comment_author="test-user",
-            webhook_event_id=event_id,
         )
 
         assert result is None
@@ -2740,7 +2769,6 @@ async def test_create_pipeline_pr_closed_state(db_session_maker):
     event_id = uuid.uuid4()
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_CLOSED_PR_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -2774,7 +2802,6 @@ async def test_create_pipeline_pr_opened_closed_state():
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=closed_pr_payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -2810,7 +2837,6 @@ async def test_create_pipeline_pr_reopened_closed_state():
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=closed_pr_payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -2842,7 +2868,6 @@ async def test_create_pipeline_bot_build_closed_pr():
     event_id = uuid.uuid4()
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_COMMENT_CLOSED_PR_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -2893,7 +2918,6 @@ async def test_create_pipeline_bot_build_merged_pr():
     event_id = uuid.uuid4()
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_COMMENT_CLOSED_PR_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -2945,7 +2969,6 @@ async def test_create_pipeline_bot_build_open_pr_continues(db_session_maker):
     pipeline_id = uuid.uuid4()
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_COMMENT_CLOSED_PR_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -2955,7 +2978,6 @@ async def test_create_pipeline_bot_build_open_pr_continues(db_session_maker):
         id=pipeline_id,
         app_id="test-repo",
         params={"pr_number": "42", "ref": "refs/pull/42/head"},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
 
@@ -3010,7 +3032,6 @@ async def test_handle_eol_only_push_beta_ref():
 
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload={},
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3041,7 +3062,6 @@ async def test_handle_eol_only_push_branch_ref():
 
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload={},
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3074,7 +3094,6 @@ async def test_handle_eol_only_push_non_production_ref():
 
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload={},
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3116,7 +3135,6 @@ async def test_republish_http_error():
 
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload={},
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3194,7 +3212,6 @@ async def test_create_pipeline_bot_cancel_active_pipelines():
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_BOT_CANCEL_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3204,7 +3221,6 @@ async def test_create_pipeline_bot_cancel_active_pipelines():
         id=pipeline_id_1,
         app_id="test-repo",
         params={"ref": "refs/pull/42/head"},
-        webhook_event_id=event_id,
         status=PipelineStatus.RUNNING,
         build_id=100,
         provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 999},
@@ -3213,7 +3229,6 @@ async def test_create_pipeline_bot_cancel_active_pipelines():
         id=pipeline_id_2,
         app_id="test-repo",
         params={"ref": "refs/pull/42/head"},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
         provider_data={},
     )
@@ -3273,7 +3288,6 @@ async def test_create_pipeline_bot_cancel_passes_snapshot_data_to_helper():
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_BOT_CANCEL_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3283,7 +3297,6 @@ async def test_create_pipeline_bot_cancel_passes_snapshot_data_to_helper():
         id=pipeline_id_1,
         app_id="test-repo",
         params={"ref": "refs/pull/42/head"},
-        webhook_event_id=event_id,
         status=PipelineStatus.RUNNING,
         build_id=100,
         provider_data={"owner": "flathub-infra", "repo": "vorarbeiter", "run_id": 999},
@@ -3292,7 +3305,6 @@ async def test_create_pipeline_bot_cancel_passes_snapshot_data_to_helper():
         id=pipeline_id_2,
         app_id="test-repo",
         params={"ref": "refs/pull/42/head"},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
         provider_data={},
     )
@@ -3356,7 +3368,6 @@ async def test_create_pipeline_bot_cancel_no_active_pipelines():
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=SAMPLE_BOT_CANCEL_PAYLOAD,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3405,7 +3416,6 @@ async def test_create_pipeline_bot_cancel_no_pr_url():
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3449,7 +3459,6 @@ async def test_create_pipeline_pr_stores_target_branch(
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3459,7 +3468,6 @@ async def test_create_pipeline_pr_stores_target_branch(
         id=pipeline_id,
         app_id="test-repo",
         params={},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
 
@@ -3520,7 +3528,6 @@ async def test_create_pipeline_bot_build_stores_target_branch(
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=comment_payload,
         repository="test-owner/test-repo",
         actor="test-actor",
@@ -3530,7 +3537,6 @@ async def test_create_pipeline_bot_build_stores_target_branch(
         id=pipeline_id,
         app_id="test-repo",
         params={},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
 
@@ -3675,7 +3681,6 @@ async def test_create_pipeline_labels_runtime_update_pr(db_session_maker):
 
     webhook_event = WebhookEvent(
         id=event_id,
-        source=WebhookSource.GITHUB,
         payload=payload,
         repository="flathub/com.example.bar",
         actor="test-actor",
@@ -3685,7 +3690,6 @@ async def test_create_pipeline_labels_runtime_update_pr(db_session_maker):
         id=pipeline_id,
         app_id="com.example.bar",
         params={},
-        webhook_event_id=event_id,
         status=PipelineStatus.PENDING,
     )
 
@@ -3735,7 +3739,6 @@ async def test_create_pipeline_push_persists_baseline(before, after, commit_ids)
 
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload={
             "ref": "refs/heads/master",
             "before": before,
@@ -3790,7 +3793,6 @@ async def test_create_pipeline_initial_push_without_baseline(ref):
     after = "A" * 40
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload={
             "ref": ref,
             "before": "0" * 40,
@@ -3843,7 +3845,6 @@ async def test_create_pipeline_push_ignores_branch_lifecycle():
 
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload={
             "ref": "refs/heads/master",
             "before": "1" * 40,
@@ -3868,7 +3869,6 @@ async def test_create_pipeline_pr_persists_base_sha(action, db_session_maker):
     head_sha = "1" * 40 if action == "opened" else "2" * 40
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         payload={
             "action": action,
             "pull_request": {
@@ -3964,7 +3964,6 @@ def pr_lifecycle_event():
             pull_request["draft"] = draft
         return WebhookEvent(
             id=uuid.uuid4(),
-            source=WebhookSource.GITHUB,
             repository="test-owner/test-repo",
             actor="test-actor",
             payload={
@@ -4005,7 +4004,7 @@ async def test_ready_head_history(
         provider_data={},
     )
     async with db_session_maker() as db:
-        db.add_all([event, previous])
+        db.add(previous)
         await db.commit()
     with (
         patch(
@@ -4048,7 +4047,7 @@ async def test_draft_event_cancels_pending_and_skips_dispatch(
         provider_data={},
     )
     async with db_session_maker() as db:
-        db.add_all([event, pending])
+        db.add(pending)
         await db.commit()
     with patch("app.routes.webhooks.ensure_draft_pr_comment", AsyncMock()) as comment:
         assert await create_pipeline(event) is None
@@ -4166,7 +4165,7 @@ async def test_cancelled_queue_has_no_pending_status_or_comment(
         flat_manager_repo="test",
     )
     async with db_session_maker() as db:
-        db.add_all([event, queued])
+        db.add(queued)
         await db.commit()
         queued_id = queued.id
         with (
@@ -4201,7 +4200,6 @@ async def test_pr_penalty_gate(actor, app_id, paused):
     repo = f"flathub/{app_id}"
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         repository=repo,
         actor=actor,
         payload={
@@ -4259,7 +4257,6 @@ async def test_comment_penalty_gate(collaborator, db_session_maker):
 
     event = WebhookEvent(
         id=uuid.uuid4(),
-        source=WebhookSource.GITHUB,
         repository="flathub/org.example.App",
         actor="contributor",
         payload={
@@ -4342,7 +4339,7 @@ async def test_paused_pr_event_reads_failed_builds_from_database(db_session_make
         await db.commit()
 
     event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository=repo,
         actor="contributor",
         payload={
@@ -4374,7 +4371,7 @@ async def test_paused_pr_still_skips_build_when_commit_status_fails():
     from app.routes.webhooks import create_pipeline
 
     event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository="flathub/org.example.App",
         actor="contributor",
         payload={
@@ -4411,7 +4408,7 @@ async def test_explicit_pr_refresh_updates_persisted_request(db_session_maker):
 
     repo = "test-owner/test-repo"
     original_event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository=repo,
         actor="maintainer",
         payload={"comment": {"body": "bot, build"}},
@@ -4430,10 +4427,10 @@ async def test_explicit_pr_refresh_updates_persisted_request(db_session_maker):
             "start_after": 1,
         },
         flat_manager_repo="test",
-        webhook_event=original_event,
+        actor=original_event.actor,
     )
     push_event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository=repo,
         actor="dependabot[bot]",
         payload={
@@ -4452,7 +4449,6 @@ async def test_explicit_pr_refresh_updates_persisted_request(db_session_maker):
         db.add(pipeline)
         await db.commit()
         pipeline_id = pipeline.id
-        original_event_id = original_event.id
 
         with (
             patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
@@ -4466,7 +4462,7 @@ async def test_explicit_pr_refresh_updates_persisted_request(db_session_maker):
         refreshed = await db.scalar(select(Pipeline).where(Pipeline.id == pipeline_id))
         assert refreshed is not None
         assert refreshed.status is PipelineStatus.PENDING
-        assert refreshed.webhook_event_id == original_event_id
+        assert refreshed.actor == "maintainer"
         assert refreshed.params["sha"] == "c" * 40
         assert refreshed.params["base_sha"] == "d" * 40
         assert refreshed.params["pr_target_branch"] == "beta"
@@ -4474,7 +4470,6 @@ async def test_explicit_pr_refresh_updates_persisted_request(db_session_maker):
         assert refreshed.params["use_spot"] is False
         assert refreshed.params["start_after"] > 0
         assert "action" not in refreshed.params
-        assert await db.get(WebhookEvent, push_event.id) is not None
         status.assert_awaited_once()
         assert status.await_args is not None
         assert status.await_args.kwargs["sha"] == "c" * 40
@@ -4522,7 +4517,7 @@ async def test_explicit_pr_refresh_rejects_stale_request(
 
     repo = "test-owner/test-repo"
     original_event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository=repo,
         actor="maintainer",
         payload={"comment": {"body": "bot, build"}},
@@ -4541,10 +4536,10 @@ async def test_explicit_pr_refresh_rejects_stale_request(
             "start_after": 1,
         },
         flat_manager_repo="test",
-        webhook_event=original_event,
+        actor=original_event.actor,
     )
     event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository=repo,
         actor="contributor",
         payload={
@@ -4570,7 +4565,6 @@ async def test_explicit_pr_refresh_rejects_stale_request(
         assert cancelled.status is PipelineStatus.CANCELLED
         assert cancelled.params["sha"] == "a" * 40
         assert cancelled.finished_at is not None
-        assert await db.get(WebhookEvent, event.id) is not None
         status.assert_not_awaited()
         if disabled:
             comment.assert_awaited_once()
@@ -4590,7 +4584,7 @@ async def test_automatic_pr_request_persists_debounced_pending_pipeline(
 
     repo = "test-owner/test-repo"
     event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository=repo,
         actor="test-actor",
         payload={
@@ -4605,8 +4599,6 @@ async def test_automatic_pr_request_persists_debounced_pending_pipeline(
     )
 
     async with db_session_maker() as db:
-        db.add(event)
-        await db.commit()
         with (
             patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
             patch("app.routes.webhooks.settings.ff_disable_test_builds", False),
@@ -4636,7 +4628,7 @@ async def test_automatic_pr_request_persists_debounced_pending_pipeline(
         pipeline = await db.scalar(select(Pipeline).where(Pipeline.id == pipeline_id))
         assert pipeline is not None
         assert pipeline.status is PipelineStatus.PENDING
-        assert pipeline.webhook_event_id == event.id
+        assert pipeline.actor == event.actor
         assert pipeline.params["sha"] == "a" * 40
         assert pipeline.params["start_after"] > 0
         assert "explicit_pr_build" not in pipeline.params
@@ -4740,7 +4732,7 @@ async def test_synchronize_refreshes_explicit_request_before_filters(
     from app.routes.webhooks import receive_github_webhook
 
     original_event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository=repo,
         actor="maintainer",
         payload={"comment": {"body": "bot, build"}},
@@ -4759,7 +4751,7 @@ async def test_synchronize_refreshes_explicit_request_before_filters(
             "start_after": 1,
         },
         flat_manager_repo="test",
-        webhook_event=original_event,
+        actor=original_event.actor,
     )
     payload = {
         "repository": {"full_name": repo},
@@ -4815,7 +4807,7 @@ async def test_synchronize_refreshes_explicit_request_before_filters(
         assert refreshed.params["pr_target_branch"] == "beta"
         assert refreshed.params["explicit_pr_build"] is True
         assert refreshed.params["use_spot"] is False
-        assert refreshed.webhook_event_id == original_event.id
+        assert refreshed.actor == "maintainer"
         status.assert_awaited_once()
         comment.assert_awaited_once()
 
@@ -4839,7 +4831,7 @@ async def test_explicit_bot_build_persists_debounced_pipeline(
 
     repo = "test-owner/test-repo"
     event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository=repo,
         actor="test-actor",
         payload={
@@ -4862,7 +4854,6 @@ async def test_explicit_bot_build_persists_debounced_pipeline(
     github.request.return_value = response
 
     async with db_session_maker() as db:
-        db.add(event)
         if previous_params is not None:
             db.add(
                 Pipeline(
@@ -4907,7 +4898,7 @@ async def test_explicit_bot_build_persists_debounced_pipeline(
         pipeline = await db.scalar(select(Pipeline).where(Pipeline.id == pipeline_id))
         assert pipeline is not None
         assert pipeline.status is PipelineStatus.PENDING
-        assert pipeline.webhook_event_id == event.id
+        assert pipeline.actor == event.actor
         assert pipeline.params["sha"] == "a" * 40
         assert pipeline.params["start_after"] > 0
         assert pipeline.params["explicit_pr_build"] is True
@@ -4929,7 +4920,7 @@ async def test_penalty_rejected_bot_build_creates_no_explicit_pipeline(
 
     repo = "test-owner/test-repo"
     event = WebhookEvent(
-        source=WebhookSource.GITHUB,
+        id=uuid.uuid4(),
         repository=repo,
         actor="contributor",
         payload={
@@ -4950,8 +4941,6 @@ async def test_penalty_rejected_bot_build_creates_no_explicit_pipeline(
     github.request.return_value = response
 
     async with db_session_maker() as db:
-        db.add(event)
-        await db.commit()
         with (
             patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
             patch("app.routes.webhooks.get_github_client", return_value=github),

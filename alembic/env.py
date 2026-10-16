@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 # Import Base and models
 # Import pydantic settings
 from app.config import settings
-from app.models.webhook_event import Base
+from app.models.base import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

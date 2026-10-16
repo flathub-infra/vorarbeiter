@@ -230,7 +230,6 @@ class PipelineService:
         pipeline = await build_pipeline.create_pipeline(
             app_id=app_id,
             params=params,
-            webhook_event_id=None,
         )
 
         from app.database import get_db

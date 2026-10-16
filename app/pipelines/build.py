@@ -251,14 +251,14 @@ class BuildPipeline:
         self,
         app_id: str,
         params: dict[str, Any],
-        webhook_event_id: uuid.UUID | None = None,
+        actor: str | None = None,
     ) -> Pipeline:
         validated_params = validate_pipeline_commit_params(params)
         async with get_db() as db:
             pipeline = Pipeline(
                 app_id=app_id,
                 params=validated_params,
-                webhook_event_id=webhook_event_id,
+                actor=actor,
                 provider_data={},
             )
             db.add(pipeline)
@@ -794,7 +794,7 @@ class BuildPipeline:
             retry_pipeline = await self.create_pipeline(
                 app_id=pipeline.app_id,
                 params={**pipeline.params, "auto_retried": True, "use_spot": False},
-                webhook_event_id=pipeline.webhook_event_id,
+                actor=pipeline.actor,
             )
             retry_pipeline = await self.start_pipeline(pipeline_id=retry_pipeline.id)
         except Exception as e:

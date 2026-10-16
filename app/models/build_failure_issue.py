@@ -1,7 +1,7 @@
 from sqlalchemy import Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.webhook_event import Base
+from app.models.base import Base
 
 
 class BuildFailureIssue(Base):

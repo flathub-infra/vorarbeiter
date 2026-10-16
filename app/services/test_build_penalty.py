@@ -5,7 +5,6 @@ from sqlalchemy import or_, select
 from app.config import settings
 from app.database import get_db
 from app.models.pipeline import Pipeline, PipelineStatus
-from app.models.webhook_event import WebhookEvent
 
 BUILDING_LOCALLY_URL = (
     "https://docs.flathub.org/docs/for-app-authors/maintenance#building-locally"
@@ -43,7 +42,6 @@ async def get_penalty_until(
 
     query = (
         select(Pipeline.status, Pipeline.finished_at)
-        .outerjoin(WebhookEvent, Pipeline.webhook_event_id == WebhookEvent.id)
         .where(
             *conditions,
             Pipeline.flat_manager_repo == "test",
@@ -51,8 +49,8 @@ async def get_penalty_until(
             Pipeline.params["pr_number"].as_string() == str(pr_number),
             Pipeline.status.in_(COUNTED_STATUSES),
             or_(
-                WebhookEvent.actor.is_(None),
-                WebhookEvent.actor.not_in(PENALTY_EXEMPT_ACTORS),
+                Pipeline.actor.is_(None),
+                Pipeline.actor.not_in(PENALTY_EXEMPT_ACTORS),
             ),
         )
         .order_by(Pipeline.created_at.desc())

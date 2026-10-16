@@ -865,6 +865,7 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
 ):
     """Test that a cancelled stable build is automatically retried once."""
     sample_pipeline.flat_manager_repo = "stable"
+    sample_pipeline.actor = "contributor"
     sample_pipeline.params = {
         "repo": "flathub/test-app",
         "ref": "refs/heads/master",
@@ -919,7 +920,7 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
         "auto_retried": True,
         "use_spot": False,
     }
-    assert call_args.kwargs["webhook_event_id"] == sample_pipeline.webhook_event_id
+    assert call_args.kwargs["actor"] == "contributor"
     assert sample_pipeline.params == original_params
 
 
@@ -983,7 +984,7 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
         "auto_retried": True,
         "use_spot": False,
     }
-    assert call_args.kwargs["webhook_event_id"] == sample_pipeline.webhook_event_id
+    assert call_args.kwargs["actor"] == sample_pipeline.actor
     assert sample_pipeline.params == original_params
 
 

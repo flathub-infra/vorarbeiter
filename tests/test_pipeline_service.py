@@ -371,7 +371,7 @@ async def test_trigger_manual_pipeline_success(pipeline_service):
             assert result["pipeline_status"] == "running"
 
             mock_build.create_pipeline.assert_called_once_with(
-                app_id=app_id, params=params, webhook_event_id=None
+                app_id=app_id, params=params
             )
             mock_build.prepare_pipeline_for_start.assert_called_once_with(pipeline_id)
             mock_build.supersede_conflicting_test_pipelines.assert_called_once_with(

@@ -7,7 +7,7 @@ import sqlalchemy
 from sqlalchemy import JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.webhook_event import Base
+from app.models.base import Base
 
 
 class GitHubTaskStatus(Enum):

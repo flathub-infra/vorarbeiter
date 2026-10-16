@@ -1,5 +1,4 @@
 import asyncio
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -7,13 +6,9 @@ from typing import Any
 
 import sentry_sdk
 import structlog
-from sqlalchemy import select
 
 from app.config import settings
-from app.database import get_db
-from app.models import Pipeline
-from app.models.webhook_event import WebhookEvent
-from app.routes.webhooks import should_store_event
+from app.routes.webhooks import push_already_built, should_store_event
 from app.utils.github_app import (
     GitHubAppInstallationAuth,
     GitHubAppRequestError,
@@ -36,7 +31,6 @@ RATE_LIMIT_MAX_TOTAL_DELAY = 900.0
 class ReconcileResult:
     failed_push_deliveries: int = 0
     redelivered: list[str] = field(default_factory=list)
-    already_stored: list[str] = field(default_factory=list)
     not_tracked: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
     pipeline_exists: list[str] = field(default_factory=list)
@@ -47,7 +41,6 @@ class ReconcileResult:
         return {
             "failed_push_deliveries": self.failed_push_deliveries,
             "redelivered": self.redelivered,
-            "already_stored": len(self.already_stored),
             "not_tracked": len(self.not_tracked),
             "stale": self.stale,
             "pipeline_exists": len(self.pipeline_exists),
@@ -171,16 +164,6 @@ class WebhookDeliveryReconciler:
     async def _reconcile_delivery(
         self, guid: str, attempts: list[dict], result: ReconcileResult
     ) -> None:
-        try:
-            event_id = uuid.UUID(guid)
-        except ValueError:
-            event_id = None
-        if event_id is not None:
-            async with get_db() as db:
-                if await db.get(WebhookEvent, event_id) is not None:
-                    result.already_stored.append(guid)
-                    return
-
         attempts.sort(key=lambda d: d.get("delivered_at") or "", reverse=True)
         delivery_id = attempts[0]["id"]
         detail = (
@@ -229,19 +212,9 @@ class WebhookDeliveryReconciler:
             result.stale.append(guid)
             return
 
-        async with get_db() as db:
-            existing = await db.execute(
-                select(Pipeline.id)
-                .where(
-                    Pipeline.params["repo"].as_string() == repository,
-                    Pipeline.params["ref"].as_string() == ref,
-                    Pipeline.params["sha"].as_string() == after,
-                )
-                .limit(1)
-            )
-            if existing.first() is not None:
-                result.pipeline_exists.append(guid)
-                return
+        if await push_already_built(repository, ref, after):
+            result.pipeline_exists.append(guid)
+            return
 
         await self._request("post", f"{self.deliveries_url}/{delivery_id}/attempts")
         logger.warning("Redelivered failed webhook delivery", **context)

@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import JSON, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.webhook_event import Base
+from app.models.base import Base
 
 
 class JobStatus(Enum):
