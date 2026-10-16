@@ -284,10 +284,17 @@ def _values(value: Any) -> list[str]:
 
 
 def _diff(differences: list[dict[str, Any]]) -> list[str]:
-    lines = ["```diff"]
+    lines, header = ["```diff"], None
     for item in differences:
-        before, after = _values(item["before"]), _values(item["after"])
-        lines.append(f"@@ {' / '.join(item['path'])} @@")
+        path, before, after = item["path"], item["before"], item["after"]
+        if not isinstance(before, list | dict) and not isinstance(after, list | dict):
+            *path, key = path
+            before = None if before is None else {key: before}
+            after = None if after is None else {key: after}
+        if path != header:
+            lines.append(f"@@ {' / '.join(path)} @@")
+            header = path
+        before, after = _values(before), _values(after)
         lines += [f"- {value}" for value in before if value not in after]
         lines += [f"+ {value}" for value in after if value not in before]
     return [*lines, "```", ""]

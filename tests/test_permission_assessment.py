@@ -765,9 +765,14 @@ async def test_pending_comment_shows_permission_diff(
             "after": ["x11", "wayland"],
         },
         {
-            "path": ["x86_64", "Session Bus Policy"],
+            "path": ["x86_64", "Session Bus Policy", "org.example.Service"],
             "before": None,
-            "after": {"org.example.Service": "talk"},
+            "after": "talk",
+        },
+        {
+            "path": ["x86_64", "Session Bus Policy", "org.freedesktop.Flatpak"],
+            "before": "talk",
+            "after": "own",
         },
     ]
 
@@ -782,6 +787,8 @@ async def test_pending_comment_shows_permission_diff(
         "+ x11\n"
         "@@ x86_64 / Session Bus Policy @@\n"
         "+ org.example.Service=talk\n"
+        "- org.freedesktop.Flatpak=talk\n"
+        "+ org.freedesktop.Flatpak=own\n"
         "```\n\n"
         "Explain why these changes are needed; moderators may reject it."
     ) in body
