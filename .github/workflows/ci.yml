@@ -47,6 +47,11 @@ jobs:
       - name: Run type checking
         run: uv run ty check .
 
+      - name: Check application-check workflow
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 .github/workflows/smoke.yml
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -shellcheck= .github/workflows/build.yml
+
       - name: Run tests
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
