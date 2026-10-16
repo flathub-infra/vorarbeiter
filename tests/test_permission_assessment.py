@@ -712,11 +712,16 @@ def submitted(**state):
     return make_pipeline(provider_data={**provider_data, PROVIDER_DATA_KEY: state})
 
 
-def assessment_server(outcome, requests=None):
+def assessment_server(outcome, requests=None, differences=None):
     def handler(request: httpx.Request) -> httpx.Response:
         if requests is not None:
             requests.append(request)
-        body = {"assessment_id": 7, "outcome": outcome, "review_url": REVIEW_URL}
+        body = {
+            "assessment_id": 7,
+            "outcome": outcome,
+            "review_url": REVIEW_URL,
+            "differences": differences,
+        }
         return httpx.Response(200, json=body)
 
     return mock_http(handler)
@@ -746,6 +751,40 @@ async def test_reports_outcome_once(
     gh.comment.assert_awaited_once()
     assert REVIEW_URL not in gh.comment.await_args.args[3]
     assert gh.comment.await_args.args[4] is creates_comment
+
+
+@pytest.mark.asyncio
+async def test_pending_comment_shows_permission_diff(
+    configured, local_db, db_session_maker, gh
+):
+    await add(db_session_maker, submitted())
+    differences = [
+        {
+            "path": ["x86_64", "Context", "sockets"],
+            "before": ["fallback-x11", "wayland"],
+            "after": ["x11", "wayland"],
+        },
+        {
+            "path": ["x86_64", "Session Bus Policy"],
+            "before": None,
+            "after": {"org.example.Service": "talk"},
+        },
+    ]
+
+    with assessment_server("pending", differences=differences):
+        await submit_pending_assessments()
+
+    body = gh.comment.await_args.args[3]
+    assert (
+        "```diff\n"
+        "@@ x86_64 / Context / sockets @@\n"
+        "- fallback-x11\n"
+        "+ x11\n"
+        "@@ x86_64 / Session Bus Policy @@\n"
+        "+ org.example.Service=talk\n"
+        "```\n\n"
+        "Explain why these changes are needed; moderators may reject it."
+    ) in body
 
 
 @pytest.mark.asyncio

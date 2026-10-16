@@ -54,6 +54,7 @@ ASSESSMENT_FIELDS = [
     "linked_assessment_id",
     "linked_fingerprint_match",
     "review_url",
+    "differences",
 ]
 
 
@@ -271,6 +272,27 @@ def _enabled(target_branch: Any) -> bool:
     return bool(destination and destination[0] in settings.permission_status_repos)
 
 
+def _values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [
+            f"{key}={';'.join(item) if isinstance(item, list) else item}"
+            for key, item in value.items()
+        ]
+    return value if isinstance(value, list) else [value]
+
+
+def _diff(differences: list[dict[str, Any]]) -> list[str]:
+    lines = ["```diff"]
+    for item in differences:
+        before, after = _values(item["before"]), _values(item["after"])
+        lines.append(f"@@ {' / '.join(item['path'])} @@")
+        lines += [f"- {value}" for value in before if value not in after]
+        lines += [f"+ {value}" for value in after if value not in before]
+    return [*lines, "```", ""]
+
+
 async def _report(
     request: dict[str, Any], state: dict[str, Any], outcome: str
 ) -> dict[str, Any]:
@@ -288,6 +310,12 @@ async def _report(
     )
     if ok and outcome in COMMENTS:
         body = [COMMENT_MARKER, COMMENTS[outcome], ""]
+        if outcome == "pending" and state.get("differences"):
+            body += _diff(state["differences"])
+            body += [
+                "Explain why these changes are needed; moderators may reject it.",
+                "",
+            ]
         body += ["This check does not block merging."]
         ok = await upsert_pr_comment(
             repo,
