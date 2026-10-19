@@ -33,7 +33,7 @@ COMMENT_MARKER = "<!-- flathub-permission-review -->"
 STATUSES = {
     "accepted": ("success", "Permissions accepted"),
     "pending": ("pending", "Permission review pending on Flathub"),
-    "rejected": ("failure", "Permissions rejected on Flathub"),
+    "rejected": ("failure", "Permission change rejected"),
     "error": ("error", "Permission assessment failed"),
     "not_applicable": ("success", "No application permissions to review"),
     "target_changed": ("pending", "Target branch changed; reassessing"),
