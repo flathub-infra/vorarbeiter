@@ -1,15 +1,18 @@
 import json
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx2 as httpx
 import jwt
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
 
 from app.config import settings
+from app.main import app
 from app.models import Pipeline, PipelineStatus
 from app.services import permission_assessment
 from app.services.permission_assessment import (
@@ -861,3 +864,218 @@ async def test_no_github_calls_without_status_channels(
 
     gh.get_pr.assert_not_awaited()
     gh.status.assert_not_awaited()
+
+
+class Backend:
+    def __init__(self, **body):
+        self.body = {"assessment_id": 7, "outcome": "pending", **body}
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        return httpx.Response(200, json={"review_url": REVIEW_URL, **self.body})
+
+    @property
+    def posts(self) -> int:
+        return sum(request.method == "POST" for request in self.requests)
+
+
+def notification_headers(secret=SECRET, **changes):
+    now = datetime.now(UTC)
+    claims = {
+        "sub": "permission-assessment",
+        "scope": "notify",
+        "iat": now,
+        "exp": now + timedelta(minutes=10),
+        **changes,
+    }
+    claims = {key: value for key, value in claims.items() if value is not None}
+    return {"Authorization": f"Bearer {jwt.encode(claims, secret, algorithm='HS256')}"}
+
+
+async def notify(api, headers=None, **body):
+    return await api.post(
+        "/api/webhooks/permission-decisions",
+        json={
+            "source_repository": "flathub/org.test.App",
+            "pull_request_number": 42,
+            **body,
+        },
+        headers=notification_headers() if headers is None else headers,
+    )
+
+
+@pytest_asyncio.fixture
+async def api():
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        yield client
+
+
+@pytest.mark.parametrize("pr_number", ["42", 42])
+@pytest.mark.asyncio
+async def test_notifications_report_current_decision(
+    configured, local_db, db_session_maker, gh, api, pr_number
+):
+    pipeline = submitted()
+    pipeline.params = {**pipeline.params, "pr_number": pr_number}
+    await add(db_session_maker, pipeline)
+    backend = Backend(
+        outcome="rejected", decision_id=3, decision_rationale="Use the portal.\nThanks."
+    )
+
+    with mock_http(backend):
+        assert (await notify(api)).status_code == 204
+        assert (await notify(api)).status_code == 204
+        gh.status.assert_awaited_once()
+        assert gh.status.await_args.args[1] == "failure"
+        body = gh.comment.await_args.args[3]
+        assert "> Use the portal.\n> Thanks." in body
+        assert "bot, ping admins" in body
+
+        backend.body = {"outcome": "accepted", "decision_id": 4}
+        assert (await notify(api)).status_code == 204
+        assert gh.status.await_args.args[1] == "success"
+        assert gh.comment.await_args.args[4] is True
+
+        backend.body = {
+            "outcome": "accepted",
+            "decision_id": 5,
+            "decision_rationale": "Ok",
+        }
+        assert (await notify(api)).status_code == 204
+        assert (await notify(api)).status_code == 204
+
+    assert gh.status.await_count == 3
+    assert "> Ok" in gh.comment.await_args.args[3]
+    assert backend.posts == 0
+
+
+@pytest.mark.asyncio
+async def test_notification_ignores_newer_unassessed_rebuild_and_obsolete_head(
+    configured, local_db, db_session_maker, gh, api
+):
+    now = datetime.now(UTC)
+    older = submitted()
+    older.created_at = now - timedelta(minutes=5)
+    rebuild = make_pipeline(status=PipelineStatus.FAILED, created_at=now)
+    await add(db_session_maker, older, rebuild)
+
+    with mock_http(Backend(outcome="accepted", decision_id=3)):
+        gh.pr["head"]["sha"] = NEW_BASE
+        assert (await notify(api)).status_code == 204
+        gh.status.assert_not_awaited()
+        gh.pr["head"]["sha"] = HEAD
+        assert (await notify(api)).status_code == 204
+
+    assert gh.status.await_args.args[1] == "success"
+
+
+@pytest.mark.asyncio
+async def test_late_rationale_updates_existing_report(
+    configured, local_db, db_session_maker, gh, api
+):
+    await add(
+        db_session_maker,
+        submitted(
+            outcome="rejected",
+            review_url=REVIEW_URL,
+            reported=["rejected", REVIEW_URL, None, ""],
+        ),
+    )
+
+    backend = Backend(outcome="rejected", decision_id=3, decision_rationale="Too broad")
+    with mock_http(backend):
+        assert (await notify(api)).status_code == 204
+
+    assert "> Too broad" in gh.comment.await_args.args[3]
+
+
+@pytest.mark.asyncio
+async def test_github_failure_returns_503_and_keeps_refreshed_state(
+    configured, local_db, db_session_maker, gh, api
+):
+    pipeline = submitted()
+    await add(db_session_maker, pipeline, make_pipeline(params={"pr_number": "7"}))
+    gh.status.return_value = False
+
+    with mock_http(Backend(outcome="rejected", decision_id=3)):
+        assert (await notify(api)).status_code == 503
+        state = (await load(db_session_maker, pipeline.id)).provider_data[
+            PROVIDER_DATA_KEY
+        ]
+        assert (state["outcome"], state["decision_id"]) == ("rejected", 3)
+        assert "reported" not in state
+        gh.status.return_value = True
+        assert (await notify(api)).status_code == 204
+        assert (await notify(api, pull_request_number=7)).status_code == 204
+
+    assert gh.status.await_count == 2
+
+
+@pytest.mark.parametrize(
+    "headers, status",
+    [
+        ({}, 401),
+        (notification_headers(secret="wrong-secret-0123456789abcdef0123"), 401),
+        (notification_headers(exp=datetime.now(UTC) - timedelta(minutes=1)), 401),
+        (notification_headers(iat=None), 401),
+        (notification_headers(sub="other"), 401),
+        (notification_headers(scope="assess"), 403),
+    ],
+)
+@pytest.mark.asyncio
+async def test_notification_authentication(configured, gh, api, headers, status):
+    assert (await notify(api, headers=headers)).status_code == status
+    gh.get_pr.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"pull_request_number": "42"},
+        {"pull_request_number": 0},
+        {"source_repository": ""},
+        {"outcome": "accepted"},
+    ],
+)
+@pytest.mark.asyncio
+async def test_notification_rejects_invalid_body(configured, api, body):
+    assert (await notify(api, **body)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_notification_without_configuration_is_unavailable(api):
+    with patch.object(settings, "permission_assessment_secret", None):
+        assert (await notify(api)).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_base_reassessment_survives_report_failure(
+    configured, local_db, db_session_maker, gh
+):
+    pipeline = submitted()
+    await add(db_session_maker, pipeline)
+    gh.pr["base"]["sha"] = NEW_BASE
+    gh.status.return_value = False
+    backend = Backend(assessment_id=8, outcome="accepted")
+
+    with (
+        mock_http(backend),
+        patch.object(
+            permission_assessment,
+            "get_build_job_arches",
+            AsyncMock(return_value=["x86_64"]),
+        ),
+    ):
+        await submit_pending_assessments()
+        state = (await load(db_session_maker, pipeline.id)).provider_data[
+            PROVIDER_DATA_KEY
+        ]
+        assert (state["assessment_id"], state["base_revision"]) == (8, NEW_BASE)
+        gh.status.return_value = True
+        await submit_pending_assessments()
+
+    assert [request.method for request in backend.requests] == ["POST", "GET"]
+    assert gh.status.await_args.args[1] == "success"

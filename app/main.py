@@ -13,6 +13,7 @@ from app.routes import (
     diffoscope_router,
     inactive_repos_router,
     merge_router,
+    permission_assessment_router,
     pipelines_router,
     webhooks_router,
 )
@@ -55,5 +56,6 @@ app.include_router(dashboard_router)
 app.include_router(diffoscope_router)
 app.include_router(inactive_repos_router)
 app.include_router(merge_router)
+app.include_router(permission_assessment_router)
 app.include_router(pipelines_router)
 app.include_router(webhooks_router)

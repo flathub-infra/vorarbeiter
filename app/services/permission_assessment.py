@@ -1,10 +1,11 @@
+import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx2 as httpx
 import jwt
 import structlog
-from sqlalchemy import select
+from sqlalchemy import Select, String, cast, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -55,7 +56,13 @@ ASSESSMENT_FIELDS = [
     "linked_fingerprint_match",
     "review_url",
     "differences",
+    "decision_id",
+    "decision_rationale",
 ]
+REJECTION_HELP = (
+    "<sub>If you disagree with this decision, comment"
+    " `bot, ping admins` to notify the Flathub admins.</sub>"
+)
 
 
 def _destination(target_branch: str) -> tuple[str, str] | None:
@@ -300,14 +307,23 @@ def _diff(differences: list[dict[str, Any]]) -> list[str]:
     return [*lines, "```", ""]
 
 
+def _report_marker(state: dict[str, Any], outcome: str) -> list[Any]:
+    return [
+        outcome,
+        state.get("review_url"),
+        state.get("decision_id"),
+        (state.get("decision_rationale") or "").strip(),
+    ]
+
+
 async def _report(
     request: dict[str, Any], state: dict[str, Any], outcome: str
 ) -> dict[str, Any]:
-    url = state.get("review_url")
+    marker = _report_marker(state, outcome)
     if (
         request["candidate_kind"] != "head"
         or not _enabled(request["target_git_branch"])
-        or state.get("reported") == [outcome, url]
+        or state.get("reported") == marker
     ):
         return state
     status, description = STATUSES[outcome]
@@ -317,6 +333,10 @@ async def _report(
     )
     if ok and outcome in COMMENTS:
         body = [COMMENT_MARKER, COMMENTS[outcome], ""]
+        if rationale := marker[3]:
+            body += [f"> {line}" for line in rationale.splitlines()] + [""]
+        if outcome == "rejected":
+            body += [REJECTION_HELP, ""]
         if outcome == "pending" and state.get("differences"):
             body += _diff(state["differences"])
             body += [
@@ -329,9 +349,9 @@ async def _report(
             request["pull_request_number"],
             COMMENT_MARKER,
             "\n".join(body),
-            outcome != "accepted",
+            outcome != "accepted" or state.get("decision_id") is not None,
         )
-    return {**state, "reported": [outcome, url]} if ok else state
+    return {**state, "reported": marker} if ok else state
 
 
 async def notify_target_changed(payload: dict[str, Any]) -> None:
@@ -345,6 +365,22 @@ async def notify_target_changed(payload: dict[str, Any]) -> None:
         )
 
 
+async def _lock_assessment(db: AsyncSession, pipeline: Pipeline) -> None:
+    if db.get_bind().dialect.name != "sqlite":
+        request = build_assessment_request(pipeline)
+        name = (
+            f"permission-assessment:{request['source_repository']}:"
+            f"{request['pull_request_number']}"
+            if request is not None
+            else f"permission-assessment:{pipeline.id}"
+        )
+        key = int.from_bytes(
+            hashlib.sha256(name.encode()).digest()[:8], "big", signed=True
+        )
+        await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+    await db.refresh(pipeline)
+
+
 async def _store(db: AsyncSession, pipeline: Pipeline, state: dict[str, Any]) -> None:
     await db.refresh(pipeline, ["provider_data"], with_for_update=True)
     data = pipeline.provider_data or {}
@@ -352,9 +388,32 @@ async def _store(db: AsyncSession, pipeline: Pipeline, state: dict[str, Any]) ->
     await db.commit()
 
 
+def _submitted() -> Select[tuple[Pipeline]]:
+    return select(Pipeline).where(
+        Pipeline.flat_manager_repo == "test",
+        Pipeline.provider_data[PROVIDER_DATA_KEY]["status"].as_string() == "submitted",
+    )
+
+
+def _latest_submitted(
+    source_repository: str, pull_request_number: int
+) -> Select[tuple[Pipeline]]:
+    return (
+        _submitted()
+        .where(
+            Pipeline.params["repo"].as_string() == source_repository,
+            cast(Pipeline.params["pr_number"].as_string(), String)
+            == str(pull_request_number),
+        )
+        .order_by(Pipeline.created_at.desc(), Pipeline.id.desc())
+        .limit(1)
+    )
+
+
 async def _refresh(
     db: AsyncSession, pipeline: Pipeline, client: httpx.AsyncClient
 ) -> None:
+    await _lock_assessment(db, pipeline)
     state = (pipeline.provider_data or {}).get(PROVIDER_DATA_KEY) or {}
     request = build_assessment_request(pipeline)
     if (
@@ -364,17 +423,25 @@ async def _refresh(
         or not _enabled(request["target_git_branch"])
     ):
         return
+    latest = await db.scalar(
+        _latest_submitted(
+            request["source_repository"], request["pull_request_number"]
+        ).with_only_columns(Pipeline.id)
+    )
+    if latest != pipeline.id:
+        return
     pr = await get_pull_request(
         request["source_repository"], request["pull_request_number"]
     )
     if pr is None:
-        return
+        raise RuntimeError("Failed to fetch permission pull request")
+    outcome = None
     if pr["state"] != "open":
         new = {**state, "closed": True}
     elif pr["head"]["sha"] != request["pull_request_head_revision"]:
         return
     elif pr["base"]["ref"] != request["target_git_branch"]:
-        new = await _report(request, state, "target_changed")
+        new, outcome = state, "target_changed"
     else:
         base = pr["base"]["sha"]
         recorded = state.get("base_revision", request.get("base_revision"))
@@ -390,30 +457,50 @@ async def _refresh(
                 headers={"Authorization": f"Bearer {_token()}"},
             )
             new = {**state, **_parse(response)}
-        new = await _report(request, new, new["outcome"])
-    if new != state:
-        await _store(db, pipeline, new)
+        outcome = new["outcome"]
+    try:
+        if outcome is not None:
+            new = await _report(request, new, outcome)
+    finally:
+        if new != state:
+            await _store(db, pipeline, new)
+    if outcome is not None and new.get("reported") != _report_marker(new, outcome):
+        raise RuntimeError("Failed to report permission assessment")
 
 
-async def _refresh_statuses(db: AsyncSession, client: httpx.AsyncClient) -> None:
-    result = await db.execute(
-        select(Pipeline)
-        .where(
-            Pipeline.flat_manager_repo == "test",
-            Pipeline.created_at > datetime.now(UTC) - STATUS_LOOKBACK,
+async def _refresh_statuses(client: httpx.AsyncClient) -> None:
+    async with get_db() as db:
+        result = await db.execute(
+            _submitted()
+            .where(Pipeline.created_at > datetime.now(UTC) - STATUS_LOOKBACK)
+            .order_by(Pipeline.created_at, Pipeline.id)
         )
-        .order_by(Pipeline.created_at)
-    )
-    latest = {
-        (p.params.get("repo"), p.params["pr_number"]): p
-        for p in result.scalars()
-        if (p.params or {}).get("pr_number")
-    }
-    for pipeline in latest.values():
+        latest = {
+            (p.params.get("repo"), str(p.params["pr_number"])): p.id
+            for p in result.scalars()
+            if (p.params or {}).get("pr_number")
+        }
+    for pipeline_id in latest.values():
         try:
-            await _refresh(db, pipeline, client)
+            async with get_db() as db:
+                pipeline = await db.get(Pipeline, pipeline_id)
+                if pipeline is not None:
+                    await _refresh(db, pipeline, client)
         except Exception:
-            logger.exception("Failed to refresh status", pipeline_id=str(pipeline.id))
+            logger.exception("Failed to refresh status", pipeline_id=str(pipeline_id))
+
+
+async def refresh_permission_review(
+    source_repository: str, pull_request_number: int
+) -> None:
+    async with get_db() as db:
+        pipeline = await db.scalar(
+            _latest_submitted(source_repository, pull_request_number)
+        )
+        if pipeline is None:
+            return
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            await _refresh(db, pipeline, client)
 
 
 async def submit_pending_assessments() -> dict[str, Any]:
@@ -523,6 +610,6 @@ async def submit_pending_assessments() -> dict[str, Any]:
                 counts[state["status"]] += 1
 
             if settings.permission_status_repos:
-                await _refresh_statuses(db, client)
+                await _refresh_statuses(client)
 
     return {"status": "completed", **counts}
