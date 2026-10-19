@@ -706,7 +706,7 @@ def gh():
         patch.object(settings, "permission_status_repos", ["stable"]),
         patch.object(permission_assessment, "get_pull_request", get_pr),
         patch.object(permission_assessment, "update_commit_status", status),
-        patch.object(permission_assessment, "upsert_pr_comment", comment),
+        patch.object(permission_assessment, "post_pr_comment", comment),
     ):
         yield SimpleNamespace(pr=pr, get_pr=get_pr, status=status, comment=comment)
 
@@ -950,6 +950,7 @@ async def test_notifications_report_current_decision(
         assert (await notify(api)).status_code == 204
 
     assert gh.status.await_count == 3
+    assert gh.comment.await_count == 3
     assert "> Ok" in gh.comment.await_args.args[3]
     assert backend.posts == 0
 

@@ -19,8 +19,8 @@ from app.utils.github import (
     get_github_client,
     get_pull_request,
     normalize_git_oid,
+    post_pr_comment,
     update_commit_status,
-    upsert_pr_comment,
 )
 
 logger = structlog.get_logger(__name__)
@@ -345,7 +345,7 @@ async def _report(
                 "",
             ]
         body += ["This check does not block merging."]
-        ok = await upsert_pr_comment(
+        ok = await post_pr_comment(
             repo,
             request["pull_request_number"],
             COMMENT_MARKER,

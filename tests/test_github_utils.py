@@ -13,6 +13,7 @@ from app.utils.github import (
     get_linter_warning_messages,
     list_open_github_issues,
     normalize_git_oid,
+    post_pr_comment,
     set_pr_labels,
     update_commit_status,
     validate_pipeline_commit_params,
@@ -536,6 +537,25 @@ async def test_checked_comment_does_not_post_after_unavailable_page(bad_page):
             "flathub/test", 3, "draft policy", check_duplicates=True
         )
     client.request.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "create, existing, methods",
+    [
+        (True, [], ["post"]),
+        (False, [], ["get"]),
+        (False, [{"id": 1, "body": "<!-- m -->\nold"}], ["get", "post"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_post_pr_comment_never_edits(create, existing, methods):
+    client = MagicMock()
+    response = MagicMock()
+    response.json.return_value = existing
+    client.request = AsyncMock(return_value=response)
+    with patch("app.utils.github.get_github_client", return_value=client):
+        assert await post_pr_comment("flathub/test", 3, "<!-- m -->", "new", create)
+    assert [call.args[0] for call in client.request.await_args_list] == methods
 
 
 @pytest.mark.asyncio

@@ -437,25 +437,18 @@ async def get_pull_request(git_repo: str, pr_number: int) -> dict[str, Any] | No
     return response.json() if response is not None else None
 
 
-async def upsert_pr_comment(
+async def post_pr_comment(
     git_repo: str, pr_number: int, marker: str, body: str, create: bool
 ) -> bool:
     client = get_github_client()
-    base = f"https://api.github.com/repos/{git_repo}/issues"
-    response = await client.request(
-        "get", f"{base}/{pr_number}/comments", params={"per_page": 100}
-    )
-    if response is None:
-        return False
-    for comment in response.json():
-        if marker in (comment.get("body") or ""):
-            url, method = f"{base}/comments/{comment['id']}", "patch"
-            break
-    else:
-        url, method = f"{base}/{pr_number}/comments", "post"
-        if not create:
+    url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/comments"
+    if not create:
+        response = await client.request("get", url, params={"per_page": 100})
+        if response is None:
+            return False
+        if not any(marker in (c.get("body") or "") for c in response.json()):
             return True
-    return await client.request(method, url, json={"body": body}) is not None
+    return await client.request("post", url, json={"body": body}) is not None
 
 
 async def add_comment_reaction(
