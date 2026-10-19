@@ -1,6 +1,7 @@
 import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 import httpx2 as httpx
 import jwt
@@ -503,113 +504,172 @@ async def refresh_permission_review(
             await _refresh(db, pipeline, client)
 
 
-async def submit_pending_assessments() -> dict[str, Any]:
+def _configured() -> bool:
+    return bool(
+        settings.permission_assessment_url and settings.permission_assessment_secret
+    )
+
+
+def _repos() -> list[str]:
+    repos = ["test"]
+    if settings.ff_permission_assessment_push:
+        repos += ["stable", "beta"]
+    return repos
+
+
+async def _submit(
+    db: AsyncSession, pipeline: Pipeline, client: httpx.AsyncClient
+) -> str | None:
+    await _lock_assessment(db, pipeline)
     if (
-        not settings.permission_assessment_url
-        or not settings.permission_assessment_secret
+        pipeline.status != PipelineStatus.COMMITTED
+        or pipeline.flat_manager_repo not in _repos()
+        or pipeline.build_id is None
+        or JobMonitor._as_utc(pipeline.created_at) <= datetime.now(UTC) - LOOKBACK
+        or not _is_candidate(pipeline)
+        or _finished(pipeline)
     ):
+        return None
+
+    state = dict((pipeline.provider_data or {}).get(PROVIDER_DATA_KEY) or {})
+    request = (
+        build_assessment_request(pipeline)
+        if pipeline.flat_manager_repo == "test"
+        else build_push_assessment_request(pipeline)
+    )
+    report = None
+    if request is None:
+        state = {"status": "skipped"}
+    else:
+        attempts = state.get("attempts", 0) + 1
+        try:
+            reason = await _skip_reason(pipeline)
+            if reason is not None:
+                state = {"status": "skipped", "reason": reason}
+                if reason == "no_app_ref":
+                    report = "not_applicable"
+            else:
+                if request["candidate_kind"] == "push":
+                    request = {
+                        **request,
+                        **await _merged_pull_request(
+                            request["source_repository"],
+                            request["built_revision"],
+                            request["target_git_branch"],
+                        ),
+                    }
+                state = {
+                    **await _assess(pipeline, request, client),
+                    "attempts": attempts,
+                }
+        except Exception as e:
+            logger.exception(
+                "Failed to submit permission assessment",
+                pipeline_id=str(pipeline.id),
+                app_id=pipeline.app_id,
+                build_id=pipeline.build_id,
+                attempts=attempts,
+            )
+            state = {
+                "status": "failed",
+                "attempts": attempts,
+                "last_error": str(e),
+            }
+            if attempts >= MAX_ATTEMPTS:
+                report = "error"
+        else:
+            if state["status"] == "skipped":
+                logger.info(
+                    "Skipped permission assessment",
+                    pipeline_id=str(pipeline.id),
+                    app_id=pipeline.app_id,
+                    build_id=pipeline.build_id,
+                    reason=state["reason"],
+                )
+            else:
+                logger.info(
+                    "Submitted permission assessment",
+                    pipeline_id=str(pipeline.id),
+                    app_id=pipeline.app_id,
+                    build_id=pipeline.build_id,
+                    assessment_id=state["assessment_id"],
+                    outcome=state["outcome"],
+                    error_code=state["error_code"],
+                    candidate_kind=request["candidate_kind"],
+                    pull_request_number=request.get("pull_request_number"),
+                    linked_assessment_id=state["linked_assessment_id"],
+                    linked_fingerprint_match=state["linked_fingerprint_match"],
+                )
+    state["updated_at"] = datetime.now(UTC).isoformat()
+    await _store(db, pipeline, state)
+
+    if request is not None and report is not None:
+        try:
+            await _lock_assessment(db, pipeline)
+            current = (pipeline.provider_data or {}).get(PROVIDER_DATA_KEY) or {}
+            reported = await _report(request, current, report)
+            if reported != current:
+                await _store(db, pipeline, reported)
+        except Exception:
+            logger.exception(
+                "Failed to report permission assessment",
+                pipeline_id=str(pipeline.id),
+            )
+            await db.rollback()
+    return state["status"]
+
+
+async def submit_pipeline_assessment(pipeline_id: UUID) -> None:
+    if not _configured():
+        return
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if pipeline is None:
+                return
+            status = await _submit(db, pipeline, client)
+        if status != "submitted":
+            return
+        try:
+            async with get_db() as db:
+                pipeline = await db.get(Pipeline, pipeline_id)
+                assert pipeline is not None
+                await _refresh(db, pipeline, client)
+        except Exception:
+            logger.exception(
+                "Failed to refresh permission assessment",
+                pipeline_id=str(pipeline_id),
+            )
+
+
+async def submit_pending_assessments() -> dict[str, Any]:
+    if not _configured():
         return {"status": "disabled"}
 
     counts = {"submitted": 0, "skipped": 0, "failed": 0}
     cutoff = datetime.now(UTC) - LOOKBACK
-    repos = ["test"]
-    if settings.ff_permission_assessment_push:
-        repos += ["stable", "beta"]
     async with get_db() as db:
         result = await db.execute(
-            select(Pipeline)
+            select(Pipeline.id)
             .where(
                 Pipeline.status == PipelineStatus.COMMITTED,
-                Pipeline.flat_manager_repo.in_(repos),
+                Pipeline.flat_manager_repo.in_(_repos()),
                 Pipeline.build_id.isnot(None),
                 Pipeline.created_at > cutoff,
             )
             .order_by(Pipeline.created_at)
         )
-        pipelines = [
-            pipeline
-            for pipeline in result.scalars()
-            if _is_candidate(pipeline) and not _finished(pipeline)
-        ]
+        pipeline_ids = list(result.scalars())
 
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            for pipeline in pipelines:
-                provider_data = dict(pipeline.provider_data or {})
-                state = dict(provider_data.get(PROVIDER_DATA_KEY) or {})
-                request = (
-                    build_assessment_request(pipeline)
-                    if pipeline.flat_manager_repo == "test"
-                    else build_push_assessment_request(pipeline)
-                )
-                if request is None:
-                    state = {"status": "skipped"}
-                else:
-                    attempts = state.get("attempts", 0) + 1
-                    try:
-                        reason = await _skip_reason(pipeline)
-                        if reason is not None:
-                            state = {"status": "skipped", "reason": reason}
-                            if reason == "no_app_ref":
-                                state = await _report(request, state, "not_applicable")
-                        else:
-                            if request["candidate_kind"] == "push":
-                                request = {
-                                    **request,
-                                    **await _merged_pull_request(
-                                        request["source_repository"],
-                                        request["built_revision"],
-                                        request["target_git_branch"],
-                                    ),
-                                }
-                            state = {
-                                **await _assess(pipeline, request, client),
-                                "attempts": attempts,
-                            }
-                    except Exception as e:
-                        logger.exception(
-                            "Failed to submit permission assessment",
-                            pipeline_id=str(pipeline.id),
-                            app_id=pipeline.app_id,
-                            build_id=pipeline.build_id,
-                            attempts=attempts,
-                        )
-                        state = {
-                            "status": "failed",
-                            "attempts": attempts,
-                            "last_error": str(e),
-                        }
-                        if attempts >= MAX_ATTEMPTS:
-                            state = await _report(request, state, "error")
-                    else:
-                        if state["status"] == "skipped":
-                            logger.info(
-                                "Skipped permission assessment",
-                                pipeline_id=str(pipeline.id),
-                                app_id=pipeline.app_id,
-                                build_id=pipeline.build_id,
-                                reason=state["reason"],
-                            )
-                        else:
-                            logger.info(
-                                "Submitted permission assessment",
-                                pipeline_id=str(pipeline.id),
-                                app_id=pipeline.app_id,
-                                build_id=pipeline.build_id,
-                                assessment_id=state["assessment_id"],
-                                outcome=state["outcome"],
-                                error_code=state["error_code"],
-                                candidate_kind=request["candidate_kind"],
-                                pull_request_number=request.get("pull_request_number"),
-                                linked_assessment_id=state["linked_assessment_id"],
-                                linked_fingerprint_match=state[
-                                    "linked_fingerprint_match"
-                                ],
-                            )
-                state["updated_at"] = datetime.now(UTC).isoformat()
-                await _store(db, pipeline, state)
-                counts[state["status"]] += 1
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        for pipeline_id in pipeline_ids:
+            async with get_db() as db:
+                pipeline = await db.get(Pipeline, pipeline_id)
+                status = await _submit(db, pipeline, client) if pipeline else None
+            if status:
+                counts[status] += 1
 
-            if settings.permission_status_repos:
-                await _refresh_statuses(client)
+        if settings.permission_status_repos:
+            await _refresh_statuses(client)
 
     return {"status": "completed", **counts}

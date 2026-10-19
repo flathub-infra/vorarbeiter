@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -149,6 +150,7 @@ class JobMonitor:
 
         async def _process(pipeline: Pipeline) -> bool:
             async with sem:
+                initial_status = pipeline.status
                 try:
                     return await self.check_and_update_pipeline_jobs(pipeline)
                 except Exception as e:
@@ -158,11 +160,18 @@ class JobMonitor:
                         error=str(e),
                     )
                     return False
+                finally:
+                    if (
+                        initial_status == PipelineStatus.SUCCEEDED
+                        and pipeline.status == PipelineStatus.COMMITTED
+                    ):
+                        committed.append(pipeline.id)
 
+        committed: list[uuid.UUID] = []
         results = await asyncio.gather(*(_process(pipeline) for pipeline in pipelines))
         updated_count = sum(1 for result in results if result)
 
-        if any(
+        if committed or any(
             result
             and pipeline.status not in (PipelineStatus.PENDING, PipelineStatus.RUNNING)
             and self._is_spot_build_type((pipeline.params or {}).get("build_type"))
@@ -171,8 +180,22 @@ class JobMonitor:
             await db.commit()
 
         from app.pipelines.build import BuildPipeline
+        from app.services.permission_assessment import submit_pipeline_assessment
 
-        await BuildPipeline().start_pending_builds()
+        async def _submit(pipeline_id: uuid.UUID) -> None:
+            async with sem:
+                try:
+                    await submit_pipeline_assessment(pipeline_id)
+                except Exception:
+                    logger.exception(
+                        "Failed to submit permission assessment after commit",
+                        pipeline_id=str(pipeline_id),
+                    )
+
+        try:
+            await BuildPipeline().start_pending_builds()
+        finally:
+            await asyncio.gather(*(_submit(pipeline_id) for pipeline_id in committed))
 
         return {
             "checked_pipelines": len(pipelines),

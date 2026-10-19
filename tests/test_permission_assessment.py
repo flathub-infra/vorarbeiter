@@ -15,12 +15,14 @@ from app.config import settings
 from app.main import app
 from app.models import Pipeline, PipelineStatus
 from app.services import permission_assessment
+from app.services.job_monitor import JobMonitor
 from app.services.permission_assessment import (
     MAX_ATTEMPTS,
     PROVIDER_DATA_KEY,
     build_assessment_request,
     build_push_assessment_request,
     submit_pending_assessments,
+    submit_pipeline_assessment,
 )
 
 HEAD = "a" * 40
@@ -1049,6 +1051,162 @@ async def test_notification_rejects_invalid_body(configured, api, body):
 async def test_notification_without_configuration_is_unavailable(api):
     with patch.object(settings, "permission_assessment_secret", None):
         assert (await notify(api)).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_commit_submits_assessment_immediately(
+    configured, local_db, db_session_maker, gh
+):
+    committed = make_pipeline(status=PipelineStatus.SUCCEEDED)
+    running = make_pipeline(status=PipelineStatus.SUCCEEDED, commit_job_id=1)
+    broken = make_pipeline(status=PipelineStatus.SUCCEEDED, commit_job_id=2)
+    await add(db_session_maker, committed, running, broken)
+    statuses = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            pipeline_id = uuid.UUID(json.loads(request.content)["pipeline_id"])
+            statuses.append((await load(db_session_maker, pipeline_id)).status)
+        return httpx.Response(
+            200,
+            json={"assessment_id": 7, "outcome": "pending", "review_url": REVIEW_URL},
+        )
+
+    jobs = {5678: 2, 1: 1, 2: 3}
+    flat_manager = AsyncMock()
+    flat_manager.get_job.side_effect = lambda job_id: {"status": jobs[job_id]}
+    with (
+        mock_http(handler),
+        patch.object(
+            permission_assessment,
+            "get_build_job_arches",
+            AsyncMock(return_value=["x86_64"]),
+        ),
+        patch(
+            "app.services.job_monitor.get_flat_manager_client",
+            return_value=flat_manager,
+        ),
+        patch.object(JobMonitor, "_notify_committed"),
+        patch.object(JobMonitor, "_notify_flat_manager_job_completed"),
+        patch.object(JobMonitor, "_create_job_failure_issue"),
+        patch("app.services.github_notifier.GitHubNotifier"),
+        patch("app.pipelines.build.BuildPipeline.start_pending_builds"),
+    ):
+        for _ in range(2):
+            async with db_session_maker() as db:
+                await JobMonitor(db=db).check_all_active_pipelines(db)
+
+    assert statuses == [PipelineStatus.COMMITTED]
+    state = (await load(db_session_maker, committed.id)).provider_data[
+        PROVIDER_DATA_KEY
+    ]
+    assert (state["status"], state["assessment_id"], state["attempts"]) == (
+        "submitted",
+        7,
+        1,
+    )
+    assert gh.status.await_args.args[1] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_report_failure_keeps_immediate_submission(
+    configured, local_db, db_session_maker, gh
+):
+    pipeline = make_pipeline()
+    await add(db_session_maker, pipeline)
+    gh.status.side_effect = RuntimeError("GitHub unavailable")
+    backend = Backend()
+
+    with (
+        mock_http(backend),
+        patch.object(
+            permission_assessment,
+            "get_build_job_arches",
+            AsyncMock(return_value=["x86_64"]),
+        ),
+    ):
+        await submit_pipeline_assessment(pipeline.id)
+        state = (await load(db_session_maker, pipeline.id)).provider_data[
+            PROVIDER_DATA_KEY
+        ]
+        assert (state["status"], state["attempts"]) == ("submitted", 1)
+        assert "reported" not in state
+        gh.status.side_effect = None
+        await submit_pending_assessments()
+
+    assert backend.posts == 1
+    state = (await load(db_session_maker, pipeline.id)).provider_data[PROVIDER_DATA_KEY]
+    assert state["reported"][0] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_immediate_submission_respects_age_limit(
+    configured, local_db, db_session_maker
+):
+    pipeline = make_pipeline(
+        created_at=datetime.now(UTC) - permission_assessment.LOOKBACK - timedelta(1)
+    )
+    await add(db_session_maker, pipeline)
+    backend = Backend()
+
+    with mock_http(backend):
+        await submit_pipeline_assessment(pipeline.id)
+        assert await submit_pending_assessments() == {
+            "status": "completed",
+            "submitted": 0,
+            "skipped": 0,
+            "failed": 0,
+        }
+
+    assert backend.requests == []
+
+
+@pytest.mark.asyncio
+async def test_report_failures_keep_acquisition_results(
+    configured, local_db, db_session_maker, gh, flat_manager
+):
+    skipped = make_pipeline()
+    failing = make_pipeline(
+        build_id=1235,
+        params={"pr_number": "43"},
+        provider_data={
+            "owner": "flathub-infra",
+            "repo": "vorarbeiter",
+            "run_id": 99,
+            PROVIDER_DATA_KEY: {"status": "failed", "attempts": MAX_ATTEMPTS - 1},
+        },
+    )
+    await add(db_session_maker, skipped, failing)
+    flat_manager.get_build_info.side_effect = lambda build_id: (
+        build_info(refs=("runtime/org.test.App/x86_64/stable",))
+        if build_id == skipped.build_id
+        else build_info()
+    )
+    gh.status.side_effect = RuntimeError("GitHub unavailable")
+
+    with (
+        mock_http(lambda request: httpx.Response(502)),
+        patch.object(
+            permission_assessment,
+            "get_build_job_arches",
+            AsyncMock(return_value=["x86_64"]),
+        ),
+    ):
+        result = await submit_pending_assessments()
+
+    assert result == {"status": "completed", "submitted": 0, "skipped": 1, "failed": 1}
+    assert gh.status.await_count == 2
+    skipped_state = (await load(db_session_maker, skipped.id)).provider_data[
+        PROVIDER_DATA_KEY
+    ]
+    failed_state = (await load(db_session_maker, failing.id)).provider_data[
+        PROVIDER_DATA_KEY
+    ]
+    assert skipped_state["status"] == "skipped"
+    assert (failed_state["status"], failed_state["attempts"]) == (
+        "failed",
+        MAX_ATTEMPTS,
+    )
 
 
 @pytest.mark.asyncio
