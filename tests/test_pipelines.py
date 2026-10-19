@@ -71,7 +71,24 @@ async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("submission", [False, True])
-async def test_start_pipeline(build_pipeline, mock_db, submission):
+@pytest.mark.parametrize(
+    "flat_manager_repo, target_branch, integrated_repos, integrated",
+    [
+        ("stable", "master", ["stable"], True),
+        ("stable", "master", ["beta"], False),
+        ("test", "beta", ["beta"], True),
+    ],
+)
+async def test_start_pipeline(
+    build_pipeline,
+    mock_db,
+    monkeypatch,
+    submission,
+    flat_manager_repo,
+    target_branch,
+    integrated_repos,
+    integrated,
+):
     pipeline_id = uuid.uuid4()
 
     mock_pipeline = MagicMock(spec=Pipeline)
@@ -84,10 +101,15 @@ async def test_start_pipeline(build_pipeline, mock_db, submission):
         "ref": "refs/pull/123/head" if submission else "refs/heads/master",
         "sha": "a" * 40,
         "base_sha": "b" * 40,
+        "pr_target_branch": target_branch,
     }
     if submission:
         mock_pipeline.params["pr_number"] = "123"
-    mock_pipeline.flat_manager_repo = None
+    mock_pipeline.flat_manager_repo = flat_manager_repo
+    monkeypatch.setattr(
+        "app.pipelines.build.settings.permission_review_integrated_repos",
+        integrated_repos,
+    )
     build_pipeline._supersede_conflicting_pipelines = AsyncMock()
 
     async def mock_get(model_class, model_id, *, with_for_update=False):
@@ -125,6 +147,9 @@ async def test_start_pipeline(build_pipeline, mock_db, submission):
     job_data = dispatch_call_args[2]
     assert job_data["params"]["inputs"]["flat_manager_token"] == "test-token"
     assert "base_sha" not in job_data["params"]["inputs"]
+    assert job_data["params"]["inputs"].get("permission_review_integrated") == (
+        "true" if integrated else None
+    )
     if submission:
         assert job_data["params"]["inputs"]["expected_submission_sha"] == "a" * 40
     else:
@@ -2446,58 +2471,3 @@ async def test_cancel_pending_pr_builds_selects_only_automatic_pending(
             await build.start_pipeline(rows[0].id)
         build.flat_manager.create_build.assert_not_awaited()
         build.provider.dispatch.assert_not_awaited()
-
-
-def _post_linter_report(mock_get_db, pipeline, **overrides):
-    payload = {"kind": "repo", "arch": "x86_64", "report": {"findings": []}}
-    payload.update(overrides)
-    mock_get_db_session = create_mock_get_db(mock_get_db)
-
-    with (
-        patch("app.routes.pipelines.get_db", mock_get_db_session),
-        patch("app.pipelines.build.get_db", mock_get_db_session),
-    ):
-        mock_get_db.get.return_value = pipeline
-        return TestClient(app).post(
-            f"/api/pipelines/{pipeline.id}/callback/linter_report",
-            json=payload,
-            headers={"Authorization": "Bearer test_token_12345"},
-        )
-
-
-def test_linter_report_callback_upserts_by_kind_and_arch(mock_get_db, sample_pipeline):
-    for overrides in (
-        {"kind": "manifest", "arch": None},
-        {},
-        {"arch": "aarch64"},
-        {"report": {"findings": ["x"]}},
-    ):
-        response = _post_linter_report(mock_get_db, sample_pipeline, **overrides)
-        assert response.status_code == 200
-
-    reports = sample_pipeline.provider_data["linter_reports"]
-    assert [(r["kind"], r["arch"]) for r in reports] == [
-        ("manifest", None),
-        ("repo", "aarch64"),
-        ("repo", "x86_64"),
-    ]
-    assert reports[-1]["report"] == {"findings": ["x"]}
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"kind": "builddir"},
-        {"kind": "manifest", "arch": "x86_64"},
-        {"arch": None},
-        {"report": []},
-        {"report": {"blob": "x" * (1024 * 1024)}},
-    ],
-)
-def test_linter_report_callback_rejects_invalid_body(
-    mock_get_db, sample_pipeline, overrides
-):
-    response = _post_linter_report(mock_get_db, sample_pipeline, **overrides)
-
-    assert response.status_code == 400
-    assert "linter_reports" not in (sample_pipeline.provider_data or {})

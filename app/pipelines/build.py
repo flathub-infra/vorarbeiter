@@ -1,4 +1,3 @@
-import json
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -568,8 +567,7 @@ class BuildPipeline:
             ):
                 inputs["expected_submission_sha"] = pipeline.params.get("sha", "")
 
-            if workflow_id == "build.yml" and settings.ff_linter_review_report:
-                inputs["linter_review_report"] = "true"
+            if workflow_id == "build.yml":
                 from app.services.permission_assessment import _destination
 
                 repo = flat_manager_repo
@@ -1125,37 +1123,6 @@ class BuildPipeline:
 
             updates: dict[str, Any] = {"total_cost": pipeline.total_cost}
             return pipeline, updates
-
-    async def handle_linter_report_callback(
-        self,
-        pipeline_id: uuid.UUID,
-        callback_data: dict[str, Any],
-    ) -> tuple[Pipeline, dict[str, Any]]:
-        kind, arch = callback_data.get("kind"), callback_data.get("arch")
-        report = callback_data.get("report")
-        if (
-            kind not in ("manifest", "repo")
-            or (arch is None) != (kind == "manifest")
-            or not isinstance(report, dict)
-            or len(json.dumps(report)) > 1024 * 1024
-        ):
-            raise ValueError("Invalid linter report")
-
-        async with get_db() as db:
-            pipeline = await db.get(Pipeline, pipeline_id, with_for_update=True)
-            if not pipeline:
-                raise ValueError(f"Pipeline {pipeline_id} not found")
-
-            provider_data = dict(pipeline.provider_data or {})
-            reports = [
-                r
-                for r in provider_data.get("linter_reports", [])
-                if (r["kind"], r["arch"]) != (kind, arch)
-            ]
-            reports.append({"kind": kind, "arch": arch, "report": report})
-            pipeline.provider_data = {**provider_data, "linter_reports": reports}
-            await db.commit()
-            return pipeline, {"linter_reports": len(reports)}
 
     async def verify_callback_token(
         self, pipeline_id: uuid.UUID, token: str

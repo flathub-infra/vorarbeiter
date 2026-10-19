@@ -124,8 +124,6 @@ def build_assessment_request(pipeline: Pipeline) -> dict[str, Any] | None:
     base = normalize_git_oid(params.get("base_sha"))
     if base is not None:
         request["base_revision"] = base
-    if reports := (pipeline.provider_data or {}).get("linter_reports"):
-        request["linter_reports"] = reports
     return request
 
 
@@ -168,8 +166,6 @@ def build_push_assessment_request(pipeline: Pipeline) -> dict[str, Any] | None:
     base = normalize_git_oid(params.get("base_sha"))
     if base is not None:
         request["base_revision"] = base
-    if reports := (pipeline.provider_data or {}).get("linter_reports"):
-        request["linter_reports"] = reports
     return request
 
 
