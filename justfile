@@ -307,10 +307,47 @@ prune-cache app_id:
     #!/usr/bin/env bash
     set -euxo pipefail
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
-    checksums=$(flatpak-builder --show-manifest "$manifest" | jq -r '.. | objects | (.md5, .sha1, .sha256, .sha512) | strings')
+    manifest_json=$(flatpak-builder --show-manifest "$manifest")
+    checksums=$(jq -r '.. | objects | (.md5, .sha1, .sha256, .sha512) | strings' <<< "$manifest_json")
     for dir in .flatpak-builder/downloads/*/; do
         [ -d "$dir" ] || continue
         grep -qxF "$(basename "$dir")" <<< "$checksums" || rm -rf "$dir"
+    done
+
+    make_absolute() {
+        local parent=${1%/} rel=$2
+        [[ "$rel" == ../* ]] || { echo "$rel"; return; }
+        while [[ "$rel" == ../* ]]; do
+            parent=${parent%/*}
+            rel=${rel#../}
+        done
+        echo "$parent/$rel"
+    }
+
+    declare -A keep_git=() seen_git=()
+    keep_git_mirror() {
+        local url=$1 ref=$2 name mirror key sub_url sub_path sub_commit
+        name=$(sed -E 's#[/:]+#_#g' <<< "$url")
+        keep_git[$name]=1
+        [ -z "${seen_git[$name@$ref]:-}" ] || return 0
+        seen_git[$name@$ref]=1
+        mirror=.flatpak-builder/git/$name
+        git -C "$mirror" cat-file -e "$ref:.gitmodules" 2>/dev/null || return 0
+        while read -r key sub_url; do
+            sub_path=$(git -C "$mirror" config --blob "$ref:.gitmodules" "${key%.url}.path") || continue
+            sub_commit=$(git -C "$mirror" ls-tree "$ref" "$sub_path" | awk '$1 == "160000" { print $3 }') || continue
+            [ -n "$sub_commit" ] || continue
+            keep_git_mirror "$(make_absolute "$url" "$sub_url")" "$sub_commit"
+        done < <(git -C "$mirror" config --blob "$ref:.gitmodules" --get-regexp '^submodule\..*\.url$' || true)
+    }
+
+    while IFS=$'\t' read -r url ref; do
+        keep_git_mirror "$url" "$ref"
+    done < <(jq -r '.. | objects | select(.type? == "git" and (.url | type) == "string") | [.url, (.branch // .tag // .commit // "HEAD")] | @tsv' <<< "$manifest_json")
+
+    for dir in .flatpak-builder/git/*/; do
+        [ -d "$dir" ] || continue
+        [ -n "${keep_git[$(basename "$dir")]:-}" ] || rm -rf "$dir"
     done
     if [ -d .flatpak-builder/ccache ]; then
         find .flatpak-builder/ccache -type f ! -newer .ccache-marker -delete
