@@ -34,7 +34,7 @@ STATUS_CONTEXT = "flathub/permissions"
 COMMENT_MARKER = "<!-- flathub-permission-review -->"
 STATUSES = {
     "accepted": ("success", "Permissions accepted"),
-    "pending": ("pending", "Permission review pending on Flathub"),
+    "pending": ("pending", "Permission review pending"),
     "rejected": ("failure", "Permission change rejected"),
     "error": ("error", "Permission assessment failed"),
     "not_applicable": ("success", "No application permissions to review"),
