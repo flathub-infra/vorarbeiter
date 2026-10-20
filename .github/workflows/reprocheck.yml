@@ -45,7 +45,8 @@ jobs:
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
 
-          curl -fsS -X POST \
+          curl -fsS --retry-all-errors --retry 5 --retry-delay 10 \
+            --retry-max-time 150 --connect-timeout 60 -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d '{"log_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
@@ -186,7 +187,8 @@ jobs:
               message: $message
             }')
 
-          curl -fsS -X POST \
+          curl -fsS --retry-all-errors --retry 5 --retry-delay 10 \
+            --retry-max-time 150 --connect-timeout 60 -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d "$payload" \
@@ -210,7 +212,8 @@ jobs:
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
 
-          curl -sS --retry 5 --retry-delay 10 --connect-timeout 60 -X POST \
+          curl -sS --retry-all-errors --retry 5 --retry-delay 10 \
+            --retry-max-time 150 --connect-timeout 60 -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
             -d '{"status": "failure", "build_pipeline_id": "${{ inputs.build_pipeline_id }}"}' \
