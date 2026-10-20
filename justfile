@@ -186,10 +186,23 @@ build app_id git_ref build_arch:
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
     subject=$(just -f .flathub.justfile _get_build_subject)
 
-    extra_args="--install-deps-from=flathub"
+    deps_args="--install-deps-from=flathub"
     if [ "$ref_branch" = "beta" ] || [ "$ref_branch" = "test" ]; then
-        extra_args="$extra_args --install-deps-from=flathub-beta"
+        deps_args="$deps_args --install-deps-from=flathub-beta"
     fi
+
+    for attempt in 1 2 3 4 5; do
+        if flatpak-builder --user $deps_args --install-deps-only builddir "$manifest"; then
+            break
+        fi
+        if [ "$attempt" -eq 5 ]; then
+            echo "Failed to install dependencies after $attempt attempts"
+            exit 1
+        fi
+        sleep $((attempt * 15))
+    done
+
+    extra_args=""
 
     if [ "{{build_arch}}" = "x86_64" ]; then
         extra_args="$extra_args --bundle-sources"
