@@ -338,7 +338,8 @@ async def _report(
                 "Explain why these changes are needed; moderators may reject it.",
                 "",
             ]
-        body += ["This check does not block merging."]
+        if outcome != "accepted":
+            body += ["This check does not block merging."]
         if outcome == "rejected":
             body += ["", REJECTION_HELP]
         ok = await post_pr_comment(

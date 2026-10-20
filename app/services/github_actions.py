@@ -211,7 +211,12 @@ class GitHubActionsService:
             for a in annotations
         )
 
-        if cancelled and not has_exit_or_user_cancel:
+        spot_interrupted = any(
+            a.get("message", "").startswith("AWS interrupted the EC2 Spot instance")
+            for a in annotations
+        )
+
+        if spot_interrupted or (cancelled and not has_exit_or_user_cancel):
             logger.info(
                 "Run detected as cancelled by GitHub via job annotation",
                 run_id=run_id_int,

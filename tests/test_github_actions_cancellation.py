@@ -274,6 +274,38 @@ async def test_check_run_was_cancelled_via_lost_runner_annotation(
 
 
 @pytest.mark.asyncio
+async def test_check_run_was_cancelled_via_spot_interruption_with_exit_code(
+    github_actions_service, sample_provider_data
+):
+    annotations = [
+        {
+            "message": "Process completed with exit code 1.",
+            "annotation_level": "failure",
+        },
+        {
+            "message": "AWS interrupted the EC2 Spot instance running this job. RunsOn can retry it after the workflow run finishes.",
+            "annotation_level": "failure",
+        },
+    ]
+    with (
+        patch.object(
+            github_actions_service, "get_workflow_run_details"
+        ) as mock_get_details,
+        patch(
+            "app.services.github_actions.get_check_run_annotations"
+        ) as mock_get_annotations,
+    ):
+        mock_get_details.return_value = {"run_attempt": 1}
+        mock_get_annotations.return_value = annotations
+
+        result = await github_actions_service.check_run_was_cancelled(
+            sample_provider_data
+        )
+
+        assert result is True
+
+
+@pytest.mark.asyncio
 async def test_check_run_was_cancelled_via_logs(
     github_actions_service, sample_provider_data, cancelled_annotations
 ):
