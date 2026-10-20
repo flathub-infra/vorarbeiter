@@ -547,6 +547,7 @@ jobs:
 
       - name: Set up ORAS
         if: ${{ github.event.inputs.app_id != 'flathub' }}
+        continue-on-error: true
         uses: oras-project/setup-oras@v2
 
       - name: Delete image if too large
