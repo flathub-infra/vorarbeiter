@@ -546,7 +546,17 @@ jobs:
           echo "APP_ID=$(cat $APP_ID_FILE)" >> $GITHUB_ENV
 
       - name: Set up ORAS
+        id: setup-oras
         if: ${{ github.event.inputs.app_id != 'flathub' }}
+        continue-on-error: true
+        uses: oras-project/setup-oras@v2
+
+      - name: Wait before retrying ORAS setup
+        if: ${{ steps.setup-oras.outcome == 'failure' }}
+        run: sleep 60
+
+      - name: Retry ORAS setup
+        if: ${{ steps.setup-oras.outcome == 'failure' }}
         continue-on-error: true
         uses: oras-project/setup-oras@v2
 
