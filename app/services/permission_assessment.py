@@ -332,8 +332,6 @@ async def _report(
         body = [COMMENT_MARKER, COMMENTS[outcome], ""]
         if rationale := marker[3]:
             body += [f"> {line}" for line in rationale.splitlines()] + [""]
-        if outcome == "rejected":
-            body += [REJECTION_HELP, ""]
         if outcome == "pending" and state.get("differences"):
             body += _diff(state["differences"])
             body += [
@@ -341,6 +339,8 @@ async def _report(
                 "",
             ]
         body += ["This check does not block merging."]
+        if outcome == "rejected":
+            body += ["", REJECTION_HELP]
         ok = await post_pr_comment(
             repo,
             request["pull_request_number"],
