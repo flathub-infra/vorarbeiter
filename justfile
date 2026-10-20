@@ -291,7 +291,17 @@ validate-build:
 upload url:
     #!/usr/bin/env bash
     set -euxo pipefail
-    flat-manager-client push "{{url}}" repo
+
+    for attempt in 1 2 3 4 5; do
+        if flat-manager-client push "{{url}}" repo; then
+            exit 0
+        fi
+        if [ "$attempt" -eq 5 ]; then
+            echo "Failed to upload after $attempt attempts"
+            exit 1
+        fi
+        sleep $((attempt * 15))
+    done
 
 prune-cache app_id:
     #!/usr/bin/env bash
