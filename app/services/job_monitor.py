@@ -182,8 +182,10 @@ class JobMonitor:
         from app.pipelines.build import BuildPipeline
         from app.services.permission_assessment import submit_pipeline_assessment
 
-        async def _submit(pipeline_id: uuid.UUID) -> None:
-            async with sem:
+        try:
+            await BuildPipeline().start_pending_builds()
+        finally:
+            for pipeline_id in committed:
                 try:
                     await submit_pipeline_assessment(pipeline_id)
                 except Exception:
@@ -191,11 +193,6 @@ class JobMonitor:
                         "Failed to submit permission assessment after commit",
                         pipeline_id=str(pipeline_id),
                     )
-
-        try:
-            await BuildPipeline().start_pending_builds()
-        finally:
-            await asyncio.gather(*(_submit(pipeline_id) for pipeline_id in committed))
 
         return {
             "checked_pipelines": len(pipelines),
