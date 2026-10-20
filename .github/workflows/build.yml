@@ -168,6 +168,14 @@ jobs:
           timeout 5 docker --version || true
           timeout 10 sudo aa-status || true
 
+      - name: Pull linter image
+        run: |
+          for delay in 0 15 30 60 120; do
+            sleep "$delay"
+            docker pull ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged && exit 0
+          done
+          exit 1
+
       - name: Checkout repository
         run: |
           docker run --rm \
@@ -484,6 +492,14 @@ jobs:
         run: |
           timeout 5 docker --version || true
           timeout 10 sudo aa-status || true
+
+      - name: Pull linter image
+        run: |
+          for delay in 0 15 30 60 120; do
+            sleep "$delay"
+            docker pull ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged && exit 0
+          done
+          exit 1
 
       - name: Checkout repository
         run: |

@@ -90,6 +90,14 @@ jobs:
         run: |
           curl -s https://raw.githubusercontent.com/flathub-infra/vorarbeiter/refs/heads/main/flatpak.seccomp.json -o flatpak.seccomp.json
 
+      - name: Pull linter image
+        run: |
+          for delay in 0 15 30 60 120; do
+            sleep "$delay"
+            docker pull ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged && exit 0
+          done
+          exit 1
+
       - name: Run reprocheck
         continue-on-error: true
         id: reprocheck
