@@ -147,7 +147,7 @@ download-sources app_id:
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
 
     max_retries=5
-    sleep_seconds=7
+    sleep_seconds=15
 
     for (( retry_count=0; retry_count<$max_retries; retry_count++ )); do
         if flatpak-builder --allow-missing-runtimes --force-clean --sandbox --download-only builddir "$manifest"; then
@@ -155,8 +155,8 @@ download-sources app_id:
         fi
 
         if [[ $retry_count -lt $((max_retries - 1)) ]]; then
-            echo "Attempt $((retry_count + 1)) failed. Retrying in $sleep_seconds seconds..."
-            sleep $sleep_seconds
+            echo "Attempt $((retry_count + 1)) failed. Retrying in $((sleep_seconds * (retry_count + 1))) seconds..."
+            sleep $((sleep_seconds * (retry_count + 1)))
         fi
     done
 
