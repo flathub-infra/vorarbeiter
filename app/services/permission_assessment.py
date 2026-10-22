@@ -264,6 +264,15 @@ def _parse(response: httpx.Response) -> dict[str, Any]:
     return {"status": "submitted", **{k: body.get(k) for k in ASSESSMENT_FIELDS}}
 
 
+def _assessment_missing(response: httpx.Response) -> bool:
+    if response.status_code != 404:
+        return False
+    try:
+        return response.json() == {"detail": "assessment_not_found"}
+    except ValueError:
+        return False
+
+
 def _is_candidate(pipeline: Pipeline) -> bool:
     params = pipeline.params or {}
     if pipeline.flat_manager_repo == "test":
@@ -434,12 +443,16 @@ async def _refresh(
     if pr is None:
         raise RuntimeError("Failed to fetch permission pull request")
     outcome = None
+    new: dict[str, Any]
     if pr["state"] != "open":
         new = {**state, "closed": True}
     elif pr["head"]["sha"] != request["pull_request_head_revision"]:
         return
     elif pr["base"]["ref"] != request["target_git_branch"]:
         new, outcome = state, "target_changed"
+    elif state.get("missing"):
+        # Retry reporting, not the vanished assessment (or its old build).
+        new, outcome = state, "error"
     else:
         base = pr["base"]["sha"]
         recorded = state.get("base_revision", request.get("base_revision"))
@@ -454,7 +467,24 @@ async def _refresh(
                 f"{url}/{state['assessment_id']}",
                 headers={"Authorization": f"Bearer {_token()}"},
             )
-            new = {**state, **_parse(response)}
+            if _assessment_missing(response):
+                # Keep this pipeline submitted so an older approval cannot become
+                # the latest assessment. Never reuse a decision we cannot verify.
+                new = {
+                    **state,
+                    **dict.fromkeys(ASSESSMENT_FIELDS),
+                    "assessment_id": state["assessment_id"],
+                    "outcome": "error",
+                    "error_code": "assessment_not_found",
+                    "missing": True,
+                }
+                logger.warning(
+                    "Permission assessment no longer exists",
+                    pipeline_id=str(pipeline.id),
+                    assessment_id=state["assessment_id"],
+                )
+            else:
+                new = {**state, **_parse(response)}
         outcome = new["outcome"]
     try:
         if outcome is not None:
