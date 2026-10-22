@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx2 as httpx
@@ -24,6 +25,140 @@ from app.utils.github import (
 def mock_settings():
     with patch.object(github_module.settings, "flathubbot_token", "test-token"):
         yield github_module.settings
+
+
+@pytest.mark.asyncio
+async def test_get_pull_request_metadata_for_large_pr():
+    head, base = "a" * 40, "b" * 40
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path != "/graphql":
+            return httpx.Response(
+                422,
+                json={
+                    "message": "The request could not be processed because too many files changed"
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "state": "OPEN",
+                            "headRefOid": head,
+                            "baseRefName": "master",
+                            "baseRefOid": base,
+                        }
+                    }
+                }
+            },
+        )
+
+    real_client = httpx.AsyncClient
+    with patch.object(
+        github_module.httpx,
+        "AsyncClient",
+        side_effect=lambda **kwargs: real_client(
+            transport=httpx.MockTransport(handler), **kwargs
+        ),
+    ):
+        pr = await github_module.get_pull_request(
+            "flathub/io.github.nroduit.Weasis", 41
+        )
+
+    assert pr == {
+        "state": "open",
+        "head": {"sha": head},
+        "base": {"ref": "master", "sha": base},
+    }
+    assert len(requests) == 1
+    assert requests[0].method == "POST"
+    payload = json.loads(requests[0].content)
+    assert payload["variables"] == {
+        "owner": "flathub",
+        "name": "io.github.nroduit.Weasis",
+        "number": 41,
+    }
+    assert "files" not in payload["query"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["OPEN", "CLOSED", "MERGED"])
+async def test_get_pull_request_states(mock_httpx, state):
+    mock_httpx.set_response(
+        "request",
+        json_data={
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "state": state,
+                        "headRefOid": "a" * 40,
+                        "baseRefOid": "b" * 40,
+                        "baseRefName": "master",
+                    }
+                }
+            }
+        },
+    )
+    with mock_httpx.patch():
+        pr = await github_module.get_pull_request("flathub/test", 42)
+    assert pr["state"] == ("open" if state == "OPEN" else "closed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        [],
+        {},
+        {"data": None},
+        {"data": {"repository": None}},
+        {"data": {"repository": {"pullRequest": None}}},
+        {"data": {"repository": {"pullRequest": {"state": "OPEN"}}}},
+    ],
+)
+async def test_get_pull_request_rejects_incomplete_metadata(mock_httpx, body):
+    response = mock_httpx.set_response("request")
+    response.json.return_value = body
+    with mock_httpx.patch():
+        assert await github_module.get_pull_request("flathub/test", 42) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"state": "UNKNOWN"},
+        {"headRefOid": None},
+        {"headRefOid": "not-a-sha"},
+        {"baseRefOid": "0" * 40},
+        {"baseRefName": ""},
+        {"baseRefName": None},
+    ],
+)
+async def test_get_pull_request_rejects_invalid_metadata(mock_httpx, changes):
+    mock_httpx.set_response(
+        "request",
+        json_data={
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "state": "OPEN",
+                        "headRefOid": "a" * 40,
+                        "baseRefOid": "b" * 40,
+                        "baseRefName": "master",
+                        **changes,
+                    }
+                }
+            }
+        },
+    )
+    with mock_httpx.patch():
+        assert await github_module.get_pull_request("flathub/test", 42) is None
 
 
 @pytest.mark.asyncio
