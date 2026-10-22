@@ -1,9 +1,11 @@
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,6 +78,7 @@ async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
     [
         ("stable", "master", ["stable"], True),
         ("stable", "master", ["beta"], False),
+        ("test", "master", ["stable"], True),
         ("test", "beta", ["beta"], True),
     ],
 )
@@ -145,6 +148,22 @@ async def test_start_pipeline(
 
     dispatch_call_args = build_pipeline.provider.dispatch.call_args[0]
     job_data = dispatch_call_args[2]
+    # Check the real caller against the workflow contract, not a copied input list.
+    # BaseLoader preserves the YAML key "on" rather than treating it as a boolean.
+    workflow = yaml.load(
+        Path(".github/workflows/build.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    declared_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    inputs = job_data["params"]["inputs"]
+    assert not (inputs.keys() - declared_inputs.keys()), "Unexpected workflow inputs"
+    required_inputs = {
+        name
+        for name, config in declared_inputs.items()
+        if config.get("required") == "true" and "default" not in config
+    }
+    assert required_inputs <= inputs.keys()
+    assert "linter_review_report" not in inputs
+    assert "linter_review_report" not in declared_inputs
     assert job_data["params"]["inputs"]["flat_manager_token"] == "test-token"
     assert "base_sha" not in job_data["params"]["inputs"]
     assert job_data["params"]["inputs"].get("permission_review_integrated") == (
