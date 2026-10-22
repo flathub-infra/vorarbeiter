@@ -1,6 +1,6 @@
 import pytest
-from unittest.mock import MagicMock
-from httpxyz import HTTPStatusError, NetworkError, TimeoutException
+from unittest.mock import AsyncMock, MagicMock
+from httpxyz import HTTPStatusError, NetworkError, Request, Response, TimeoutException
 
 from app.utils.flat_manager import FlatManagerClient, JobStatus, JobKind
 
@@ -12,6 +12,49 @@ def flat_manager_client(mock_httpx):
     )
     client.client = mock_httpx._client
     return client
+
+
+class TestRequestTimeout:
+    @pytest.mark.asyncio
+    async def test_build_info_recovers_from_http_timeout(
+        self, flat_manager_client, monkeypatch
+    ):
+        request = Request(
+            "GET", flat_manager_client.get_build_url(331683) + "/extended"
+        )
+        flat_manager_client.client.request.side_effect = [
+            Response(408, request=request),
+            Response(200, request=request, json={"build": {"commit_job_id": 123}}),
+        ]
+        sleep = AsyncMock()
+        monkeypatch.setattr("asyncio.sleep", sleep)
+
+        result = await flat_manager_client.get_build_info(331683)
+
+        assert result == {"build": {"commit_job_id": 123}}
+        assert flat_manager_client.client.request.call_count == 2
+        sleep.assert_awaited_once_with(1)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "status", "attempts"),
+        [("GET", 408, 3), ("GET", 403, 1), ("POST", 408, 1)],
+    )
+    async def test_failure_is_propagated(
+        self, flat_manager_client, monkeypatch, method, status, attempts
+    ):
+        url = flat_manager_client.get_build_url(331683)
+        response = Response(status, request=Request(method, url))
+        flat_manager_client.client.request.return_value = response
+        sleep = AsyncMock()
+        monkeypatch.setattr("asyncio.sleep", sleep)
+
+        with pytest.raises(HTTPStatusError) as exc_info:
+            await flat_manager_client._request(method, url)
+
+        assert exc_info.value.response is response
+        assert flat_manager_client.client.request.call_count == attempts
+        assert sleep.await_count == attempts - 1
 
 
 class TestCreateBuild:

@@ -1,3 +1,4 @@
+import asyncio
 from enum import IntEnum
 from typing import Any, NotRequired, TypedDict
 from urllib.parse import urlparse
@@ -83,13 +84,28 @@ class FlatManagerClient:
         self.client = httpx.AsyncClient()
 
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        response = await self.client.request(
-            method,
-            url,
-            headers=self.headers,
-            timeout=self.timeout,
-            **kwargs,
-        )
+        # Reads can safely be replayed after an upstream request timeout.
+        # Mutating requests may already have taken effect, so only attempt once.
+        max_attempts = 3 if method.upper() == "GET" else 1
+        for attempt in range(max_attempts):
+            response = await self.client.request(
+                method,
+                url,
+                headers=self.headers,
+                timeout=self.timeout,
+                **kwargs,
+            )
+            if response.status_code != 408 or attempt == max_attempts - 1:
+                break
+            delay = 2**attempt
+            logger.warning(
+                "Flat-manager request timed out, retrying",
+                url=url,
+                attempt=attempt + 1,
+                delay=delay,
+            )
+            await response.aclose()
+            await asyncio.sleep(delay)
         response.raise_for_status()
         return response
 
