@@ -567,16 +567,6 @@ class BuildPipeline:
             ):
                 inputs["expected_submission_sha"] = pipeline.params.get("sha", "")
 
-            if workflow_id == "build.yml":
-                from app.services.permission_assessment import _destination
-
-                repo = flat_manager_repo
-                if flat_manager_repo == "test":
-                    target = inputs["pr_target_branch"]
-                    repo = (_destination(target) or (None,))[0]
-                if repo in settings.permission_review_integrated_repos:
-                    inputs["permission_review_integrated"] = "true"
-
             if requires_flat_manager:
                 assert pipeline.build_id is not None
                 inputs.update(

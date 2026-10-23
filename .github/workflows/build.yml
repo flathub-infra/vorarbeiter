@@ -45,10 +45,6 @@ on:
         description: 'Use spot instances'
         required: false
         default: 'true'
-      permission_review_integrated:
-        description: 'Run linter permission review'
-        required: false
-        default: 'false'
 
 jobs:
   check-event-type:
@@ -255,7 +251,6 @@ jobs:
             -e XDG_STATE_HOME=/work/.local/state \
             -e REF \
             -e PR_TARGET_BRANCH \
-            -e PERMISSION_REVIEW_INTEGRATED=${{ inputs.permission_review_integrated }} \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-manifest $APP_ID
 
@@ -673,7 +668,6 @@ jobs:
             -e REF \
             -e PR_TARGET_BRANCH \
             -e BUILD_ARCH \
-            -e PERMISSION_REVIEW_INTEGRATED=${{ inputs.permission_review_integrated }} \
             ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
             just -f .flathub.justfile validate-build
 

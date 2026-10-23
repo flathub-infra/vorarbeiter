@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     ff_admin_ping_comment: bool = True
     ff_disable_test_builds: bool = False
     ff_permission_assessment_push: bool = False
-    permission_review_integrated_repos: list[str] = []
     max_concurrent_builds: int = 15
     test_build_failure_streak_limit: int = 3
     test_build_penalty_minutes: int = 60

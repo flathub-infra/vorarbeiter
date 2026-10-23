@@ -71,24 +71,7 @@ async def test_create_pipeline(build_pipeline, mock_db, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("submission", [False, True])
-@pytest.mark.parametrize(
-    "flat_manager_repo, target_branch, integrated_repos, integrated",
-    [
-        ("stable", "master", ["stable"], True),
-        ("stable", "master", ["beta"], False),
-        ("test", "beta", ["beta"], True),
-    ],
-)
-async def test_start_pipeline(
-    build_pipeline,
-    mock_db,
-    monkeypatch,
-    submission,
-    flat_manager_repo,
-    target_branch,
-    integrated_repos,
-    integrated,
-):
+async def test_start_pipeline(build_pipeline, mock_db, submission):
     pipeline_id = uuid.uuid4()
 
     mock_pipeline = MagicMock(spec=Pipeline)
@@ -101,15 +84,10 @@ async def test_start_pipeline(
         "ref": "refs/pull/123/head" if submission else "refs/heads/master",
         "sha": "a" * 40,
         "base_sha": "b" * 40,
-        "pr_target_branch": target_branch,
     }
     if submission:
         mock_pipeline.params["pr_number"] = "123"
-    mock_pipeline.flat_manager_repo = flat_manager_repo
-    monkeypatch.setattr(
-        "app.pipelines.build.settings.permission_review_integrated_repos",
-        integrated_repos,
-    )
+    mock_pipeline.flat_manager_repo = None
     build_pipeline._supersede_conflicting_pipelines = AsyncMock()
 
     async def mock_get(model_class, model_id, *, with_for_update=False):
@@ -147,9 +125,6 @@ async def test_start_pipeline(
     job_data = dispatch_call_args[2]
     assert job_data["params"]["inputs"]["flat_manager_token"] == "test-token"
     assert "base_sha" not in job_data["params"]["inputs"]
-    assert job_data["params"]["inputs"].get("permission_review_integrated") == (
-        "true" if integrated else None
-    )
     if submission:
         assert job_data["params"]["inputs"]["expected_submission_sha"] == "a" * 40
     else:
