@@ -1833,7 +1833,6 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                         sha=sha,
                         state="error",
                         git_repo=event.repository,
-                        context="builds/x86_64",
                         description=f"Test builds paused until {until:%H:%M} UTC after {settings.test_build_failure_streak_limit} failed builds",
                         target_url=BUILDING_LOCALLY_URL,
                     )

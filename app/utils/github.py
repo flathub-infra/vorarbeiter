@@ -250,13 +250,16 @@ def validate_pipeline_commit_params(params: dict[str, Any]) -> dict[str, Any]:
     return validated_params
 
 
+BUILD_STATUS_CONTEXTS = ("builds/x86_64", "flathub/build")
+
+
 async def update_commit_status(
     sha: str,
     state: str,
     git_repo: str,
     target_url: str | None = None,
     description: str | None = None,
-    context: str = "builds/x86_64",
+    context: str | None = None,
     db: "AsyncSession | None" = None,
 ) -> bool:
     if not git_repo:
@@ -282,44 +285,51 @@ async def update_commit_status(
         return False
 
     url = f"https://api.github.com/repos/{git_repo}/statuses/{sha}"
-    payload: dict[str, str] = {
-        "state": state,
-        "context": context,
-    }
-
-    if target_url:
-        payload["target_url"] = target_url
-
-    if description:
-        payload["description"] = description
-
-    client = get_github_client()
     ctx = {"git_repo": git_repo, "commit": sha}
-    result = await client.request_with_result("post", url, json=payload, context=ctx)
+    client = get_github_client()
+    ok = True
 
-    if result.response:
-        logger.info(
-            "Successfully updated GitHub status",
-            git_repo=git_repo,
-            commit=sha,
-            state=state,
-        )
-        return True
+    for status_context in (context,) if context else BUILD_STATUS_CONTEXTS:
+        payload: dict[str, str] = {
+            "state": state,
+            "context": status_context,
+        }
 
-    if result.should_queue and db:
-        from app.services.github_task import GitHubTaskService
+        if target_url:
+            payload["target_url"] = target_url
 
-        await GitHubTaskService().queue_task(
-            db,
-            task_type="commit_status",
-            method="post",
-            url=url,
-            payload=payload,
-            context=ctx,
-            retry_after=result.retry_after,
+        if description:
+            payload["description"] = description
+
+        result = await client.request_with_result(
+            "post", url, json=payload, context=ctx
         )
 
-    return False
+        if result.response:
+            logger.info(
+                "Successfully updated GitHub status",
+                git_repo=git_repo,
+                commit=sha,
+                state=state,
+                status_context=status_context,
+            )
+            continue
+
+        ok = False
+        if result.should_queue and db:
+            from app.services.github_task import GitHubTaskService
+
+            await GitHubTaskService().queue_task(
+                db,
+                task_type="commit_status",
+                method="post",
+                url=url,
+                payload=payload,
+                context=ctx,
+                retry_after=result.retry_after,
+            )
+
+    return ok
 
 
 async def set_pr_labels(

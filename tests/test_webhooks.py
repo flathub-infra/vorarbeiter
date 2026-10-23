@@ -4237,7 +4237,6 @@ async def test_pr_penalty_gate(actor, app_id, paused):
             sha="a" * 40,
             state="error",
             git_repo=repo,
-            context="builds/x86_64",
             description="Test builds paused until 13:00 UTC after 3 failed builds",
             target_url=BUILDING_LOCALLY_URL,
         )

@@ -90,7 +90,7 @@ GQL_ADD_BRANCH_PROTECTION = gql(
                 requiresStatusChecks: true
                 requiresStrictStatusChecks: true
                 restrictsReviewDismissals: false
-                requiredStatusCheckContexts: ["builds/x86_64"]
+                requiredStatusCheckContexts: ["flathub/build"]
             }
         ) {
             branchProtectionRule {
