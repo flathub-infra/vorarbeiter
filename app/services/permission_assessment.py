@@ -339,7 +339,7 @@ async def _report(
                 "",
             ]
         if outcome != "accepted":
-            body += ["This check does not block merging."]
+            body += ["Merging is blocked until a Flathub moderator approves."]
         if outcome == "rejected":
             body += ["", REJECTION_HELP]
         ok = await post_pr_comment(
