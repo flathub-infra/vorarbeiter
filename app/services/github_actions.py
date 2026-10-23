@@ -3,7 +3,6 @@ import zipfile
 from io import BytesIO
 from typing import Any
 
-import httpx2 as httpx
 import structlog
 
 from app.utils.github import get_check_run_annotations, get_github_actions_client
@@ -46,14 +45,11 @@ class GitHubActionsService:
             url,
             content=json.dumps(payload),
             context={"owner": owner, "repo": repo, "workflow_id": workflow_id},
+            raise_on_error=True,
         )
 
-        if not response:
-            raise httpx.HTTPStatusError(
-                "Failed to dispatch workflow",
-                request=httpx.Request("POST", url),
-                response=httpx.Response(500),
-            )
+        if response is None:
+            raise RuntimeError("GitHub workflow dispatch returned no response")
 
         return {
             "status": "dispatched",
