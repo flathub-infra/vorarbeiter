@@ -48,6 +48,12 @@ COMMENTS = {
     "in this pull request.",
     "error": "Flathub could not check the permissions of this build.",
 }
+AUTOMATIC_COMMENTS = {
+    "accepted": "Flathub approved the permission changes in this pull request "
+    "automatically.",
+    "rejected": "Flathub rejected the permission changes in this pull request "
+    "automatically.",
+}
 ASSESSMENT_FIELDS = [
     "assessment_id",
     "outcome",
@@ -60,6 +66,7 @@ ASSESSMENT_FIELDS = [
     "decision_id",
     "decision_rationale",
     "decision_reviewer",
+    "decision_automatic",
 ]
 REJECTION_HELP = (
     "<sub>If you disagree with this decision, comment"
@@ -330,7 +337,8 @@ async def _report(
         head, status, repo, None, description, STATUS_CONTEXT
     )
     if ok and outcome in COMMENTS:
-        body = [COMMENT_MARKER, COMMENTS[outcome], ""]
+        automatic = state.get("decision_automatic") and AUTOMATIC_COMMENTS.get(outcome)
+        body = [COMMENT_MARKER, automatic or COMMENTS[outcome], ""]
         if outcome == "rejected":
             body += ["cc @flathub/reviewers", ""]
         if rationale := marker[3]:

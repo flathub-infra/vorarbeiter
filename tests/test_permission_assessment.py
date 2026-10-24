@@ -967,6 +967,35 @@ async def test_notifications_report_current_decision(
     assert backend.posts == 0
 
 
+@pytest.mark.parametrize(
+    ("outcome", "status", "text"),
+    [
+        ("accepted", "success", "Flathub approved the permission changes"),
+        ("rejected", "failure", "Flathub rejected the permission changes"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_automatic_decisions_are_reported_as_automatic(
+    configured, local_db, db_session_maker, gh, api, outcome, status, text
+):
+    await add(db_session_maker, submitted())
+    backend = Backend(
+        outcome=outcome,
+        decision_id=3,
+        decision_rationale="Rule rationale.",
+        decision_automatic=True,
+    )
+
+    with mock_http(backend):
+        assert (await notify(api)).status_code == 204
+
+    assert gh.status.await_args.args[1] == status
+    body = gh.comment.await_args.args[3]
+    assert text in body
+    assert "> Rule rationale." in body
+    assert ("bot, ping admins" in body) is (outcome == "rejected")
+
+
 @pytest.mark.asyncio
 async def test_notification_ignores_newer_unassessed_rebuild_and_obsolete_head(
     configured, local_db, db_session_maker, gh, api
