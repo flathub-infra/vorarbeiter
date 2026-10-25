@@ -924,7 +924,10 @@ async def test_notifications_report_current_decision(
     pipeline.params = {**pipeline.params, "pr_number": pr_number}
     await add(db_session_maker, pipeline)
     backend = Backend(
-        outcome="rejected", decision_id=3, decision_rationale="Use the portal.\nThanks."
+        outcome="rejected",
+        decision_id=3,
+        decision_rationale="Use the portal.\nThanks.",
+        decision_reviewer="mod",
     )
 
     with mock_http(backend):
@@ -935,11 +938,13 @@ async def test_notifications_report_current_decision(
         body = gh.comment.await_args.args[3]
         assert "> Use the portal.\n> Thanks." in body
         assert "bot, ping admins" in body
+        assert "Reviewed by @mod." in body
 
         backend.body = {"outcome": "accepted", "decision_id": 4}
         assert (await notify(api)).status_code == 204
         assert gh.status.await_args.args[1] == "success"
         assert gh.comment.await_args.args[4] is True
+        assert "@" not in gh.comment.await_args.args[3]
 
         backend.body = {
             "outcome": "accepted",

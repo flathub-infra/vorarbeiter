@@ -59,6 +59,7 @@ ASSESSMENT_FIELDS = [
     "differences",
     "decision_id",
     "decision_rationale",
+    "decision_reviewer",
 ]
 REJECTION_HELP = (
     "<sub>If you disagree with this decision, comment"
@@ -330,6 +331,8 @@ async def _report(
     )
     if ok and outcome in COMMENTS:
         body = [COMMENT_MARKER, COMMENTS[outcome], ""]
+        if reviewer := state.get("decision_reviewer"):
+            body += [f"Reviewed by @{reviewer}.", ""]
         if rationale := marker[3]:
             body += [f"> {line}" for line in rationale.splitlines()] + [""]
         if outcome == "pending" and state.get("differences"):
