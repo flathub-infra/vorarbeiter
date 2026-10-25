@@ -706,6 +706,32 @@ def test_receive_github_webhook_routes_app_repo_close_comment_on_issue(
         mock_handle_close.assert_not_called()
 
 
+@pytest.mark.parametrize("is_pr", [False, True])
+def test_receive_github_webhook_dispatches_invite_comment(
+    client: TestClient, is_pr: bool
+):
+    headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
+    payload = dict(SAMPLE_FLATHUB_MERGE_PAYLOAD)
+    payload["comment"] = {"body": "/invite repo=org.example.App @someone"}
+    if not is_pr:
+        payload["issue"] = {"number": 42}
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.services.invite_service.handle_invite_command",
+            new_callable=Mock,
+        ) as mock_handle_invite,
+        patch("app.routes.webhooks.asyncio.create_task") as mock_create_task,
+    ):
+        response = client.post("/api/webhooks/github", json=payload, headers=headers)
+
+    assert response.status_code == 202
+    assert response.json()["message"] == "Invite command received and processing."
+    mock_handle_invite.assert_called_once_with(payload)
+    mock_create_task.assert_called_once()
+
+
 def test_should_store_event_admin_ping():
     from app.routes.webhooks import should_store_event
 

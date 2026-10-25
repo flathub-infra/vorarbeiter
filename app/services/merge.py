@@ -737,7 +737,6 @@ class MergeService:
             return response.json().get("state") == "active"
         except ValueError:
             return False
-
     async def _get_pr_details(self, pr_number: int) -> dict[str, Any] | None:
         client = get_github_client()
         response = await client.request(

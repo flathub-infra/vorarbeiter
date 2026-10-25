@@ -1258,6 +1258,19 @@ async def receive_github_webhook(
     if (
         repo_name == "flathub/flathub"
         and payload.get("action") == "created"
+        and "issue" in payload
+        and "comment" in payload
+    ):
+        raw_comment = payload.get("comment", {}).get("body") or ""
+        if raw_comment.startswith("/invite"):
+            from app.services import invite_service
+
+            asyncio.create_task(invite_service.handle_invite_command(payload))
+            return {"message": "Invite command received and processing."}
+
+    if (
+        repo_name == "flathub/flathub"
+        and payload.get("action") == "created"
         and payload.get("issue", {}).get("pull_request")
         and "comment" in payload
     ):

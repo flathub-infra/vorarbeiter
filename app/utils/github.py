@@ -205,6 +205,25 @@ def get_github_client() -> GitHubAPIClient:
     return _github_client
 
 
+async def is_reviewer_or_admin(username: str) -> bool:
+    client = get_github_client()
+    for team in ("admins", "reviewers"):
+        response = await client.request(
+            "get",
+            f"https://api.github.com/orgs/flathub/teams/{team}/memberships/{username}",
+            context={"team": team, "username": username},
+            raise_for_status=False,
+        )
+        if response and response.status_code == 200:
+            try:
+                state = response.json().get("state")
+            except ValueError:
+                state = None
+            if state == "active":
+                return True
+    return False
+
+
 def get_github_actions_client() -> GitHubAPIClient:
     global _github_actions_client
     if _github_actions_client is None:
