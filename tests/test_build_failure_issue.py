@@ -119,7 +119,7 @@ async def test_first_failure_creates_and_tracks_issue(service_database):
             f"Commit SHA: {SHA_A}\nBuild log: {LOG_A}\n\n"
             "Please check the logs for details. If the failure was unexpected, "
             "you can retry the build by commenting `bot, retry` in this issue."
-            "\n\ncc @flathub/build-moderation"
+            "\n\ncc @flathub/reviewers"
         ),
     )
 

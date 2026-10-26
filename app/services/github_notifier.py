@@ -13,6 +13,7 @@ from app.services.test_build_penalty import (
 )
 from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
+    REVIEWERS_MENTION,
     create_github_issue,
     create_pr_comment,
     get_build_job_arches,
@@ -311,7 +312,7 @@ class GitHubNotifier:
             if extra_sections:
                 body += f"\n{extra_sections}"
 
-            body += "\ncc @flathub/build-moderation"
+            body += f"\ncc {REVIEWERS_MENTION}"
             body += (
                 "\n\nThis issue is being opened for tracking by Flathub admins and may indicate "
                 "an [infrastructure problem](https://status.flathub.org). Please do not close or modify this until "

@@ -310,40 +310,23 @@ class TestDetectAppidFromGithub:
 
 class TestMergeServiceAuthorization:
     @pytest.mark.asyncio
-    async def test_authorized_admin(self):
-        service = MergeService()
-
-        admin_response = MagicMock()
-        admin_response.status_code = 200
-        admin_response.json.return_value = {"state": "active", "role": "member"}
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=admin_response)
-
-        with patch("app.services.merge.get_github_client", return_value=mock_client):
-            result = await service._is_authorized("admin_user")
-            assert result is True
-
-        url = mock_client.request.call_args.args[1]
-        assert "/memberships/" in url
-
-    @pytest.mark.asyncio
     async def test_authorized_reviewer(self):
         service = MergeService()
-
-        not_admin = MagicMock()
-        not_admin.status_code = 404
 
         reviewer_response = MagicMock()
         reviewer_response.status_code = 200
         reviewer_response.json.return_value = {"state": "active", "role": "member"}
 
         mock_client = AsyncMock()
-        mock_client.request = AsyncMock(side_effect=[not_admin, reviewer_response])
+        mock_client.request = AsyncMock(return_value=reviewer_response)
 
         with patch("app.services.merge.get_github_client", return_value=mock_client):
             result = await service._is_authorized("reviewer_user")
             assert result is True
+
+        mock_client.request.assert_awaited_once()
+        url = mock_client.request.call_args.args[1]
+        assert url.endswith("/orgs/flathub/teams/reviewers/memberships/reviewer_user")
 
     @pytest.mark.asyncio
     async def test_unauthorized(self):

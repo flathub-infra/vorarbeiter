@@ -36,6 +36,7 @@ from app.services.test_build_penalty import (
 )
 from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_repo
 from app.utils.github import (
+    REVIEWERS_MENTION,
     add_comment_reaction,
     add_issue_comment,
     close_github_issue,
@@ -1582,7 +1583,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                     await add_issue_comment(
                         git_repo=repo,
                         issue_number=issue_number,
-                        comment="Contacted Flathub admins: cc @flathub/build-moderation",
+                        comment=f"Contacted Flathub admins: cc {REVIEWERS_MENTION}",
                         check_duplicates=True,
                     )
                 else:

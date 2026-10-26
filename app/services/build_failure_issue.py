@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import BuildFailureIssue, Pipeline
 from app.utils.github import (
+    REVIEWERS_MENTION,
     add_issue_comment,
     close_github_issue,
     create_github_issue,
@@ -302,7 +303,7 @@ class BuildFailureIssueService:
                 "by commenting `bot, retry` in this issue."
             )
 
-        return body + "\n\ncc @flathub/build-moderation"
+        return body + f"\n\ncc {REVIEWERS_MENTION}"
 
     def _failure_comment(self, pipeline: Pipeline) -> str:
         sha, log_url = self._display_metadata(pipeline)

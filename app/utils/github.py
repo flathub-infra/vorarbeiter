@@ -251,6 +251,8 @@ def validate_pipeline_commit_params(params: dict[str, Any]) -> dict[str, Any]:
 
 
 BUILD_STATUS_CONTEXTS = ("builds/x86_64", "flathub/build")
+REVIEWERS_TEAM = "reviewers"
+REVIEWERS_MENTION = f"@flathub/{REVIEWERS_TEAM}"
 
 
 async def update_commit_status(

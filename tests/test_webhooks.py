@@ -1997,7 +1997,7 @@ async def test_create_pipeline_admin_ping(flag_enabled, should_post):
             mock_add_comment.assert_awaited_once_with(
                 git_repo="test-owner/test-repo",
                 issue_number=99,
-                comment="Contacted Flathub admins: cc @flathub/build-moderation",
+                comment="Contacted Flathub admins: cc @flathub/reviewers",
                 check_duplicates=True,
             )
         else:

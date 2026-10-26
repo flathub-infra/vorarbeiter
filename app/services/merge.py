@@ -24,6 +24,7 @@ from app.models.merge_request import (
 from app.schemas.merge import parse_app_merge_command, parse_merge_command
 from app.utils.github import (
     GQL_EXCEPTIONS,
+    REVIEWERS_TEAM,
     create_pr_comment,
     get_github_client,
     set_pr_labels,
@@ -696,21 +697,18 @@ class MergeService:
 
     async def _is_authorized(self, username: str) -> bool:
         client = get_github_client()
-        for team in ("admins", "reviewers"):
-            response = await client.request(
-                "get",
-                f"https://api.github.com/orgs/flathub/teams/{team}/memberships/{username}",
-                context={"team": team, "username": username},
-                raise_for_status=False,
-            )
-            if response and response.status_code == 200:
-                try:
-                    state = response.json().get("state")
-                except ValueError:
-                    state = None
-                if state == "active":
-                    return True
-        return False
+        response = await client.request(
+            "get",
+            f"https://api.github.com/orgs/flathub/teams/{REVIEWERS_TEAM}/memberships/{username}",
+            context={"team": REVIEWERS_TEAM, "username": username},
+            raise_for_status=False,
+        )
+        if not response or response.status_code != 200:
+            return False
+        try:
+            return response.json().get("state") == "active"
+        except ValueError:
+            return False
 
     async def _get_pr_details(self, pr_number: int) -> dict[str, Any] | None:
         client = get_github_client()
