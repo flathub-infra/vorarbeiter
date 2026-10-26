@@ -942,7 +942,11 @@ async def test_notifications_report_current_decision(
         assert "Merging is blocked" not in body
         assert "Reviewed by @mod." in body
 
-        backend.body = {"outcome": "accepted", "decision_id": 4}
+        backend.body = {
+            "outcome": "accepted",
+            "decision_id": 4,
+            "decision_reviewer": "mod",
+        }
         assert (await notify(api)).status_code == 204
         assert gh.status.await_args.args[1] == "success"
         assert gh.comment.await_args.args[4] is True

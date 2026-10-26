@@ -331,7 +331,7 @@ async def _report(
     )
     if ok and outcome in COMMENTS:
         body = [COMMENT_MARKER, COMMENTS[outcome], ""]
-        if reviewer := state.get("decision_reviewer"):
+        if outcome == "rejected" and (reviewer := state.get("decision_reviewer")):
             body += [f"Reviewed by @{reviewer}.", ""]
         if rationale := marker[3]:
             body += [f"> {line}" for line in rationale.splitlines()] + [""]
