@@ -269,7 +269,7 @@ def validate_pipeline_commit_params(params: dict[str, Any]) -> dict[str, Any]:
     return validated_params
 
 
-BUILD_STATUS_CONTEXTS = ("builds/x86_64", "flathub/build")
+BUILD_STATUS_CONTEXTS = ("flathub/build",)
 REVIEWERS_TEAM = "reviewers"
 REVIEWERS_MENTION = f"@flathub/{REVIEWERS_TEAM}"
 

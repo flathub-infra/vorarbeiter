@@ -38,20 +38,18 @@ async def test_update_commit_status_success(mock_settings, mock_httpx):
             description="Build succeeded",
         )
 
-    assert mock_httpx.request.call_count == 2
-    for call_args, context in zip(
-        mock_httpx.request.call_args_list, ["builds/x86_64", "flathub/build"]
-    ):
-        assert call_args[0][0] == "POST"
-        assert (
-            call_args[0][1]
-            == "https://api.github.com/repos/flathub/test-app/statuses/abc123"
-        )
-        assert call_args[1]["json"]["state"] == "success"
-        assert call_args[1]["json"]["context"] == context
-        assert call_args[1]["json"]["target_url"] == "https://example.com/build/123"
-        assert call_args[1]["json"]["description"] == "Build succeeded"
-        assert call_args[1]["headers"]["Authorization"] == "token test-token"
+    mock_httpx.request.assert_called_once()
+    call_args = mock_httpx.request.call_args
+    assert call_args[0][0] == "POST"
+    assert (
+        call_args[0][1]
+        == "https://api.github.com/repos/flathub/test-app/statuses/abc123"
+    )
+    assert call_args[1]["json"]["state"] == "success"
+    assert call_args[1]["json"]["context"] == "flathub/build"
+    assert call_args[1]["json"]["target_url"] == "https://example.com/build/123"
+    assert call_args[1]["json"]["description"] == "Build succeeded"
+    assert call_args[1]["headers"]["Authorization"] == "token test-token"
 
 
 @pytest.mark.asyncio
@@ -126,7 +124,7 @@ async def test_update_commit_status_request_error_retry(mock_settings, mock_http
                 sha="abc123",
                 state="success",
                 git_repo="flathub/test-app",
-                context="builds/x86_64",
+                context="flathub/build",
             )
 
         assert mock_httpx.request.call_count == 3
@@ -148,7 +146,7 @@ async def test_update_commit_status_request_error_max_retries(
                 sha="abc123",
                 state="success",
                 git_repo="flathub/test-app",
-                context="builds/x86_64",
+                context="flathub/build",
             )
 
         assert mock_httpx.request.call_count == 4
@@ -172,7 +170,7 @@ async def test_update_commit_status_http_error(mock_settings, mock_httpx):
             sha="abc123",
             state="success",
             git_repo="flathub/test-app",
-            context="builds/x86_64",
+            context="flathub/build",
         )
 
     mock_httpx.request.assert_called_once()
@@ -205,7 +203,7 @@ async def test_update_commit_status_retry_on_500_error(mock_settings, mock_httpx
                 sha="abc123",
                 state="success",
                 git_repo="flathub/test-app",
-                context="builds/x86_64",
+                context="flathub/build",
             )
 
         assert mock_httpx.request.call_count == 3
@@ -232,7 +230,7 @@ async def test_update_commit_status_max_retries_exceeded(mock_settings, mock_htt
                 sha="abc123",
                 state="success",
                 git_repo="flathub/test-app",
-                context="builds/x86_64",
+                context="flathub/build",
             )
 
         assert mock_httpx.request.call_count == 4
@@ -250,7 +248,7 @@ async def test_update_commit_status_unexpected_error(mock_settings, mock_httpx):
             sha="abc123",
             state="success",
             git_repo="flathub/test-app",
-            context="builds/x86_64",
+            context="flathub/build",
         )
 
     mock_httpx.request.assert_called_once()
