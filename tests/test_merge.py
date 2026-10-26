@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
 from app.models.merge_request import MergeRequest, MergeStatus
-from app.schemas.merge import parse_merge_command
+from app.schemas.merge import parse_app_merge_command, parse_merge_command
 from app.services.merge import (
     MERGE_ERROR_WORKFLOW_DISPATCH_FAILED,
     MergeCallbackConflictError,
@@ -1665,3 +1665,123 @@ class TestMergeCallbackRoute:
                 headers={"Authorization": "Bearer test_token"},
             )
         assert response.status_code == 409
+
+
+APP_REPO = "flathub/org.example.App"
+
+
+def _response(status_code, body):
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = body
+    return response
+
+
+def _app_merge_client(*, prs=None, protected=True, statuses=None):
+    prs = list(prs or [{}])
+    pr_defaults = {
+        "state": "open",
+        "draft": False,
+        "user": {"login": "author1"},
+        "labels": [],
+        "head": {"sha": "a" * 40},
+        "base": {"ref": "master"},
+        "mergeable_state": "clean",
+    }
+    if statuses is None:
+        statuses = {"flathub/build": "success", "flathub/permissions": "success"}
+
+    async def request(method, url, **kwargs):
+        if method == "put":
+            return _response(200, {"merged": True})
+        if url.endswith("/pulls/7"):
+            return _response(200, {**pr_defaults, **prs.pop(0)})
+        if "/branches/" in url:
+            return _response(200, {"protected": protected})
+        if "/status" in url:
+            return _response(
+                200,
+                {"statuses": [{"context": c, "state": s} for c, s in statuses.items()]},
+            )
+        raise AssertionError(url)
+
+    client = AsyncMock()
+    client.request = AsyncMock(side_effect=request)
+    return client
+
+
+async def _run_app_merge(client, comment_author="reviewer"):
+    service = MergeService()
+    with (
+        patch("app.services.merge.get_github_client", return_value=client),
+        patch("app.services.merge.create_pr_comment", new=AsyncMock()) as comment,
+        patch("app.services.merge.asyncio.sleep", new=AsyncMock()),
+        patch.object(service, "_is_authorized", new=AsyncMock(return_value=True)),
+    ):
+        await service._process_app_merge(
+            APP_REPO, 7, f"/merge head={'a' * 40}", comment_author
+        )
+    merge_calls = [c for c in client.request.call_args_list if c.args[0] == "put"]
+    return merge_calls, comment
+
+
+class TestAppMerge:
+    def test_parse_rejects_submission_arguments(self):
+        assert parse_app_merge_command(f"/merge head={'a' * 40}") == "a" * 40
+        assert parse_app_merge_command(f"/merge:beta head={'a' * 40}") is None
+        assert parse_app_merge_command(f"/merge head={'a' * 40} @user") is None
+
+    @pytest.mark.asyncio
+    async def test_merges_exact_sha(self):
+        merge_calls, comment = await _run_app_merge(_app_merge_client())
+
+        assert len(merge_calls) == 1
+        assert merge_calls[0].args[1].endswith(f"/repos/{APP_REPO}/pulls/7/merge")
+        body = json.loads(merge_calls[0].kwargs["content"])
+        assert body["sha"] == "a" * 40
+        assert body["merge_method"] == "merge"
+        comment.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_waits_for_mergeable_state(self):
+        client = _app_merge_client(
+            prs=[{"mergeable_state": "unknown"}, {"mergeable_state": "clean"}]
+        )
+        merge_calls, _ = await _run_app_merge(client)
+        assert len(merge_calls) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("client_kwargs", "comment_author"),
+        [
+            ({}, "author1"),
+            ({"protected": False}, "reviewer"),
+            ({"prs": [{"mergeable_state": "behind"}]}, "reviewer"),
+            ({"prs": [{"head": {"sha": "b" * 40}}]}, "reviewer"),
+            (
+                {
+                    "statuses": {
+                        "flathub/build": "success",
+                        "flathub/permissions": "pending",
+                    }
+                },
+                "reviewer",
+            ),
+            ({"statuses": {}}, "reviewer"),
+        ],
+        ids=[
+            "self-merge",
+            "unprotected",
+            "behind",
+            "sha-mismatch",
+            "permissions-pending",
+            "build-missing",
+        ],
+    )
+    async def test_refuses(self, client_kwargs, comment_author):
+        merge_calls, comment = await _run_app_merge(
+            _app_merge_client(**client_kwargs), comment_author
+        )
+        assert merge_calls == []
+        comment.assert_awaited_once()
+        assert comment.await_args.args[2].startswith("❌ Cannot merge:")

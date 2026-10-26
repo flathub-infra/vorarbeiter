@@ -13,6 +13,7 @@ _COMMAND_PATTERN = re.compile(r"^/merge(?::([\w.-]+))? head=([a-fA-F0-9]{40})(.*
 
 _USERNAME_PATTERN = re.compile(r"@(?!flathub/)[a-zA-Z0-9-]{1,39}")
 _TEAM_PATTERN = re.compile(r"@flathub/[a-zA-Z0-9-]{1,39}")
+_APP_COMMAND_PATTERN = re.compile(r"^/merge head=([a-fA-F0-9]{40})\s*$")
 
 
 def parse_merge_command(comment: str) -> MergeCommand | None:
@@ -40,3 +41,8 @@ def parse_merge_command(comment: str) -> MergeCommand | None:
         pr_head_sha=pr_head_sha,
         additional_collaborators=collaborators,
     )
+
+
+def parse_app_merge_command(comment: str) -> str | None:
+    matched = _APP_COMMAND_PATTERN.match(comment)
+    return matched.group(1) if matched else None

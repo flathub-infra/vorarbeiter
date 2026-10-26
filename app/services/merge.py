@@ -21,9 +21,10 @@ from app.models.merge_request import (
     MergeRequest,
     MergeStatus,
 )
-from app.schemas.merge import parse_merge_command
+from app.schemas.merge import parse_app_merge_command, parse_merge_command
 from app.utils.github import (
     GQL_EXCEPTIONS,
+    create_pr_comment,
     get_github_client,
     set_pr_labels,
 )
@@ -36,6 +37,14 @@ MERGE_WORKFLOW_REPO = "flathub-infra/vorarbeiter"
 MERGE_ERROR_REPO_CREATE_FAILED = "Failed to create repository"
 MERGE_ERROR_WORKFLOW_DISPATCH_FAILED = "Failed to dispatch merge workflow"
 MERGE_ERROR_GIT_PUSH_FAILED = "Git push workflow failed"
+APP_MERGE_STATE_ATTEMPTS = 5
+APP_MERGE_STATE_DELAY = 2.0
+APP_MERGE_STATE_ERRORS = {
+    "behind": "the branch is behind the base branch. Update the branch and "
+    "wait for a new build",
+    "blocked": "required checks are not satisfied",
+    "dirty": "the PR has merge conflicts",
+}
 
 PROTECTED_BRANCH_PATTERNS = (
     "master",
@@ -321,6 +330,195 @@ class MergeService:
             merge_id=str(merge_request.id),
             appid=appid,
         )
+
+    async def handle_app_merge_command(self, payload: dict) -> None:
+        repo = payload.get("repository", {}).get("full_name", "")
+        comment_body = payload.get("comment", {}).get("body", "")
+        pr_number = payload.get("issue", {}).get("number")
+        comment_author = payload.get("comment", {}).get("user", {}).get("login", "")
+
+        try:
+            await self._process_app_merge(repo, pr_number, comment_body, comment_author)
+        except Exception:
+            logger.exception(
+                "App merge command failed",
+                repo=repo,
+                pr_number=pr_number,
+                comment_author=comment_author,
+            )
+            if pr_number:
+                await create_pr_comment(
+                    repo,
+                    pr_number,
+                    "❌ Merge failed due to an unexpected error. Please check the logs.",
+                )
+
+    async def _process_app_merge(
+        self,
+        repo: str,
+        pr_number: int | None,
+        comment_body: str,
+        comment_author: str,
+    ) -> None:
+        if not pr_number:
+            logger.error("Missing PR number in merge command payload", repo=repo)
+            return
+
+        sha = parse_app_merge_command(comment_body)
+        if not sha:
+            await create_pr_comment(
+                repo,
+                pr_number,
+                "❌ Invalid `/merge` command format.\n"
+                "Usage: `/merge head=<pr head commit sha 40 chars>`",
+            )
+            return
+
+        logger.info(
+            "Processing app merge command",
+            repo=repo,
+            pr_number=pr_number,
+            pr_head_sha=sha,
+            comment_author=comment_author,
+        )
+
+        if not await self._is_authorized(comment_author):
+            logger.warning(
+                "Unauthorized merge attempt",
+                repo=repo,
+                pr_number=pr_number,
+                comment_author=comment_author,
+            )
+            return
+
+        pr = await self._get_app_pr(repo, pr_number)
+        error = await self._app_merge_blocker(repo, pr, sha, comment_author)
+        if error:
+            await create_pr_comment(repo, pr_number, f"❌ Cannot merge: {error}.")
+            return
+
+        client = get_github_client()
+        response = await client.request(
+            "put",
+            f"https://api.github.com/repos/{repo}/pulls/{pr_number}/merge",
+            content=json.dumps(
+                {
+                    "sha": sha,
+                    "merge_method": "merge",
+                    "commit_message": f"Merged via /merge by @{comment_author}",
+                }
+            ),
+            context={"git_repo": repo, "pr_number": pr_number},
+            raise_for_status=False,
+        )
+        if response is None or response.status_code != 200:
+            message = "request failed"
+            if response is not None:
+                try:
+                    message = response.json().get("message") or message
+                except ValueError:
+                    pass
+            await create_pr_comment(repo, pr_number, f"❌ Merge failed: {message}.")
+            return
+
+        logger.info(
+            "App PR merged",
+            repo=repo,
+            pr_number=pr_number,
+            sha=sha,
+            comment_author=comment_author,
+        )
+
+    async def _get_app_pr(self, repo: str, pr_number: int) -> dict[str, Any] | None:
+        client = get_github_client()
+        pr = None
+        for attempt in range(APP_MERGE_STATE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(APP_MERGE_STATE_DELAY)
+            response = await client.request(
+                "get",
+                f"https://api.github.com/repos/{repo}/pulls/{pr_number}",
+                context={"git_repo": repo, "pr_number": pr_number},
+                raise_for_status=False,
+            )
+            if response is None or response.status_code != 200:
+                return None
+            pr = response.json()
+            if pr.get("state") != "open" or pr.get("mergeable_state") not in (
+                None,
+                "unknown",
+            ):
+                return pr
+        return pr
+
+    async def _app_merge_blocker(
+        self,
+        repo: str,
+        pr: dict[str, Any] | None,
+        sha: str,
+        comment_author: str,
+    ) -> str | None:
+        if pr is None:
+            return "failed to fetch PR details"
+        if pr.get("user", {}).get("login") == comment_author:
+            return "you cannot merge your own pull request"
+        if pr.get("state") != "open":
+            return "PR is not open"
+        if pr.get("draft"):
+            return "PR is a draft"
+
+        blocking_labels = [
+            label["name"]
+            for label in pr.get("labels") or []
+            if "block" in label["name"]
+        ]
+        if blocking_labels:
+            return "PR has blocking labels: " + ", ".join(
+                f"`{label}`" for label in blocking_labels
+            )
+
+        head_sha = pr.get("head", {}).get("sha")
+        if head_sha != sha:
+            return f"PR HEAD is `{head_sha}` but command specifies `{sha}`"
+
+        client = get_github_client()
+        base = pr.get("base", {}).get("ref")
+        branch_response = await client.request(
+            "get",
+            f"https://api.github.com/repos/{repo}/branches/{base}",
+            context={"git_repo": repo, "branch": base},
+            raise_for_status=False,
+        )
+        if branch_response is None or branch_response.status_code != 200:
+            return f"failed to fetch base branch `{base}`"
+        if branch_response.json().get("protected") is not True:
+            return f"base branch `{base}` is not protected"
+
+        status_response = await client.request(
+            "get",
+            f"https://api.github.com/repos/{repo}/commits/{sha}/status?per_page=100",
+            context={"git_repo": repo, "sha": sha},
+            raise_for_status=False,
+        )
+        if status_response is None or status_response.status_code != 200:
+            return f"failed to fetch commit statuses for `{sha}`"
+        statuses = {
+            s.get("context"): s.get("state")
+            for s in status_response.json().get("statuses") or []
+        }
+        build_state = statuses.get("flathub/build")
+        if build_state != "success":
+            return f"`flathub/build` is `{build_state or 'missing'}` for `{sha}`"
+        permissions_state = statuses.get("flathub/permissions")
+        if permissions_state not in (None, "success"):
+            return f"`flathub/permissions` is `{permissions_state}` for `{sha}`"
+
+        mergeable_state = pr.get("mergeable_state")
+        if mergeable_state != "clean":
+            return APP_MERGE_STATE_ERRORS.get(
+                mergeable_state, f"PR merge state is `{mergeable_state}`"
+            )
+        return None
 
     async def handle_callback(
         self, merge_id: uuid.UUID, callback_token: str, status: str

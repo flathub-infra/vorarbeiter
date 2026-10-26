@@ -634,6 +634,42 @@ def test_receive_github_webhook_ignores_merge_comment_on_issue(client: TestClien
     mock_create_task.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("repo", "routed"),
+    [("flathub/org.example.App", True), ("flathub/shared-modules", False)],
+)
+def test_receive_github_webhook_routes_app_repo_merge_comment(
+    client: TestClient, repo: str, routed: bool
+):
+    headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
+    payload = {**SAMPLE_FLATHUB_MERGE_PAYLOAD, "repository": {"full_name": repo}}
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.services.merge_service.handle_app_merge_command",
+            new_callable=Mock,
+        ) as mock_handle_merge,
+        patch(
+            "app.services.merge_service.handle_merge_command",
+            new_callable=Mock,
+        ) as mock_handle_submission_merge,
+        patch("app.routes.webhooks.asyncio.create_task"),
+        patch(
+            "app.routes.webhooks.get_db",
+            create_mock_get_db(AsyncMock(spec=AsyncSession)),
+        ),
+    ):
+        response = client.post("/api/webhooks/github", json=payload, headers=headers)
+
+    assert response.status_code == 202
+    mock_handle_submission_merge.assert_not_called()
+    if routed:
+        mock_handle_merge.assert_called_once_with(payload)
+    else:
+        mock_handle_merge.assert_not_called()
+
+
 def test_should_store_event_admin_ping():
     from app.routes.webhooks import should_store_event
 
