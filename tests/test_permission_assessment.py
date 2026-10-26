@@ -940,7 +940,8 @@ async def test_notifications_report_current_decision(
         assert "> Use the portal.\n> Thanks." in body
         assert "bot, ping admins" in body
         assert "Merging is blocked" not in body
-        assert "Reviewed by @mod." in body
+        assert "cc @flathub/reviewers" in body
+        assert "@mod" not in body
 
         backend.body = {
             "outcome": "accepted",
