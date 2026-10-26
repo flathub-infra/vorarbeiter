@@ -354,6 +354,34 @@ class MergeService:
                     "❌ Merge failed due to an unexpected error. Please check the logs.",
                 )
 
+    async def handle_close_command(self, payload: dict) -> None:
+        repo = payload.get("repository", {}).get("full_name", "")
+        number = payload.get("issue", {}).get("number")
+        comment_author = payload.get("comment", {}).get("user", {}).get("login", "")
+        if not await self._is_authorized(comment_author):
+            logger.warning(
+                "Unauthorized close attempt",
+                repo=repo,
+                number=number,
+                comment_author=comment_author,
+            )
+            return
+
+        response = await get_github_client().request(
+            "patch",
+            f"https://api.github.com/repos/{repo}/issues/{number}",
+            content=json.dumps({"state": "closed"}),
+            context={"git_repo": repo, "number": number},
+            raise_for_status=False,
+        )
+        if response is None or response.status_code != 200:
+            await create_pr_comment(repo, number, "❌ Failed to close.")
+            return
+
+        logger.info(
+            "Closed via /close", repo=repo, number=number, comment_author=comment_author
+        )
+
     async def _process_app_merge(
         self,
         repo: str,

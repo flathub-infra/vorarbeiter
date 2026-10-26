@@ -670,6 +670,42 @@ def test_receive_github_webhook_routes_app_repo_merge_comment(
         mock_handle_merge.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("repo", "routed"),
+    [("flathub/org.example.App", True), ("flathub/flathub", False)],
+)
+def test_receive_github_webhook_routes_app_repo_close_comment_on_issue(
+    client: TestClient, repo: str, routed: bool
+):
+    headers = {"X-GitHub-Delivery": str(uuid.uuid4())}
+    payload = {
+        **SAMPLE_FLATHUB_MERGE_PAYLOAD,
+        "repository": {"full_name": repo},
+        "comment": {"body": "/close\n"},
+        "issue": {"number": 42},
+    }
+
+    with (
+        patch("app.routes.webhooks.settings.github_webhook_secret", ""),
+        patch(
+            "app.services.merge_service.handle_close_command",
+            new_callable=Mock,
+        ) as mock_handle_close,
+        patch("app.routes.webhooks.asyncio.create_task"),
+        patch(
+            "app.routes.webhooks.get_db",
+            create_mock_get_db(AsyncMock(spec=AsyncSession)),
+        ),
+    ):
+        response = client.post("/api/webhooks/github", json=payload, headers=headers)
+
+    assert response.status_code == 202
+    if routed:
+        mock_handle_close.assert_called_once_with(payload)
+    else:
+        mock_handle_close.assert_not_called()
+
+
 def test_should_store_event_admin_ping():
     from app.routes.webhooks import should_store_event
 

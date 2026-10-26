@@ -1768,3 +1768,37 @@ class TestAppMerge:
         assert merge_calls == []
         comment.assert_awaited_once()
         assert comment.await_args.args[2].startswith("❌ Cannot merge:")
+
+
+class TestCloseCommand:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("authorized", [True, False])
+    async def test_closes_only_for_reviewers(self, authorized):
+        service = MergeService()
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=_response(200, {}))
+        payload = {
+            "repository": {"full_name": APP_REPO},
+            "issue": {"number": 7},
+            "comment": {"body": "/close", "user": {"login": "reviewer"}},
+        }
+
+        with (
+            patch("app.services.merge.get_github_client", return_value=client),
+            patch.object(
+                service, "_is_authorized", new=AsyncMock(return_value=authorized)
+            ),
+        ):
+            await service.handle_close_command(payload)
+
+        if authorized:
+            client.request.assert_awaited_once()
+            assert client.request.call_args.args[:2] == (
+                "patch",
+                f"https://api.github.com/repos/{APP_REPO}/issues/7",
+            )
+            assert json.loads(client.request.call_args.kwargs["content"]) == {
+                "state": "closed"
+            }
+        else:
+            client.request.assert_not_awaited()

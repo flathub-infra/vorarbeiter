@@ -1272,15 +1272,20 @@ async def receive_github_webhook(
         repo_name.startswith("flathub/")
         and repo_name not in ignored_repos
         and payload.get("action") == "created"
-        and payload.get("issue", {}).get("pull_request")
+        and "issue" in payload
         and "comment" in payload
     ):
         raw_comment = payload.get("comment", {}).get("body") or ""
-        if raw_comment.startswith("/merge"):
+        if raw_comment.startswith("/merge") and payload["issue"].get("pull_request"):
             from app.services import merge_service
 
             asyncio.create_task(merge_service.handle_app_merge_command(payload))
             return {"message": "Merge command received and processing."}
+        if raw_comment.strip() == "/close":
+            from app.services import merge_service
+
+            asyncio.create_task(merge_service.handle_close_command(payload))
+            return {"message": "Close command received and processing."}
 
     if repo_name in ignored_repos and (is_pr_event or is_push_event):
         if is_pr_event and payload.get("action") == "synchronize":
