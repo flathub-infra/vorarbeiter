@@ -135,6 +135,7 @@ def test_job_with_complex_result():
     )
 
     assert job.result == result
+    assert job.result is not None
     assert job.result["status"] == "success"
     assert len(job.result["output"]["artifacts"]) == 2
     assert job.result["metrics"]["duration_seconds"] == 300
@@ -161,7 +162,7 @@ def test_job_status_transitions():
     job.result = {"status": "success"}
     assert job.status == JobStatus.COMPLETE
     assert job.finished_at is not None
-    assert job.result["status"] == "success"  # ty: ignore[not-subscriptable]
+    assert job.result == {"status": "success"}
 
 
 def test_job_failed_status():
@@ -350,7 +351,9 @@ def test_job_timestamps():
     assert job.created_at == now
     assert job.started_at == now
     assert job.finished_at == later
-    assert job.finished_at >= job.started_at  # ty: ignore[unsupported-operator]
+    assert job.started_at is not None
+    assert job.finished_at is not None
+    assert job.finished_at >= job.started_at
 
 
 @pytest.mark.asyncio

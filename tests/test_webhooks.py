@@ -1968,7 +1968,8 @@ async def test_create_pipeline_starts_stable_build_even_at_capacity():
     mock_pipeline_service.start_pipeline.assert_awaited_once_with(
         pipeline_id=pipeline_id
     )
-    assert mock_status.await_args.kwargs["description"] == "Build enqueued"  # ty: ignore[unresolved-attribute]
+    assert mock_status.await_args is not None
+    assert mock_status.await_args.kwargs["description"] == "Build enqueued"
 
 
 @pytest.mark.asyncio

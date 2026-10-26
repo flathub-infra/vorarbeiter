@@ -545,7 +545,7 @@ class MergeService:
         mergeable_state = pr.get("mergeable_state")
         if mergeable_state != "clean":
             return APP_MERGE_STATE_ERRORS.get(
-                mergeable_state, f"PR merge state is `{mergeable_state}`"
+                str(mergeable_state), f"PR merge state is `{mergeable_state}`"
             )
         return None
 

@@ -9,7 +9,7 @@ import structlog
 import yaml
 
 gi.require_version("Json", "1.0")
-from gi.repository import GLib, Json  # ty: ignore[unresolved-import]
+from gi.repository import GLib, Json
 
 from app.utils.github import GitHubAPIClient
 

@@ -39,7 +39,7 @@ def make_pipeline(
     flat_manager_repo: str = "stable",
     retry_from_issue: int | None = None,
 ) -> Pipeline:
-    params = {"sha": sha, "repo": repo}
+    params: dict[str, str | int] = {"sha": sha, "repo": repo}
     if retry_from_issue is not None:
         params["retry_from_issue"] = retry_from_issue
     return Pipeline(

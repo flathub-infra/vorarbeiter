@@ -32,9 +32,14 @@ dev = [
     "ruff==0.17.1",
     "pytest-xdist>=3.8.0",
     "granian[reload]>=2.7.9",
-    "ty==0.0.88",
+    "pyrefly==1.4.0",
 ]
 
 [tool.mypy]
 check_untyped_defs = true
 show_error_codes = true
+
+[tool.pyrefly]
+preset = "legacy"
+check-unannotated-defs = true
+infer-return-types = "never"

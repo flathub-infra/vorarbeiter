@@ -205,7 +205,10 @@ async def list_pipelines(
             repro_pipelines = {p.id: p for p in result.scalars().all()}
         return [
             pipeline_service.pipeline_to_summary(
-                pipeline, repro_pipelines.get(pipeline.repro_pipeline_id)
+                pipeline,
+                repro_pipelines.get(pipeline.repro_pipeline_id)
+                if pipeline.repro_pipeline_id is not None
+                else None,
             )
             for pipeline in pipelines
         ]

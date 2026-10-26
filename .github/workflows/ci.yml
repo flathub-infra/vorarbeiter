@@ -45,7 +45,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Run type checking
-        run: uv run ty check .
+        run: uv run pyrefly check .
 
       - name: Run tests
         env:
