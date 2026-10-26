@@ -341,7 +341,7 @@ async def _report(
                 "Explain why these changes are needed; moderators may reject it.",
                 "",
             ]
-        if outcome != "accepted":
+        if outcome == "pending":
             body += ["Merging is blocked until a Flathub moderator approves."]
         if outcome == "rejected":
             body += ["", REJECTION_HELP]

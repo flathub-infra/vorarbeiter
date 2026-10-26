@@ -797,6 +797,7 @@ async def test_pending_comment_shows_permission_diff(
         "```\n\n"
         "Explain why these changes are needed; moderators may reject it."
     ) in body
+    assert "Merging is blocked until a Flathub moderator approves." in body
 
 
 @pytest.mark.asyncio
@@ -938,6 +939,7 @@ async def test_notifications_report_current_decision(
         body = gh.comment.await_args.args[3]
         assert "> Use the portal.\n> Thanks." in body
         assert "bot, ping admins" in body
+        assert "Merging is blocked" not in body
         assert "Reviewed by @mod." in body
 
         backend.body = {"outcome": "accepted", "decision_id": 4}
