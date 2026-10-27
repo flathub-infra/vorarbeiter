@@ -27,6 +27,9 @@ from app.pipelines.build import (
 )
 from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.github_actions import GitHubActionsService
+from app.services.permission_assessment import (
+    STATUS_CONTEXT as PERMISSION_STATUS_CONTEXT,
+)
 from app.services.permission_assessment import notify_target_changed
 from app.services.test_build_penalty import (
     BUILDING_LOCALLY_URL,
@@ -944,6 +947,13 @@ async def handle_eol_only_pr(
         state="success",
         git_repo=repo,
         description="EOL-only change - build skipped",
+    )
+    await update_commit_status(
+        sha=sha,
+        state="success",
+        git_repo=repo,
+        description="EOL-only change - permissions unchanged",
+        context=PERMISSION_STATUS_CONTEXT,
     )
 
     if not pr_number:

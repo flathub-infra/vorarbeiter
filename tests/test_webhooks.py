@@ -1403,7 +1403,7 @@ async def test_is_eol_only_push_skips_zero_sha(mock_httpx):
 
 
 @pytest.mark.asyncio
-async def test_handle_eol_only_pr_posts_status_and_comment():
+async def test_handle_eol_only_pr_satisfies_required_checks(mock_httpx):
     from app.routes.webhooks import handle_eol_only_pr
 
     payload = {
@@ -1418,24 +1418,22 @@ async def test_handle_eol_only_pr_posts_status_and_comment():
         "end_of_life_rebase": "org.new.App",
     }
 
+    mock_httpx.set_response("request", status_code=201)
     with (
-        patch("app.routes.webhooks.update_commit_status", AsyncMock()) as mock_status,
-        patch("app.routes.webhooks.create_pr_comment", AsyncMock()) as mock_comment,
+        mock_httpx.patch(),
+        patch("app.routes.webhooks.create_pr_comment", AsyncMock()),
     ):
         await handle_eol_only_pr(payload, eol_data)
 
-        assert mock_status.await_args is not None
-        assert mock_status.await_args.kwargs["state"] == "success"
-        assert (
-            mock_status.await_args.kwargs["description"]
-            == "EOL-only change - build skipped"
-        )
-
-        assert mock_comment.await_args is not None
-        comment = mock_comment.await_args.kwargs["comment"]
-        assert "EOL-only change" in comment
-        assert "This application has been replaced by org.new.App." in comment
-        assert "org.new.App" in comment
+    status_url = (
+        "https://api.github.com/repos/test-owner/test-repo/statuses/abcdef123456"
+    )
+    statuses = {
+        request.kwargs["json"]["context"]: request.kwargs["json"]["state"]
+        for request in mock_httpx.request.call_args_list
+        if request.args[1] == status_url
+    }
+    assert statuses == {"flathub/build": "success", "flathub/permissions": "success"}
 
 
 @pytest.mark.asyncio
