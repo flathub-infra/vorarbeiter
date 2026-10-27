@@ -341,7 +341,7 @@ async def _report(
         body = [COMMENT_MARKER, automatic or COMMENTS[outcome], ""]
         if outcome == "rejected":
             body += ["cc @flathub/reviewers", ""]
-        if rationale := marker[3]:
+        if (rationale := marker[3]) and not (automatic and outcome == "accepted"):
             body += [f"> {line}" for line in rationale.splitlines()] + [""]
         if outcome == "pending" and state.get("differences"):
             body += _diff(state["differences"])

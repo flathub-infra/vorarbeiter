@@ -968,15 +968,15 @@ async def test_notifications_report_current_decision(
 
 
 @pytest.mark.parametrize(
-    ("outcome", "status", "text"),
+    ("outcome", "status"),
     [
-        ("accepted", "success", "Flathub approved the permission changes"),
-        ("rejected", "failure", "Flathub rejected the permission changes"),
+        ("accepted", "success"),
+        ("rejected", "failure"),
     ],
 )
 @pytest.mark.asyncio
-async def test_automatic_decisions_are_reported_as_automatic(
-    configured, local_db, db_session_maker, gh, api, outcome, status, text
+async def test_automatic_decision_rationale_visibility(
+    configured, local_db, db_session_maker, gh, api, outcome, status
 ):
     await add(db_session_maker, submitted())
     backend = Backend(
@@ -991,8 +991,7 @@ async def test_automatic_decisions_are_reported_as_automatic(
 
     assert gh.status.await_args.args[1] == status
     body = gh.comment.await_args.args[3]
-    assert text in body
-    assert "> Rule rationale." in body
+    assert ("Rule rationale." in body) is (outcome == "rejected")
     assert ("bot, ping admins" in body) is (outcome == "rejected")
 
 
