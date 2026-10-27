@@ -359,6 +359,7 @@ async def _report(
             COMMENT_MARKER,
             "\n".join(body),
             outcome != "accepted" or state.get("decision_id") is not None,
+            deduplicate=outcome == "pending",
         )
     return {**state, "reported": marker} if ok else state
 

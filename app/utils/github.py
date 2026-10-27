@@ -469,15 +469,35 @@ async def get_pull_request(git_repo: str, pr_number: int) -> dict[str, Any] | No
 
 
 async def post_pr_comment(
-    git_repo: str, pr_number: int, marker: str, body: str, create: bool
+    git_repo: str,
+    pr_number: int,
+    marker: str,
+    body: str,
+    create: bool,
+    *,
+    deduplicate: bool = False,
 ) -> bool:
     client = get_github_client()
     url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/comments"
-    if not create:
-        response = await client.request("get", url, params={"per_page": 100})
-        if response is None:
-            return False
-        if not any(marker in (c.get("body") or "") for c in response.json()):
+    if not create or deduplicate:
+        latest, page = None, 1
+        while True:
+            response = await client.request(
+                "get", url, params={"per_page": 100, "page": page}
+            )
+            if response is None:
+                return False
+            comments = response.json()
+            if not isinstance(comments, list):
+                return False
+            for comment in comments:
+                existing = comment.get("body") or ""
+                if marker in existing:
+                    latest = existing
+            if len(comments) < 100:
+                break
+            page += 1
+        if (not create and latest is None) or (deduplicate and latest == body):
             return True
     return await client.request("post", url, json={"body": body}) is not None
 

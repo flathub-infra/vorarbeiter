@@ -575,6 +575,80 @@ async def test_post_pr_comment_never_edits(create, existing, methods):
     assert [call.args[0] for call in client.request.await_args_list] == methods
 
 
+@pytest.mark.parametrize(
+    "bodies, expected_posts",
+    [
+        ([], 1),
+        (["<!-- m -->\nsame"], 0),
+        (["<!-- m -->\nchanged"], 1),
+        (["<!-- m -->\nsame", "<!-- m -->\nchanged"], 1),
+        (["<!-- m -->\nsame", "unrelated"], 0),
+    ],
+)
+@pytest.mark.asyncio
+async def test_post_pr_comment_skips_only_unchanged_latest_report(
+    bodies, expected_posts
+):
+    client = MagicMock()
+    response = MagicMock()
+    response.json.return_value = [{"body": body} for body in bodies]
+    client.request = AsyncMock(return_value=response)
+    with patch("app.utils.github.get_github_client", return_value=client):
+        assert await post_pr_comment(
+            "flathub/test",
+            3,
+            "<!-- m -->",
+            "<!-- m -->\nsame",
+            True,
+            deduplicate=True,
+        )
+    posts = [call for call in client.request.await_args_list if call.args[0] == "post"]
+    assert len(posts) == expected_posts
+
+
+@pytest.mark.asyncio
+async def test_post_pr_comment_checks_latest_report_across_pages():
+    client = MagicMock()
+    first, second = MagicMock(), MagicMock()
+    first.json.return_value = [{"body": "<!-- m -->\nsame"}] * 100
+    second.json.return_value = [{"body": "<!-- m -->\nchanged"}]
+    client.request = AsyncMock(side_effect=[first, second, MagicMock()])
+    with patch("app.utils.github.get_github_client", return_value=client):
+        assert await post_pr_comment(
+            "flathub/test",
+            3,
+            "<!-- m -->",
+            "<!-- m -->\nsame",
+            True,
+            deduplicate=True,
+        )
+    assert [call.args[0] for call in client.request.await_args_list] == [
+        "get",
+        "get",
+        "post",
+    ]
+    assert client.request.await_args_list[1].kwargs["params"]["page"] == 2
+
+
+@pytest.mark.parametrize("bad_page", [None, {"message": "error"}])
+@pytest.mark.asyncio
+async def test_post_pr_comment_does_not_post_after_unavailable_page(bad_page):
+    client = MagicMock()
+    response = MagicMock()
+    response.json.return_value = bad_page
+    client.request = AsyncMock(return_value=response if bad_page is not None else None)
+    with patch("app.utils.github.get_github_client", return_value=client):
+        assert not await post_pr_comment(
+            "flathub/test",
+            3,
+            "<!-- m -->",
+            "<!-- m -->\nsame",
+            True,
+            deduplicate=True,
+        )
+    client.request.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_rate_limit_detection(mock_settings):
     from app.utils.github import GitHubAPIClient
