@@ -68,10 +68,6 @@ ASSESSMENT_FIELDS = [
     "decision_reviewer",
     "decision_automatic",
 ]
-REJECTION_HELP = (
-    "<sub>If you disagree with this decision, comment"
-    " `bot, ping admins` to notify the Flathub admins.</sub>"
-)
 
 
 def _destination(target_branch: str) -> tuple[str, str] | None:
@@ -339,10 +335,10 @@ async def _report(
     if ok and outcome in COMMENTS:
         automatic = state.get("decision_automatic") and AUTOMATIC_COMMENTS.get(outcome)
         body = [COMMENT_MARKER, automatic or COMMENTS[outcome], ""]
-        if outcome == "rejected":
-            body += ["cc @flathub/reviewers", ""]
         if (rationale := marker[3]) and not (automatic and outcome == "accepted"):
             body += [f"> {line}" for line in rationale.splitlines()] + [""]
+        if outcome == "rejected":
+            body += ["cc @flathub/reviewers", ""]
         if outcome == "pending" and state.get("differences"):
             body += _diff(state["differences"])
             body += [
@@ -351,8 +347,6 @@ async def _report(
             ]
         if outcome == "pending":
             body += ["Merging is blocked until a Flathub moderator approves."]
-        if outcome == "rejected":
-            body += ["", REJECTION_HELP]
         ok = await post_pr_comment(
             repo,
             request["pull_request_number"],

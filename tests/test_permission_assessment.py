@@ -938,9 +938,9 @@ async def test_notifications_report_current_decision(
         assert gh.status.await_args.args[1] == "failure"
         body = gh.comment.await_args.args[3]
         assert "> Use the portal.\n> Thanks." in body
-        assert "bot, ping admins" in body
         assert "Merging is blocked" not in body
         assert "cc @flathub/reviewers" in body
+        assert body.index("cc @flathub/reviewers") > body.index("> Thanks.")
         assert "@mod" not in body
 
         backend.body = {
@@ -992,7 +992,6 @@ async def test_automatic_decision_rationale_visibility(
     assert gh.status.await_args.args[1] == status
     body = gh.comment.await_args.args[3]
     assert ("Rule rationale." in body) is (outcome == "rejected")
-    assert ("bot, ping admins" in body) is (outcome == "rejected")
 
 
 @pytest.mark.asyncio
