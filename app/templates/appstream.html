@@ -1,0 +1,212 @@
+{% macro icon(key) -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{% if key == 'globe' %}<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2c6 6 6 14 0 20-6-6-6-14 0-20Z"/>
+{% elif key == 'code' %}<path d="m8 8-4 4 4 4m8-8 4 4-4 4m-3-11-2 14"/>
+{% elif key == 'mail' %}<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 6 10 7L22 6"/>
+{% elif key == 'flag' %}<path d="M4 22V3m0 0c5-5 11 5 16 0v12c-5 5-11-5-16 0"/>
+{% elif key == 'language' %}<path d="M2 5h14M9 2v3m4 0c-1 6-4 10-9 13m1-10c2 4 5 7 9 9m0 5 5-13 5 13m-8-4h6"/>
+{% elif key == 'previous_icon' %}<path d="m14 6-6 6 6 6"/>
+{% elif key == 'next_icon' %}<path d="m10 6 6 6-6 6"/>
+{% elif key == 'license_icon' %}<path d="M12 3v18M4 21h16M3 7h18M3 7l-3 7h6l-3-7m18 0-3 7h6l-3-7"/>
+{% elif key == 'category_icon' %}<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+{% endif %}</svg>
+{%- endmacro %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>AppStream preview of build #{{ build_id }}</title>
+<style>
+@import url("https://rsms.me/inter/inter.css");
+:root {
+  color-scheme: light dark;
+  --page: white;
+  --card: white;
+  --text: oklch(25.61% 0.0354 296.84);
+  --pill-text: var(--text);
+  --muted: oklch(48.56% 0.0136 312.8);
+  --border: oklch(89.56% 0.0045 91.45);
+  --link: oklch(49.79% 0.1314 251.94);
+  --pill: oklch(89.56% 0.0045 91.45 / .6);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: oklch(35.42% 0.0248 301.11);
+    --card: oklch(25.61% 0.0354 296.84);
+    --text: oklch(89.56% 0.0045 91.45);
+    --pill-text: oklch(98.48% 0 0);
+    --muted: oklch(80.84% 0.0041 91.45);
+    --border: oklch(48.56% 0.0136 312.8);
+    --link: oklch(63.85% 0.1314 251.94);
+    --pill: oklch(48.56% 0.0136 312.8 / .6);
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text); font: 16px/1.5 Inter, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+a:focus-visible, button:focus-visible, label:focus-visible { outline: 2px solid var(--link); outline-offset: 4px; }
+svg { width: 24px; height: 24px; flex: none; }
+.container { width: 90%; max-width: 1400px; margin-inline: auto; }
+.test-build-banner { padding: 40px 0; background: oklch(91.01% .1531 100.56); color: oklch(25.61% .0354 296.84); }
+.test-build-banner h2 { margin: 0 0 12px; font-size: 48px; line-height: 1.15; font-weight: 800; letter-spacing: -.03em; }
+.test-build-banner p { margin: 0; max-width: 75ch; font-size: 18px; line-height: 1.6; }
+.test-build-banner a { color: inherit; text-decoration: underline; }
+.app-header { display: flex; align-items: center; gap: 24px; padding-block: 32px; }
+.appicon-wrap { width: 128px; height: 128px; margin: 8px; flex: none; }
+.appicon { width: 128px; height: 128px; object-fit: contain; filter: drop-shadow(0 10px 8px rgb(0 0 0 / .12)); }
+.appicon-fallback { display: grid; place-items: center; background: var(--card); border-radius: 28px; font-size: 36px; }
+.app-identity { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+h1 { margin: 0; font-size: 36px; line-height: 1.25; font-weight: 800; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.developer { margin: 0; color: var(--muted); }
+.app-facts { display: flex; flex-wrap: wrap; justify-content: space-around; gap: 8px; margin-bottom: 24px; }
+.fact { display: flex; flex: 1 1 auto; min-width: 0; max-width: 100%; flex-direction: column; align-items: center; gap: 8px; padding: 12px; color: var(--pill-text); font-size: 16px; }
+.fact-value { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; max-width: 100%; padding: 0 10px; border-radius: 999px; background: var(--pill); overflow-wrap: anywhere; }
+a.fact-value { color: inherit; text-decoration: underline; }
+.fact-value svg { width: 20px; height: 20px; }
+.fact-label { font-size: 12px; }
+.gallery { position: relative; margin: 0; padding: 0; border: 0; min-inline-size: 0; background: var(--gallery-light); color: var(--gallery-text-light); }
+@media (prefers-color-scheme: dark) {
+  .gallery { background: var(--gallery-dark); color: var(--gallery-text-dark); }
+}
+.sr-only, .slide-choice { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.shot { display: none; position: relative; margin: 0; }
+.picture { height: min(500px, 56.25vw); padding: 16px 56px; }
+.lightbox-open { position: absolute; top: 0; left: 56px; right: 56px; height: min(500px, 56.25vw); padding: 0; border: 0; background: none; cursor: zoom-in; }
+.picture img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.lightbox { inset: 0; width: 100%; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 16px; border: 0; background: transparent; color: white; }
+.lightbox:popover-open { display: grid; place-items: center; }
+.lightbox::backdrop { background: black; }
+.lightbox img { position: relative; display: block; width: auto; height: auto; max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); object-fit: contain; }
+.lightbox-slides { display: contents; }
+.lightbox-shot { display: none; margin: 0; }
+.lightbox-dismiss { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-out; }
+.lightbox-toolbar { position: absolute; inset: 0 0 auto; padding: 16px 68px 16px 16px; background: rgb(0 0 0 / .5); pointer-events: none; }
+.lightbox-caption { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.lightbox-close { position: absolute; z-index: 1; top: 8px; right: 8px; display: grid; place-items: center; width: 44px; height: 44px; padding: 8px; border: 0; background: none; color: rgb(255 255 255 / .8); cursor: pointer; }
+.lightbox-close:hover, .lightbox-nav:hover { color: white; }
+.lightbox button:focus-visible { outline-color: white; outline-offset: -4px; }
+.lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); display: grid; place-items: center; padding: 24px 16px; color: rgb(255 255 255 / .8); filter: drop-shadow(0 1px 2px black); cursor: pointer; }
+.lightbox-previous { left: 0; }
+.lightbox-next { right: 0; }
+figcaption { display: grid; place-items: center; min-height: 40px; padding: 8px 48px; text-align: center; font-size: 14px; }
+.arrow { position: absolute; top: calc(min(500px, 56.25vw) / 2 - 24px); width: 48px; height: 48px; display: grid; place-items: center; cursor: pointer; opacity: .7; border-radius: 50%; }
+.arrow:hover { opacity: 1; background: rgb(0 0 0 / .08); }
+.previous { left: 8px; }
+.next { right: 8px; }
+.dots { display: flex; justify-content: center; gap: 6px; padding: 12px 0 20px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; opacity: .3; cursor: pointer; }
+.content { display: flex; flex-direction: column; gap: 40px; padding-top: 8px; padding-bottom: 64px; }
+.summary { margin: 16px 0; font-size: 24px; line-height: 32px; font-weight: 500; letter-spacing: -.025em; }
+.prose { line-height: 1.75; }
+.prose p { margin: 0 0 20px; }
+.prose ul, .prose ol { padding-left: 26px; margin: 0 0 20px; }
+.prose li { padding-left: 2px; margin-block: 8px; }
+.prose code { background: var(--pill); padding: 2px 4px; border-radius: 4px; }
+.release-card { border-radius: 12px; background: var(--card); padding: 16px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1); }
+.release-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.release-header h3 { margin: 0; font-size: 18px; line-height: 28px; font-weight: 600; }
+.release-date { border-radius: 6px; background: var(--pill); padding: 2px 6px; font-size: 12px; }
+.release-card p { margin-bottom: 0; }
+.links h2 { margin: 0 0 12px; font-size: 18px; line-height: 28px; font-weight: 600; }
+.link-list { display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--card); box-shadow: 0 4px 6px -1px rgb(0 0 0 / .1); }
+.link-row { display: flex; align-items: center; gap: 16px; padding: 12px 16px; color: var(--text); border-top: 1px solid var(--border); min-width: 0; }
+.link-row:first-child { border-top: 0; }
+.link-row:hover { background: color-mix(in srgb, var(--text) 8%, transparent); text-decoration: none; }
+.link-row > svg { color: var(--muted); }
+.link-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.link-label { font-size: 16px; line-height: 24px; }
+.link-url { font-size: 14px; line-height: 20px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-row .external { width: 18px; height: 18px; }
+@media (prefers-color-scheme: dark) {
+  .release-card, .link-list { box-shadow: none; }
+}
+@media (min-width: 1280px) { .prose { max-width: 75%; } }
+@media (max-width: 639px) {
+  .app-header { flex-direction: column; text-align: center; }
+  h1 { font-size: 30px; line-height: 1.25; }
+  .picture { padding: 12px 32px; }
+  .lightbox-open { left: 32px; right: 32px; }
+  .arrow { width: 32px; height: 40px; top: calc(56.25vw / 2 - 20px); }
+  .previous { left: 0; }
+  .next { right: 0; }
+  .content { gap: 32px; }
+}
+{% for shot in shots %}
+body:has(#shot-{{ loop.index }}:checked) #slide-{{ loop.index }} { display: block; }
+body:has(#shot-{{ loop.index }}:checked) .dots label[for="shot-{{ loop.index }}"] { opacity: 1; }
+#shot-{{ loop.index }}:checked ~ .lightbox-slides #lightbox-slide-{{ loop.index }} { display: block; }
+#shot-{{ loop.index }}:focus-visible ~ .lightbox-slides #lightbox-slide-{{ loop.index }} img { outline: 2px solid white; outline-offset: 4px; }
+{% endfor %}
+</style>
+</head>
+<body>
+<main>
+  <section class="test-build-banner" aria-labelledby="test-build-warning">
+    <div class="container">
+      <h2 id="test-build-warning">This is an AppStream preview of test build {% if log_url %}<a href="{{ log_url }}">#{{ build_id }}</a>{% else %}#{{ build_id }}{% endif %}</h2>
+      <p>This preview is for reference only. It may not exactly match the app’s listing on the main Flathub website. The content below is not approved by the Flathub team.</p>
+    </div>
+  </section>
+  <header class="app-header container">
+    <div class="appicon-wrap">{% if icon_url %}<img class="appicon" src="{{ icon_url }}" alt="{{ name }} icon" referrerpolicy="no-referrer">{% else %}<div class="appicon appicon-fallback" aria-hidden="true">{{ name[:2] }}</div>{% endif %}</div>
+    <div class="app-identity"><h1>{{ name }}</h1>{% if developer %}<p class="developer">by {{ developer }}</p>{% endif %}</div>
+  </header>
+  <section class="app-facts container" aria-label="App information">
+    <div class="fact"><span class="fact-value">{{ app_id }}</span><span class="fact-label">App ID</span></div>
+    {% if sha %}<div class="fact"><span class="fact-value" title="{{ sha }}">{{ sha[:12] }}</span><span class="fact-label">Commit</span></div>{% endif %}
+    {% if pr_url %}<div class="fact"><a class="fact-value" href="{{ pr_url }}">#{{ pr_url.rsplit('/', 1)[-1] }}</a><span class="fact-label">Pull request</span></div>{% endif %}
+    {% if license %}<div class="fact"><span class="fact-value">{{ icon('license_icon') }}{{ license }}</span><span class="fact-label">License</span></div>{% endif %}
+    {% if category %}<div class="fact"><span class="fact-value">{{ icon('category_icon') }}{{ category }}</span><span class="fact-label">Category</span></div>{% endif %}
+  </section>
+  {% if shots %}
+  <fieldset class="gallery" style="{{ gallery_style }}">
+    <legend class="sr-only">Screenshots</legend>
+    <div class="slides">
+      {% for shot in shots %}
+      <figure class="shot" id="slide-{{ loop.index }}">
+        <div class="picture"><img src="{{ shot.source }}" alt="{{ shot.caption }}" referrerpolicy="no-referrer"></div>
+        <figcaption>{{ shot.caption }}</figcaption>
+        <label class="arrow previous" for="shot-{{ loop.index - 1 if not loop.first else shots|length }}" title="Previous screenshot">{{ icon('previous_icon') }}</label>
+        <label class="arrow next" for="shot-{{ loop.index + 1 if not loop.last else 1 }}" title="Next screenshot">{{ icon('next_icon') }}</label>
+      </figure>
+      {% endfor %}
+    </div>
+    <button class="lightbox-open" type="button" popovertarget="lightbox" aria-label="Enlarge screenshot"></button>
+    <div class="dots">{% for shot in shots %}<label class="dot" for="shot-{{ loop.index }}" title="{{ shot.caption }}"><span class="sr-only">{{ shot.caption }}</span></label>{% endfor %}</div>
+  </fieldset>
+  <div class="lightbox" id="lightbox" popover role="dialog" aria-label="Screenshot viewer">
+    <button class="lightbox-dismiss" type="button" popovertarget="lightbox" popovertargetaction="hide" tabindex="-1" aria-hidden="true"></button>
+    <button class="lightbox-close" type="button" popovertarget="lightbox" popovertargetaction="hide" aria-label="Close screenshot" title="Close" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
+    {% for shot in shots %}<input class="slide-choice" type="radio" name="screenshots" id="shot-{{ loop.index }}" aria-label="{{ shot.caption }}"{% if loop.first %} checked{% endif %}>{% endfor %}
+    <div class="lightbox-slides">
+      {% for shot in shots %}
+      <figure class="lightbox-shot" id="lightbox-slide-{{ loop.index }}" role="group" aria-label="{{ loop.index }} of {{ shots|length }}">
+        <img src="{{ shot.source }}" alt="{{ shot.caption }}" referrerpolicy="no-referrer">
+        <div class="lightbox-toolbar"><span class="lightbox-caption">{{ shot.caption }}</span></div>
+        {% if shots|length > 1 %}
+        <label class="lightbox-nav lightbox-previous" for="shot-{{ loop.index - 1 if not loop.first else shots|length }}" title="Previous screenshot">{{ icon('previous_icon') }}<span class="sr-only">Previous screenshot</span></label>
+        <label class="lightbox-nav lightbox-next" for="shot-{{ loop.index + 1 if not loop.last else 1 }}" title="Next screenshot">{{ icon('next_icon') }}<span class="sr-only">Next screenshot</span></label>
+        {% endif %}
+      </figure>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+  <div class="content container">
+    <section class="description"><h2 class="summary">{{ summary }}</h2><div class="prose">{{ description }}</div></section>
+    {% if release %}<section class="release-card">
+      <header class="release-header"><h3>Changes in version {{ release.version }}</h3><span class="release-date">{{ release.date }}</span></header>
+      <div class="prose">{{ release.notes }}</div>
+    </section>{% endif %}
+    {% if links %}<section class="links"><h2>Links</h2><div class="link-list">
+      {% set link_icons = {'homepage': 'globe', 'contact': 'mail', 'bugtracker': 'flag', 'vcs-browser': 'code', 'translate': 'language'} %}
+      {% for link in links %}<a class="link-row" href="{{ link.url }}" target="_blank" rel="noreferrer noopener">{{ icon(link_icons[link.key]) }}<span class="link-copy"><span class="link-label">{{ link.label }}</span><span class="link-url">{{ link.url }}</span></span><svg class="external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M15 3h6v6m0-6-12 12M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/></svg></a>{% endfor %}
+    </div></section>{% endif %}
+  </div>
+</main>
+</body>
+</html>

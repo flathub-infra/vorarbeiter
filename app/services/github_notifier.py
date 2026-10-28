@@ -231,6 +231,13 @@ class GitHubNotifier:
                     comment = (
                         f"✅ [Test build succeeded]({log_url}).{arch_info_comment}"
                     )
+                if (
+                    git_repo == "flathub/flathub"
+                    and pipeline.flat_manager_repo == "test"
+                    and pipeline.build_id
+                ):
+                    separator = " " if arch_info_comment else "\n\n"
+                    comment += f"{separator}Preview app listing [here]({settings.base_url}/appstream/{pipeline.id})."
                 if linter_warnings:
                     warnings_text = "\n".join(f"- {w.strip()}" for w in linter_warnings)
                     comment += (

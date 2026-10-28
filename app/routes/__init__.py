@@ -1,3 +1,4 @@
+from app.routes.appstream import appstream_router
 from app.routes.dashboard import dashboard_router
 from app.routes.diffoscope import diffoscope_router
 from app.routes.inactive_repos import inactive_repos_router
@@ -7,6 +8,7 @@ from app.routes.pipelines import pipelines_router
 from app.routes.webhooks import webhooks_router
 
 __all__ = [
+    "appstream_router",
     "dashboard_router",
     "diffoscope_router",
     "inactive_repos_router",

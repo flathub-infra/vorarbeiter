@@ -9,6 +9,7 @@ from app.config import settings
 from app.logger import setup_logging
 from app.middleware import LoggingMiddleware
 from app.routes import (
+    appstream_router,
     dashboard_router,
     diffoscope_router,
     inactive_repos_router,
@@ -51,6 +52,8 @@ app.add_middleware(
 )
 
 app.add_middleware(LoggingMiddleware)
+
+app.include_router(appstream_router)
 
 app.include_router(dashboard_router)
 app.include_router(diffoscope_router)

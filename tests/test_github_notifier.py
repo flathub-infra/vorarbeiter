@@ -1,9 +1,11 @@
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.config import settings
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
@@ -361,6 +363,54 @@ async def test_notify_pr_build_complete_committed_no_build_id(
             pr_number=42,
             comment="✅ [Test build succeeded](https://example.com/logs/123).\n\n*Built for x86_64 architecture.*",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("repo", "fm_repo", "build_id", "status", "has_client", "has_preview"),
+    [
+        ("flathub/flathub", "test", 123, "committed", True, True),
+        ("flathub/flathub", "test", 123, "committed", False, True),
+        ("flathub/org.test.App", "test", 123, "committed", True, False),
+        ("flathub/flathub", "stable", 123, "committed", True, False),
+        ("flathub/flathub", "test", None, "committed", True, False),
+        ("flathub/flathub", "test", 123, "cancelled", True, False),
+    ],
+)
+async def test_submission_preview_link(
+    github_notifier,
+    mock_pipeline,
+    repo,
+    fm_repo,
+    build_id,
+    status,
+    has_client,
+    has_preview,
+):
+    mock_pipeline.params["repo"] = repo
+    mock_pipeline.flat_manager_repo = fm_repo
+    mock_pipeline.build_id = build_id
+    github_notifier.flat_manager.get_flatpakref_url.return_value = (
+        "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref"
+    )
+    if not has_client:
+        github_notifier.flat_manager = None
+    with (
+        patch(
+            "app.services.github_notifier.get_linter_warning_messages", return_value=[]
+        ),
+        patch("app.services.github_notifier.get_build_job_arches", return_value=[]),
+        patch("app.services.github_notifier.create_pr_comment") as post,
+    ):
+        await github_notifier.notify_pr_build_complete(mock_pipeline, status)
+    body = post.call_args.kwargs["comment"]
+    links = re.findall(r"\[[^\]\n]+\]\(([^)\s]+)\)", body)
+    preview_url = f"{settings.base_url}/appstream/{mock_pipeline.id}"
+    assert links.count(preview_url) == int(has_preview)
+    if status == "committed" and build_id and has_client:
+        assert "flatpak install --user https://dl.flathub.org/build-repo/123/" in body
+    else:
+        assert "flatpak install --user" not in body
 
 
 @pytest.mark.asyncio
