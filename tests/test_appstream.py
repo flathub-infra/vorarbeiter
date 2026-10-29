@@ -106,6 +106,30 @@ async def test_default_locale_markup_and_metadata(upstream):
 
 
 @pytest.mark.parametrize(
+    ("value", "license", "url"),
+    [
+        ("MIT", "MIT", None),
+        ("LicenseRef-proprietary", "Proprietary", None),
+        (
+            "LicenseRef-proprietary=https://example.org/terms",
+            "Proprietary",
+            "https://example.org/terms",
+        ),
+        ("LicenseRef-proprietary=http://example.org/terms", "Proprietary", None),
+    ],
+)
+async def test_proprietary_license_ref(upstream, value, license, url):
+    responses, _ = upstream
+    responses["x86_64"] = (
+        200,
+        metadata(component(f"<project_license>{value}</project_license>")),
+    )
+    result = await appstream.fetch_preview(42, "org.example.App")
+    assert result["license"] == license
+    assert result["license_url"] == url
+
+
+@pytest.mark.parametrize(
     "body",
     [
         b"not gzip",

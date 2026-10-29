@@ -159,7 +159,7 @@ body:has(#shot-{{ loop.index }}:checked) .dots label[for="shot-{{ loop.index }}"
     <div class="fact"><span class="fact-value">{{ app_id }}</span><span class="fact-label">App ID</span></div>
     {% if sha %}<div class="fact"><span class="fact-value" title="{{ sha }}">{{ sha[:12] }}</span><span class="fact-label">Commit</span></div>{% endif %}
     {% if pr_url %}<div class="fact"><a class="fact-value" href="{{ pr_url }}">#{{ pr_url.rsplit('/', 1)[-1] }}</a><span class="fact-label">Pull request</span></div>{% endif %}
-    {% if license %}<div class="fact"><span class="fact-value">{{ icon('license_icon') }}{{ license }}</span><span class="fact-label">License</span></div>{% endif %}
+    {% if license %}<div class="fact">{% if license_url %}<a class="fact-value" href="{{ license_url }}">{{ icon('license_icon') }}{{ license }}</a>{% else %}<span class="fact-value">{{ icon('license_icon') }}{{ license }}</span>{% endif %}<span class="fact-label">License</span></div>{% endif %}
     {% if category %}<div class="fact"><span class="fact-value">{{ icon('category_icon') }}{{ category }}</span><span class="fact-label">Category</span></div>{% endif %}
   </section>
   {% if shots %}

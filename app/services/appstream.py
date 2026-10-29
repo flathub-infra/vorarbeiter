@@ -103,6 +103,17 @@ def _https_url(value: str | None) -> str | None:
     return value
 
 
+def _license(component: ET.Element) -> tuple[str | None, str | None]:
+    value = _text(component, "project_license")
+    if not value:
+        return None, None
+    if value != "LicenseRef-proprietary" and not value.startswith(
+        "LicenseRef-proprietary="
+    ):
+        return value, None
+    return "Proprietary", _https_url(value.partition("=")[2])
+
+
 def _gallery_style(component: ET.Element) -> str:
     colors = {"light": "#e0dfe2", "dark": "#403a49"}
     for color in _children(component, "branding/color"):
@@ -186,6 +197,7 @@ def _context(component: ET.Element, build_id: int, arch: str) -> dict[str, Any]:
         release = {"version": node.get("version", ""), "date": date, "notes": notes}
         break
     base = f"https://dl.flathub.org/build-repo/{build_id}/appstream/{arch}"
+    license, license_url = _license(component)
     return {
         "arch": arch,
         "name": name,
@@ -193,7 +205,8 @@ def _context(component: ET.Element, build_id: int, arch: str) -> dict[str, Any]:
         "developer": _text(component, "developer/name")
         or _text(component, "developer_name"),
         "app_id": _text(component, "id"),
-        "license": _text(component, "project_license"),
+        "license": license,
+        "license_url": license_url,
         "category": _text(component, "categories/category"),
         "homepage": homepage,
         "homepage_host": urlsplit(homepage).netloc if homepage else None,

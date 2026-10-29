@@ -25,17 +25,16 @@ def preview_pipeline():
     )
 
 
-def test_preview_renders_build_identity_and_safe_metadata(
-    client, mock_db, preview_pipeline
-):
-    mock_db.get.return_value = preview_pipeline
-    context = {
+@pytest.fixture
+def preview_context():
+    return {
         "arch": "aarch64",
         "name": "<script>alert(1)</script>",
         "summary": "A useful app",
         "developer": None,
         "app_id": "org.test.App",
         "license": "MIT",
+        "license_url": None,
         "category": "Utility",
         "homepage": None,
         "homepage_host": None,
@@ -46,9 +45,18 @@ def test_preview_renders_build_identity_and_safe_metadata(
         "links": [],
         "icon_url": "https://dl.flathub.org/build-repo/123/appstream/aarch64/icons/128x128/org.test.App.png",
     }
+
+
+def test_preview_renders_build_identity_and_safe_metadata(
+    client, mock_db, preview_pipeline, preview_context
+):
+    mock_db.get.return_value = preview_pipeline
     with (
         patch("app.routes.appstream.get_db", create_mock_get_db(mock_db)),
-        patch("app.routes.appstream.fetch_preview", AsyncMock(return_value=context)),
+        patch(
+            "app.routes.appstream.fetch_preview",
+            AsyncMock(return_value=preview_context),
+        ),
     ):
         response = client.get(f"/appstream/{preview_pipeline.id}")
     assert response.status_code == 200
@@ -57,9 +65,28 @@ def test_preview_renders_build_identity_and_safe_metadata(
     assert "<p>Safe <em>markup</em>.</p>" in response.text
     assert "https://github.com/flathub/flathub/pull/42" in response.text
     assert "aarch64" in response.text and "abc123" in response.text
-    assert f'src="{context["icon_url"]}"' in response.text
+    assert f'src="{preview_context["icon_url"]}"' in response.text
     assert "script-src 'none'" in response.headers["content-security-policy"]
     assert response.headers["x-robots-tag"] == "noindex, nofollow"
+
+
+def test_preview_links_proprietary_license(
+    client, mock_db, preview_pipeline, preview_context
+):
+    mock_db.get.return_value = preview_pipeline
+    context = {
+        **preview_context,
+        "license": "Proprietary",
+        "license_url": "https://example.org/terms",
+    }
+    with (
+        patch("app.routes.appstream.get_db", create_mock_get_db(mock_db)),
+        patch("app.routes.appstream.fetch_preview", AsyncMock(return_value=context)),
+    ):
+        response = client.get(f"/appstream/{preview_pipeline.id}")
+    assert response.status_code == 200
+    assert 'href="https://example.org/terms">' in response.text
+    assert "Proprietary</a>" in response.text
 
 
 @pytest.mark.parametrize(
