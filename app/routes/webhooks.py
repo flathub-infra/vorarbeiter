@@ -106,12 +106,8 @@ INACTIVE_REPO_TEST_BUILD_MSG = (
 TEST_BUILD_ENQUEUED_MSG = "🚧 Test build enqueued."
 
 DRAFT_PR_TEST_BUILD_MSG = (
-    "Draft pull requests do not start automatic full builds when opened or updated. "
-    "To request a full build while this PR is a draft, comment `bot, build`; the usual "
-    "build rules still apply. Marking this PR ready for review requests an automatic "
-    "build unless that commit already received one or another automatic-build "
-    "restriction applies. Returning to draft removes pending automatic builds, but "
-    "active builds continue. Switching between draft and ready does not reset build history."
+    "Draft PRs do not start full builds automatically. "
+    "Comment `bot, build` or mark this PR ready for review to request one."
 )
 
 
