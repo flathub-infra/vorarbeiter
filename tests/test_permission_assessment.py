@@ -853,6 +853,137 @@ async def test_closed_pull_request_stops_tracking(
     gh.status.assert_not_awaited()
 
 
+@pytest.mark.parametrize("outcome", ["accepted", "pending", "rejected"])
+@pytest.mark.asyncio
+async def test_missing_assessment_stops_lookup_and_invalidates_approval(
+    configured, local_db, db_session_maker, gh, outcome
+):
+    pipeline = submitted(
+        outcome=outcome,
+        decision_id=3,
+        decision_rationale="Approved",
+        reported=["accepted", None, 3, "Approved"],
+    )
+    await add(db_session_maker, pipeline)
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(404, json={"detail": "assessment_not_found"})
+
+    with mock_http(handler):
+        for _ in range(3):
+            await submit_pending_assessments()
+
+    assert [r.method for r in requests] == ["GET"]
+    state = (await load(db_session_maker, pipeline.id)).provider_data[PROVIDER_DATA_KEY]
+    assert state["status"] == "submitted"
+    assert state["assessment_id"] == 7
+    assert state["outcome"] == "error"
+    assert state["error_code"] == "assessment_not_found"
+    assert state["decision_id"] is None
+    assert state["decision_rationale"] is None
+    gh.status.assert_awaited_once()
+    assert gh.status.await_args.args[1] == "error"
+    assert "Approved" not in gh.comment.await_args.args[3]
+
+
+@pytest.mark.parametrize("raises", [False, True])
+@pytest.mark.asyncio
+async def test_missing_assessment_is_saved_when_reporting_fails(
+    configured, local_db, db_session_maker, gh, api, raises
+):
+    pipeline = submitted()
+    older = submitted(outcome="accepted")
+    older.created_at = datetime.now(UTC) - timedelta(minutes=5)
+    await add(db_session_maker, older, pipeline)
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(404, json={"detail": "assessment_not_found"})
+
+    gh.status.return_value = False
+    if raises:
+        gh.status.side_effect = RuntimeError("GitHub unavailable")
+    with mock_http(handler):
+        await submit_pending_assessments()
+        state = (await load(db_session_maker, pipeline.id)).provider_data[
+            PROVIDER_DATA_KEY
+        ]
+        assert state["missing"] is True
+        assert state["outcome"] == "error"
+        assert "reported" not in state
+        gh.status.side_effect = None
+        gh.status.return_value = True
+        assert (await notify(api)).status_code == 204
+        # Even a base change must not resubmit the vanished assessment's old build.
+        gh.pr["base"]["sha"] = NEW_BASE
+        await submit_pending_assessments()
+
+    assert [r.method for r in requests] == ["GET"]
+    assert gh.status.await_count == 2
+    assert gh.status.await_args.args[1] == "error"
+
+
+@pytest.mark.asyncio
+async def test_new_pipeline_replaces_missing_assessment(
+    configured, local_db, db_session_maker, gh
+):
+    missing = submitted(missing=True, outcome="error")
+    missing.created_at = datetime.now(UTC) - timedelta(minutes=5)
+    current = submitted(assessment_id=8)
+    await add(db_session_maker, missing, current)
+    backend = Backend(assessment_id=8, outcome="accepted")
+
+    with mock_http(backend):
+        await submit_pending_assessments()
+
+    assert [str(r.url) for r in backend.requests] == [
+        ASSESS_URL.removesuffix("/assess") + "/8"
+    ]
+    assert gh.status.await_args.args[1] == "success"
+
+
+@pytest.mark.parametrize(
+    "status, body",
+    [
+        (401, {"detail": "invalid_token"}),
+        (403, {"detail": "invalid_scope"}),
+        (404, {"detail": "Not Found"}),
+        (404, "Not Found"),
+        (500, {"detail": "assessment_not_found"}),
+        (503, {"detail": "unavailable"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_other_lookup_errors_remain_retryable(
+    configured, local_db, db_session_maker, gh, status, body
+):
+    pipeline = submitted()
+    await add(db_session_maker, pipeline)
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if isinstance(body, str):
+            return httpx.Response(status, text=body)
+        return httpx.Response(status, json=body)
+
+    with mock_http(handler):
+        for _ in range(2):
+            with pytest.raises(httpx.HTTPStatusError):
+                await permission_assessment.refresh_permission_review(
+                    "flathub/org.test.App", 42
+                )
+
+    assert len(requests) == 2
+    state = (await load(db_session_maker, pipeline.id)).provider_data[PROVIDER_DATA_KEY]
+    assert state == pipeline.provider_data[PROVIDER_DATA_KEY]
+    gh.status.assert_not_awaited()
+    gh.comment.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_no_github_calls_without_status_channels(
     configured, local_db, db_session_maker, gh
