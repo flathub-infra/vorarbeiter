@@ -449,7 +449,7 @@ async def _refresh(
     else:
         base = pr["base"]["sha"]
         recorded = state.get("base_revision", request.get("base_revision"))
-        if recorded and base != recorded:
+        if base != recorded:
             request = {**request, "base_revision": base}
             new = {**state, **await _assess(pipeline, request, client)}
             new["base_revision"] = base

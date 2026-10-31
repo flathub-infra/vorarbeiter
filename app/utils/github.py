@@ -462,10 +462,56 @@ async def create_pr_comment(
 
 
 async def get_pull_request(git_repo: str, pr_number: int) -> dict[str, Any] | None:
+    """Fetch review metadata without REST's changed-file processing limits."""
+    owner, name = git_repo.split("/", 1)
     response = await get_github_client().request(
-        "get", f"https://api.github.com/repos/{git_repo}/pulls/{pr_number}"
+        "post",
+        "https://api.github.com/graphql",
+        json={
+            "query": """
+                query($owner: String!, $name: String!, $number: Int!) {
+                    repository(owner: $owner, name: $name) {
+                        pullRequest(number: $number) {
+                            state
+                            headRefOid
+                            baseRefName
+                            baseRefOid
+                        }
+                    }
+                }
+            """,
+            "variables": {"owner": owner, "name": name, "number": pr_number},
+        },
+        context={"git_repo": git_repo, "pr_number": pr_number},
     )
-    return response.json() if response is not None else None
+    if response is None:
+        return None
+    try:
+        body = response.json()
+        # GraphQL can return HTTP 200 with errors and partial data. Never use it
+        # to establish whether an existing permission assessment is still valid.
+        if body.get("errors"):
+            return None
+        pr = body["data"]["repository"]["pullRequest"]
+        state = pr["state"]
+        head = normalize_git_oid(pr["headRefOid"])
+        base = normalize_git_oid(pr["baseRefOid"])
+        branch = pr["baseRefName"]
+        if (
+            state not in ("OPEN", "CLOSED", "MERGED")
+            or head is None
+            or base is None
+            or not isinstance(branch, str)
+            or not branch
+        ):
+            return None
+        return {
+            "state": "open" if state == "OPEN" else "closed",
+            "head": {"sha": head},
+            "base": {"ref": branch, "sha": base},
+        }
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
 
 
 async def post_pr_comment(
