@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 import time
 from collections.abc import Callable
@@ -82,6 +83,52 @@ class GitHubAPIClient:
 
         return 60.0
 
+    def _safe_error_message(self, response: httpx.Response) -> str | None:
+        """Retain GitHub's reason without echoing request credentials or bodies."""
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        if not isinstance(body, dict) or not isinstance(body.get("message"), str):
+            return None
+
+        secrets: set[str] = set()
+
+        def collect_secrets(value: Any, sensitive: bool = False) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    collect_secrets(
+                        child,
+                        sensitive
+                        or any(
+                            name in key.lower()
+                            for name in ("token", "secret", "password", "authorization")
+                        ),
+                    )
+            elif isinstance(value, list):
+                for child in value:
+                    collect_secrets(child, sensitive)
+            elif sensitive and isinstance(value, str) and value:
+                secrets.add(value)
+
+        authorization = response.request.headers.get("Authorization", "")
+        if authorization:
+            secrets.add(authorization)
+            secrets.add(authorization.split(" ", 1)[-1])
+        try:
+            if response.request.content:
+                collect_secrets(json.loads(response.request.content))
+        except (ValueError, httpx.RequestNotRead):
+            # If the payload can't be inspected, don't risk echoing its secrets.
+            return None
+
+        message = body["message"]
+        variants = secrets | {json.dumps(secret)[1:-1] for secret in secrets}
+        for secret in sorted(variants, key=len, reverse=True):
+            if secret:
+                message = message.replace(secret, "[REDACTED]")
+        return " ".join(message.split())[:500]
+
     async def request(
         self,
         method: str,
@@ -89,10 +136,18 @@ class GitHubAPIClient:
         context: dict | None = None,
         max_retries: int | None = None,
         raise_for_status: bool = True,
+        raise_on_error: bool = False,
         **kwargs,
     ) -> httpx.Response | None:
+        """Optionally propagate failures after retries instead of returning None."""
         result = await self.request_with_result(
-            method, url, context, max_retries, raise_for_status, **kwargs
+            method,
+            url,
+            context,
+            max_retries,
+            raise_for_status,
+            raise_on_error,
+            **kwargs,
         )
         return result.response
 
@@ -103,6 +158,7 @@ class GitHubAPIClient:
         context: dict | None = None,
         max_retries: int | None = None,
         raise_for_status: bool = True,
+        raise_on_error: bool = False,
         **kwargs,
     ) -> GitHubAPIResult:
         context = context or {}
@@ -119,6 +175,8 @@ class GitHubAPIClient:
                     )
 
                     if self._is_rate_limit_error(response):
+                        if raise_on_error:
+                            response.raise_for_status()
                         wait_time = self._get_rate_limit_wait_time(response)
                         logger.warning(
                             "Rate limited by GitHub API",
@@ -150,6 +208,8 @@ class GitHubAPIClient:
                         )
                         await asyncio.sleep(delay)
                         continue
+                    if raise_on_error:
+                        raise
                     logger.error("Request error", url=url, error=str(e), **context)
                     return GitHubAPIResult(
                         response=None,
@@ -170,6 +230,21 @@ class GitHubAPIClient:
                         )
                         await asyncio.sleep(delay)
                         continue
+                    if raise_on_error:
+                        # Only emit the scrubbed reason, never the full body or
+                        # authenticated request. Sentry won't serialize the
+                        # response attached to the exception.
+                        logger.warning(
+                            "GitHub API request failed",
+                            url=url,
+                            status_code=e.response.status_code,
+                            github_request_id=e.response.headers.get(
+                                "X-GitHub-Request-Id"
+                            ),
+                            github_message=self._safe_error_message(e.response),
+                            **context,
+                        )
+                        raise
                     logger.error(
                         "HTTP error",
                         url=url,
@@ -184,6 +259,8 @@ class GitHubAPIClient:
                         error_type="server_error" if should_queue else "client_error",
                     )
                 except Exception as e:
+                    if raise_on_error:
+                        raise
                     logger.exception(
                         "Unexpected error", url=url, error=str(e), **context
                     )
