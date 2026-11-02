@@ -27,6 +27,7 @@ from app.pipelines.build import (
 )
 from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.github_actions import GitHubActionsService
+from app.services.label_response import LABEL_RESPONSES, respond_to_label
 from app.services.permission_assessment import (
     STATUS_CONTEXT as PERMISSION_STATUS_CONTEXT,
 )
@@ -1305,6 +1306,29 @@ async def receive_github_webhook(
 
             asyncio.create_task(merge_service.handle_close_command(payload))
             return {"message": "Close command received and processing."}
+
+    if (
+        repo_name == "flathub/flathub"
+        and payload.get("action") == "labeled"
+        and "pull_request" in payload
+    ):
+        pr = payload["pull_request"]
+        pr_number = pr.get("number")
+        label = (payload.get("label") or {}).get("name") or ""
+        if (
+            type(pr_number) is int
+            and pr_number > 0
+            and pr.get("state") == "open"
+            and pr.get("base", {}).get("ref") == "new-pr"
+            and label in LABEL_RESPONSES
+        ):
+            posted = await respond_to_label(repo_name, pr_number, label)
+            return {
+                "message": "Label response posted."
+                if posted
+                else "Label response failed."
+            }
+        return {"message": "Webhook received but ignored due to label filter."}
 
     if repo_name in ignored_repos and (is_pr_event or is_push_event):
         if is_pr_event and payload.get("action") == "synchronize":

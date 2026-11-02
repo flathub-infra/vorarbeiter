@@ -502,6 +502,61 @@ async def post_pr_comment(
     return await client.request("post", url, json={"body": body}) is not None
 
 
+async def _find_marker_comment(
+    client: GitHubAPIClient, url: str, marker: str, context: dict
+) -> bool | None:
+    page = 1
+    while True:
+        response = await client.request(
+            "get",
+            url,
+            params={"per_page": 100, "page": page},
+            context=context,
+        )
+        if response is None:
+            return None
+        comments = response.json()
+        if not isinstance(comments, list):
+            return None
+        if any(marker in (comment.get("body") or "") for comment in comments):
+            return True
+        if len(comments) < 100:
+            return False
+        page += 1
+
+
+async def ensure_pr_comment(
+    git_repo: str, pr_number: int, marker: str, body: str
+) -> bool:
+    client = get_github_client()
+    url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/comments"
+    context = {"git_repo": git_repo, "pr_number": pr_number}
+
+    found = await _find_marker_comment(client, url, marker, context)
+    if found is None:
+        return False
+    if found:
+        logger.info(
+            "Comment with marker already exists on pull request. Skipping.",
+            git_repo=git_repo,
+            pr_number=pr_number,
+        )
+        return True
+
+    result = await client.request_with_result(
+        "post", url, json={"body": body}, context=context, max_retries=0
+    )
+    if result.response:
+        logger.info(
+            "Successfully created PR comment",
+            git_repo=git_repo,
+            pr_number=pr_number,
+        )
+        return True
+
+    return await _find_marker_comment(client, url, marker, context) is True
+
+
 async def add_comment_reaction(
     git_repo: str,
     comment_id: int,
