@@ -2008,13 +2008,13 @@ async def test_receive_webhook_creates_pipeline(client, mock_db):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "flag_enabled, should_post",
+    "ping_disabled, should_post",
     [
-        (True, True),
-        (False, False),
+        (False, True),
+        (True, False),
     ],
 )
-async def test_create_pipeline_admin_ping(flag_enabled, should_post):
+async def test_create_pipeline_admin_ping(ping_disabled, should_post):
     event_id = uuid.uuid4()
     comment_payload: dict[str, Any] = dict(SAMPLE_COMMENT_PAYLOAD)
     comment_payload["issue"] = {
@@ -2041,7 +2041,10 @@ async def test_create_pipeline_admin_ping(flag_enabled, should_post):
     mock_get_db = create_mock_get_db(mock_db)
 
     with (
-        patch("app.routes.webhooks.settings.ff_admin_ping_comment", flag_enabled),
+        patch(
+            "app.routes.webhooks.settings.ff_disable_admin_ping_comment",
+            ping_disabled,
+        ),
         patch(
             "app.routes.webhooks.add_issue_comment",
             new_callable=AsyncMock,

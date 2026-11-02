@@ -183,7 +183,10 @@ class GitHubNotifier:
                 "- <code>bot, build</code> - Restart the test build\n"
             )
 
-            if git_repo != "flathub/flathub" and settings.ff_admin_ping_comment:
+            if (
+                git_repo != "flathub/flathub"
+                and not settings.ff_disable_admin_ping_comment
+            ):
                 footnote += "- <code>bot, ping admins</code> - Contact Flathub admins\n"
 
             footnote += "</details>"

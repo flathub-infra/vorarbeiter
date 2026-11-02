@@ -1624,7 +1624,7 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
                     comment_author=comment_author,
                 )
             else:
-                if settings.ff_admin_ping_comment:
+                if not settings.ff_disable_admin_ping_comment:
                     logger.info(
                         "Handling admin ping", repo=repo, issue_number=issue_number
                     )

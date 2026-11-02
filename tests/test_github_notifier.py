@@ -268,14 +268,14 @@ async def test_notify_pr_build_complete_success_no_build_id(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("flag_enabled", [True, False])
+@pytest.mark.parametrize("ping_disabled", [False, True])
 async def test_notify_pr_build_complete_failure(
-    github_notifier, mock_pipeline, flag_enabled
+    github_notifier, mock_pipeline, ping_disabled
 ):
     with (
         patch(
-            "app.services.github_notifier.settings.ff_admin_ping_comment",
-            flag_enabled,
+            "app.services.github_notifier.settings.ff_disable_admin_ping_comment",
+            ping_disabled,
         ),
         patch("app.services.github_notifier.create_pr_comment") as mock_comment,
     ):
@@ -287,7 +287,7 @@ async def test_notify_pr_build_complete_failure(
             "- <code>bot, build</code> - Restart the test build\n"
         )
 
-        if flag_enabled:
+        if not ping_disabled:
             expected_comment += (
                 "- <code>bot, ping admins</code> - Contact Flathub admins\n"
             )
@@ -417,8 +417,8 @@ async def test_submission_preview_link(
 async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline):
     with (
         patch(
-            "app.services.github_notifier.settings.ff_admin_ping_comment",
-            True,
+            "app.services.github_notifier.settings.ff_disable_admin_ping_comment",
+            False,
         ),
         patch("app.services.github_notifier.create_pr_comment") as mock_comment,
     ):
@@ -474,8 +474,8 @@ async def test_notify_pr_build_complete_commit_failure(github_notifier, mock_pip
 
     with (
         patch(
-            "app.services.github_notifier.settings.ff_admin_ping_comment",
-            True,
+            "app.services.github_notifier.settings.ff_disable_admin_ping_comment",
+            False,
         ),
         patch("app.services.github_notifier.create_pr_comment") as mock_comment,
     ):
