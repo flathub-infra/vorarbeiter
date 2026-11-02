@@ -514,10 +514,7 @@ def _configured() -> bool:
 
 
 def _repos() -> list[str]:
-    repos = ["test"]
-    if settings.ff_permission_assessment_push:
-        repos += ["stable", "beta"]
-    return repos
+    return ["test", "stable", "beta"]
 
 
 async def _submit(

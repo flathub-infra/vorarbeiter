@@ -518,22 +518,6 @@ async def test_merged_pull_request_lookup_failure_raises():
         )
 
 
-@pytest.mark.asyncio
-async def test_push_builds_ignored_without_flag(configured, local_db, db_session_maker):
-    await add(db_session_maker, make_push_pipeline())
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("unexpected request")
-
-    with (
-        patch.object(settings, "ff_permission_assessment_push", False),
-        mock_http(handler),
-    ):
-        result = await submit_pending_assessments()
-
-    assert result == {"status": "completed", "submitted": 0, "skipped": 0, "failed": 0}
-
-
 @pytest.mark.parametrize(
     "status", [PipelineStatus.PUBLISHING, PipelineStatus.PUBLISHED]
 )
@@ -547,7 +531,6 @@ async def test_ignores_push_builds_after_publication_started(
         raise AssertionError("unexpected request")
 
     with (
-        patch.object(settings, "ff_permission_assessment_push", True),
         mock_http(handler),
     ):
         result = await submit_pending_assessments()
@@ -574,7 +557,6 @@ async def test_skips_committed_push_build_published_in_flat_manager(
         raise AssertionError("unexpected request")
 
     with (
-        patch.object(settings, "ff_permission_assessment_push", True),
         mock_http(handler),
         patch(
             "app.services.permission_assessment._merged_pull_request",
@@ -633,7 +615,6 @@ async def test_submits_committed_push_builds_with_linked_pull_request(
         )
 
     with (
-        patch.object(settings, "ff_permission_assessment_push", True),
         mock_http(handler),
         patch(
             "app.services.permission_assessment.get_build_job_arches",

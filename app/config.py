@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     ff_reprocheck_issues: bool = False
     ff_disable_admin_ping_comment: bool = False
     ff_disable_test_builds: bool = False
-    ff_permission_assessment_push: bool = False
     max_concurrent_builds: int = 15
     test_build_failure_streak_limit: int = 3
     test_build_penalty_minutes: int = 60
