@@ -1,0 +1,106 @@
+name: Application startup and screenshot checks
+run-name: smoke build ${{ github.event.workflow_run.id }} attempt ${{ github.event.workflow_run.run_attempt }}
+
+on:
+  workflow_run:
+    workflows: [Build pipeline]
+    types: [completed]
+
+# Deliberately separate from build.yml: its workflow_dispatch payload includes
+# upload and callback tokens. Do not pass secrets into this workflow.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke:
+    # A later check-input upload timeout may make the overall build run red even
+    # though its core build/upload completed. The backend verifies that case.
+    if: github.event.workflow_run.event == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Find opt-in input for this exact build attempt
+        id: input
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id: run.id, per_page: 100
+            });
+            const prefix = `smoke-input-${run.run_attempt}-`;
+            const artifact = artifacts.find(a => a.name === prefix + 'x86_64')
+              || artifacts.find(a => a.name === prefix + 'aarch64');
+            if (artifact) {
+              if (artifact.expired || artifact.size_in_bytes > 2 * 1024 ** 3) {
+                throw new Error('Smoke input is expired or exceeds 2 GiB');
+              }
+              core.setOutput('id', artifact.id);
+            }
+
+      - uses: actions/download-artifact@v8
+        if: steps.input.outputs.id != ''
+        with:
+          artifact-ids: ${{ steps.input.outputs.id }}
+          path: smoke-input
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Unpack smoke inputs
+        id: unpack
+        if: steps.input.outputs.id != ''
+        run: python3 app/smoke.py unpack smoke-input smoke-work
+
+      - name: Verify startup
+        id: verify
+        if: steps.unpack.outputs.ready == 'true'
+        continue-on-error: true
+        uses: razzeee/flatpak-smoke@c16708f020b7108eabbc6ce649097ceb417eefc9 # v0.5.1
+        with:
+          repo: smoke-work/repo
+          app-ref: ${{ steps.unpack.outputs.app-ref }}
+          output: smoke-results/verify
+          user: nobody
+          allow-network-remotes: 'true'
+          image: ghcr.io/razzeee/flatpak-smoke@sha256:ed326c29bc5daaaf6ed4b7176b7b0333dece2dabb9bae86f40fc5e214d468e7c
+          args: --overall-timeout 5m
+          execution-timeout: '420'
+          cleanup-timeout: '30'
+
+      - name: Capture recipe screenshots
+        id: screenshots
+        if: ${{ !cancelled() && steps.unpack.outputs.ready == 'true' && steps.unpack.outputs.recipe != '' }}
+        continue-on-error: true
+        uses: razzeee/flatpak-smoke@c16708f020b7108eabbc6ce649097ceb417eefc9 # v0.5.1
+        with:
+          mode: screenshots
+          repo: smoke-work/repo
+          app-ref: ${{ steps.unpack.outputs.app-ref }}
+          recipe: smoke-work/${{ steps.unpack.outputs.recipe }}
+          output: smoke-results/screenshots
+          user: nobody
+          allow-network-remotes: 'true'
+          image: ghcr.io/razzeee/flatpak-smoke-screenshots@sha256:1bd69f005dbf89ca554efd0b2f14fe53275df60b7f5fa7a32197a9b5ca27ab32
+          args: --overall-timeout 5m
+          execution-timeout: '420'
+          cleanup-timeout: '30'
+
+      - name: Collect bounded results
+        if: always() && steps.input.outputs.id != ''
+        env:
+          VERIFY: ${{ steps.verify.outcome }}
+          SCREENSHOTS: ${{ steps.screenshots.outcome }}
+        run: python3 app/smoke.py collect smoke-input smoke-results smoke-report "$VERIFY" "$SCREENSHOTS"
+
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.input.outputs.id != ''
+        with:
+          name: smoke-result-${{ github.run_attempt }}
+          path: smoke-report/
+          retention-days: 14
+          if-no-files-found: error
