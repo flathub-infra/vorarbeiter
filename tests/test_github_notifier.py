@@ -283,6 +283,7 @@ async def test_notify_pr_build_complete_failure(
 
         expected_comment = (
             "❌ [Test build](https://example.com/logs/123) failed.\n\n"
+            "Diagnostic excerpt unavailable; see the full build log.\n\n"
             "<details><summary>Help</summary>\n\n"
             "- <code>bot, build</code> - Restart the test build\n"
         )
@@ -1030,6 +1031,6 @@ async def test_failure_comment_penalty_notice(
         await github_notifier.notify_pr_build_complete(pipeline, "failure")
 
     text = comment.call_args.kwargs["comment"]
-    assert text.startswith("❌ [Test build]")
+    assert text.startswith("❌ Test build failed.")
     assert ("The last 3 test builds failed" in text) is paused
     assert (BUILDING_LOCALLY_URL in text) is paused

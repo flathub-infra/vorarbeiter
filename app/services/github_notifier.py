@@ -5,6 +5,7 @@ import structlog
 
 from app.config import settings
 from app.models import Pipeline
+from app.services.build_failure import build_failure_summary
 from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.test_build_penalty import (
     format_penalty_notice,
@@ -249,7 +250,9 @@ class GitHubNotifier:
                         f"{warnings_text}"
                     )
             elif status == "failure":
-                comment = f"❌ [Test build]({log_url}) failed.\n\n{footnote}"
+                summary = await build_failure_summary(log_url)
+                build_link = f"[Test build]({log_url})" if log_url else "Test build"
+                comment = f"❌ {build_link} failed.\n\n{summary}\n\n{footnote}"
                 if pipeline.flat_manager_repo == "test" and not is_penalty_exempt(
                     pipeline.app_id, pipeline.actor
                 ):

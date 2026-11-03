@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import BuildFailureIssue, Pipeline
+from app.services.build_failure import build_failure_summary
 from app.utils.github import (
     REVIEWERS_MENTION,
     add_issue_comment,
@@ -205,6 +206,7 @@ class BuildFailureIssueService:
         issue_state = issue.get("state")
         if issue_state == "open":
             comment = self._failure_comment(pipeline)
+            comment += f"\n\n{await build_failure_summary(pipeline.log_url)}"
             if await add_issue_comment(state.git_repo, state.issue_number, comment):
                 state.latest_sha = (pipeline.params or {}).get("sha")
                 state.latest_build_url = pipeline.log_url
@@ -263,10 +265,11 @@ class BuildFailureIssueService:
         pipeline: Pipeline,
         git_repo: str,
     ) -> None:
+        summary = await build_failure_summary(pipeline.log_url)
         result = await create_github_issue(
             git_repo=git_repo,
             title=f"{state.flat_manager_repo.capitalize()} build failed",
-            body=self._build_issue_body(pipeline),
+            body=self._build_issue_body(pipeline, summary),
         )
         if result is None:
             return
@@ -284,7 +287,7 @@ class BuildFailureIssueService:
             issue_number=issue_number,
         )
 
-    def _build_issue_body(self, pipeline: Pipeline) -> str:
+    def _build_issue_body(self, pipeline: Pipeline, summary: str) -> str:
         sha = (pipeline.params or {}).get("sha")
         body = (
             f"The {pipeline.flat_manager_repo} build pipeline for `{pipeline.app_id}` failed."
@@ -295,6 +298,8 @@ class BuildFailureIssueService:
             body += f"Build log: {pipeline.log_url}"
         else:
             body += "Build log URL not available."
+
+        body += f"\n\n{summary}"
 
         if pipeline.log_url:
             body += (

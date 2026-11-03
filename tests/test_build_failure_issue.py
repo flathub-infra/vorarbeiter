@@ -13,6 +13,16 @@ SHA_A = "a" * 40
 SHA_B = "b" * 40
 LOG_A = "https://github.com/flathub-infra/vorarbeiter/actions/runs/100"
 LOG_B = "https://github.com/flathub-infra/vorarbeiter/actions/runs/200"
+SUMMARY = "**Failed module:**\n\n    widget\n\n    fatal error: missing.h"
+
+
+@pytest.fixture(autouse=True)
+def mock_failure_summary():
+    with patch(
+        "app.services.build_failure_issue.build_failure_summary",
+        AsyncMock(return_value=SUMMARY),
+    ) as summary:
+        yield summary
 
 
 @pytest.fixture
@@ -117,6 +127,7 @@ async def test_first_failure_creates_and_tracks_issue(service_database):
         body=(
             "The stable build pipeline for `org.test.App` failed.\n\n"
             f"Commit SHA: {SHA_A}\nBuild log: {LOG_A}\n\n"
+            f"{SUMMARY}\n\n"
             "Please check the logs for details. If the failure was unexpected, "
             "you can retry the build by commenting `bot, retry` in this issue."
             "\n\ncc @flathub/reviewers"
@@ -171,7 +182,7 @@ async def test_first_result_adopts_highest_matching_legacy_issue(service_databas
     add_comment.assert_awaited_once_with(
         "flathub/org.test.App",
         8,
-        f"Another stable build failed.\n\nCommit SHA: {SHA_B}\nBuild log: {LOG_B}",
+        f"Another stable build failed.\n\nCommit SHA: {SHA_B}\nBuild log: {LOG_B}\n\n{SUMMARY}",
     )
     create_issue.assert_not_awaited()
 
