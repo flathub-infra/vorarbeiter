@@ -14,14 +14,40 @@ from app.services.test_build_penalty import (
 from app.utils.flat_manager import FlatManagerClient
 from app.utils.github import (
     REVIEWERS_MENTION,
+    BuildJob,
     create_github_issue,
     create_pr_comment,
-    get_build_job_arches,
+    get_build_jobs,
     get_linter_warning_messages,
     update_commit_status,
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _architecture_overview(jobs: list[BuildJob] | None) -> str:
+    outcomes = []
+    for job in sorted(jobs or [], key=lambda job: job.arch):
+        if job.status == "completed":
+            outcome = {
+                "success": "succeeded",
+                "failure": "failed",
+                "cancelled": "cancelled",
+                "skipped": "skipped",
+                "timed_out": "timed out",
+                "neutral": "neutral",
+                "action_required": "action required",
+                "stale": "stale",
+            }.get(job.conclusion or "", "unknown")
+        elif job.status == "in_progress":
+            outcome = "in progress"
+        elif job.status in {"queued", "waiting", "pending", "requested"}:
+            outcome = "pending"
+        else:
+            outcome = "unknown"
+        arch = f"[{job.arch}]({job.html_url})" if job.html_url else job.arch
+        outcomes.append(f"{arch}: {outcome}")
+    return "\n\n**Architectures:** " + " · ".join(outcomes) if outcomes else ""
 
 
 class GitHubNotifier:
@@ -201,28 +227,15 @@ class GitHubNotifier:
                     )
 
             linter_warnings: list[str] = []
-            build_job_arches: list[str] = []
+            build_jobs: list[BuildJob] | None = None
 
             if run_id is not None:
-                linter_warnings, build_job_arches = await asyncio.gather(
+                linter_warnings, build_jobs = await asyncio.gather(
                     get_linter_warning_messages(run_id),
-                    get_build_job_arches(run_id),
+                    get_build_jobs(run_id),
                 )
 
-            arch_info_comment = ""
-            if build_job_arches:
-                sorted_arches = sorted(build_job_arches)
-                plural = "s" if len(build_job_arches) > 1 else ""
-                arch_text = ""
-                if len(build_job_arches) == 1:
-                    arch_text = sorted_arches[0]
-                elif len(build_job_arches) == 2:
-                    arch_text = " and ".join(sorted_arches)
-                elif len(build_job_arches) > 2:
-                    arch_text = (
-                        ", ".join(sorted_arches[:-1]) + ", and " + sorted_arches[-1]
-                    )
-                arch_info_comment = f"\n\n*Built for {arch_text} architecture{plural}.*"
+            arch_info_comment = _architecture_overview(build_jobs)
 
             if status == "committed":
                 if pipeline.build_id and self.flat_manager:
@@ -239,8 +252,7 @@ class GitHubNotifier:
                     and pipeline.flat_manager_repo == "test"
                     and pipeline.build_id
                 ):
-                    separator = " " if arch_info_comment else "\n\n"
-                    comment += f"{separator}Preview app listing [here]({settings.base_url}/appstream/{pipeline.id})."
+                    comment += f"\n\nPreview app listing [here]({settings.base_url}/appstream/{pipeline.id})."
                 if linter_warnings:
                     warnings_text = "\n".join(f"- {w.strip()}" for w in linter_warnings)
                     comment += (
@@ -268,6 +280,8 @@ class GitHubNotifier:
                 )
 
             if comment:
+                if status != "committed":
+                    comment += arch_info_comment
                 await create_pr_comment(
                     git_repo=git_repo,
                     pr_number=pr_number,

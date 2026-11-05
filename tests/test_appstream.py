@@ -133,16 +133,19 @@ async def test_proprietary_license_ref(upstream, value, license, url):
     "body",
     [
         b"not gzip",
-        gzip.compress(b"<components>"),
-        gzip.compress(b"x" * (1024 * 1024 + 1)),
+        # Fixed gzip timestamps keep parametrized IDs identical across workers.
+        gzip.compress(b"<components>", mtime=0),
+        gzip.compress(b"x" * (1024 * 1024 + 1), mtime=0),
         b"x" * (1024 * 1024 + 1),
         gzip.compress(
-            b'<!DOCTYPE components [<!ENTITY x "test">]><components>&x;</components>'
+            b'<!DOCTYPE components [<!ENTITY x "test">]><components>&x;</components>',
+            mtime=0,
         ),
         gzip.compress(
             '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE components><components/>'.encode(
                 "utf-16"
-            )
+            ),
+            mtime=0,
         ),
     ],
 )
