@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -22,6 +23,33 @@ from app.utils.github import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _build_elapsed(pipeline: Pipeline) -> str | None:
+    # These timestamps cover dispatch through the build-result callback, not
+    # the later flat-manager commit or time spent waiting to send this comment.
+    started_at, finished_at = pipeline.started_at, pipeline.finished_at
+    if not isinstance(started_at, datetime) or not isinstance(finished_at, datetime):
+        return None
+
+    # Database timestamps are naive UTC; freshly updated objects can be aware.
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=UTC)
+    elapsed = (finished_at - started_at).total_seconds()
+    if elapsed < 0:
+        return None
+    if elapsed < 1:
+        return "<1s"
+
+    minutes, seconds = divmod(int(elapsed), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
 
 
 class GitHubNotifier:
@@ -268,6 +296,8 @@ class GitHubNotifier:
                 )
 
             if comment:
+                if elapsed := _build_elapsed(pipeline):
+                    comment += f"\n\n*Build duration: {elapsed}.*"
                 await create_pr_comment(
                     git_repo=git_repo,
                     pr_number=pr_number,
