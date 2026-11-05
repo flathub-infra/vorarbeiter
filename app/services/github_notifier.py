@@ -1,4 +1,5 @@
 import asyncio
+import re
 from typing import Any
 
 import structlog
@@ -18,10 +19,31 @@ from app.utils.github import (
     create_pr_comment,
     get_build_job_arches,
     get_linter_warning_messages,
+    normalize_git_oid,
     update_commit_status,
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _build_commit_note(pipeline: Pipeline) -> str:
+    params = pipeline.params or {}
+    verified_sha = normalize_git_oid(params.get("verified_sha"))
+    sha = verified_sha or normalize_git_oid(params.get("sha"))
+    repo = params.get("repo")
+    if (
+        sha is None
+        or not isinstance(repo, str)
+        or re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo) is None
+        or repo.split("/")[1] in {".", ".."}
+    ):
+        return ""
+
+    # PR heads (including forks) are fetched through the base repository's
+    # refs/pull/<number>/head, not its synthetic merge commit. Keep the saved
+    # revision instead of looking up the PR's potentially newer head.
+    label = "Built commit" if verified_sha else "Requested commit"
+    return f"\n\n{label}: [`{sha[:7]}`](https://github.com/{repo}/commit/{sha})."
 
 
 class GitHubNotifier:
@@ -139,6 +161,7 @@ class GitHubNotifier:
         try:
             pr_number = int(pr_number_str)
             comment = f"🚧 Started [test build]({log_url})."
+            comment += _build_commit_note(pipeline)
             await create_pr_comment(
                 git_repo=git_repo,
                 pr_number=pr_number,
@@ -268,6 +291,7 @@ class GitHubNotifier:
                 )
 
             if comment:
+                comment += _build_commit_note(pipeline)
                 await create_pr_comment(
                     git_repo=git_repo,
                     pr_number=pr_number,
@@ -508,7 +532,8 @@ class GitHubNotifier:
         await create_pr_comment(
             git_repo=git_repo,
             pr_number=int(pr_number_str),
-            comment=f"❌ {build} was cancelled because a newer build was queued.",
+            comment=f"❌ {build} was cancelled because a newer build was queued."
+            + _build_commit_note(pipeline),
         )
 
     async def handle_build_committed(
