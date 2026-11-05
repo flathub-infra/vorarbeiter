@@ -6,6 +6,7 @@ import structlog
 from app.config import settings
 from app.models import Pipeline
 from app.services.build_failure_issue import BuildFailureIssueService
+from app.services.build_sizes import fetch_build_sizes, format_build_sizes
 from app.services.test_build_penalty import (
     format_penalty_notice,
     get_penalty_until,
@@ -247,6 +248,10 @@ class GitHubNotifier:
                         "\n\n⚠️  Linter warnings:\n\n"
                         "_Warnings can be promoted to errors in the future. Please try to resolve them._\n\n"
                         f"{warnings_text}"
+                    )
+                if pipeline.build_id:
+                    comment += format_build_sizes(
+                        await fetch_build_sizes(pipeline.build_id, pipeline.app_id)
                     )
             elif status == "failure":
                 comment = f"❌ [Test build]({log_url}) failed.\n\n{footnote}"

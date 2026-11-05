@@ -11,6 +11,12 @@ from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
 
 
+@pytest.fixture(autouse=True)
+def unavailable_build_sizes():
+    with patch("app.services.github_notifier.fetch_build_sizes", return_value=[]):
+        yield
+
+
 @pytest.fixture
 def github_notifier():
     mock_flat_manager = MagicMock(spec=FlatManagerClient)
