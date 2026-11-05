@@ -9,6 +9,7 @@ from app.config import settings
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import FlatManagerClient
+from app.utils.github import BuildJob
 
 
 @pytest.fixture
@@ -320,8 +321,11 @@ async def test_notify_pr_build_complete_committed_with_download(
             return_value=fake_linter_warnings,
         ),
         patch(
-            "app.services.github_notifier.get_build_job_arches",
-            return_value=["x86_64", "aarch64"],
+            "app.services.github_notifier.get_build_jobs",
+            return_value=[
+                BuildJob("x86_64", "completed", "success", "https://github.com/job/1"),
+                BuildJob("aarch64", "completed", "success", "https://github.com/job/2"),
+            ],
         ),
         patch("app.services.github_notifier.create_pr_comment") as mock_comment,
     ):
@@ -332,7 +336,8 @@ async def test_notify_pr_build_complete_committed_with_download(
             "To test this build, install it from the testing repository:\n\n"
             "```\nflatpak install --user "
             "https://dl.flathub.org/build-repo/123/org.test.App.flatpakref\n```"
-            "\n\n*Built for aarch64 and x86_64 architectures.*"
+            "\n\n**Architectures:** [aarch64](https://github.com/job/2): succeeded"
+            " · [x86_64](https://github.com/job/1): succeeded"
             "\n\n⚠️  Linter warnings:\n\n"
             "_Warnings can be promoted to errors in the future. Please try to resolve them._\n\n"
             "- A fake warning found in linter repo check\n"
@@ -351,8 +356,8 @@ async def test_notify_pr_build_complete_committed_no_build_id(
 
     with (
         patch(
-            "app.services.github_notifier.get_build_job_arches",
-            return_value=["x86_64"],
+            "app.services.github_notifier.get_build_jobs",
+            return_value=[BuildJob("x86_64", "completed", "success", None)],
         ),
         patch("app.services.github_notifier.create_pr_comment") as mock_comment,
     ):
@@ -361,7 +366,7 @@ async def test_notify_pr_build_complete_committed_no_build_id(
         mock_comment.assert_called_once_with(
             git_repo="flathub/org.test.App",
             pr_number=42,
-            comment="✅ [Test build succeeded](https://example.com/logs/123).\n\n*Built for x86_64 architecture.*",
+            comment="✅ [Test build succeeded](https://example.com/logs/123).\n\n**Architectures:** x86_64: succeeded",
         )
 
 
@@ -399,7 +404,7 @@ async def test_submission_preview_link(
         patch(
             "app.services.github_notifier.get_linter_warning_messages", return_value=[]
         ),
-        patch("app.services.github_notifier.get_build_job_arches", return_value=[]),
+        patch("app.services.github_notifier.get_build_jobs", return_value=[]),
         patch("app.services.github_notifier.create_pr_comment") as post,
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, status)

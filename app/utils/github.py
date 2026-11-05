@@ -1018,6 +1018,62 @@ async def parse_build_ref_from_log(build_url: str, default_ref: str) -> str:
     return ref
 
 
+@dataclass(frozen=True)
+class BuildJob:
+    arch: str
+    status: str | None
+    conclusion: str | None
+    html_url: str | None
+
+
+async def get_build_jobs(
+    run_id: int, owner: str = "flathub-infra", repo: str = "vorarbeiter"
+) -> list[BuildJob] | None:
+    """Fetch the latest jobs; None means unavailable, not an empty build matrix."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+    client = get_github_client()
+    jobs: list[BuildJob] = []
+    page = 1
+    try:
+        # Optional comment enrichment must not hold up the workflow callback.
+        async with asyncio.timeout(15):
+            while True:
+                response = await client.request(
+                    "get",
+                    url,
+                    params={"filter": "latest", "per_page": 100, "page": page},
+                    context={"owner": owner, "repo": repo, "run_id": run_id},
+                    max_retries=0,
+                )
+                if response is None:
+                    return None
+                data = response.json()["jobs"]
+                if not isinstance(data, list):
+                    return None
+                for job in data:
+                    name = job.get("name")
+                    # The workflow uses build-${{ matrix.arch }}. An unexpanded
+                    # skipped matrix cannot be attributed to an architecture.
+                    if not isinstance(name, str) or not re.fullmatch(
+                        r"build-[A-Za-z0-9_]+", name
+                    ):
+                        continue
+                    jobs.append(
+                        BuildJob(
+                            arch=name.removeprefix("build-"),
+                            status=job.get("status"),
+                            conclusion=job.get("conclusion"),
+                            html_url=job.get("html_url"),
+                        )
+                    )
+                if len(data) < 100:
+                    return jobs
+                page += 1
+    except Exception:
+        logger.exception("Failed to fetch architecture outcomes", run_id=run_id)
+        return None
+
+
 async def get_build_job_arches(
     run_id: int, owner: str = "flathub-infra", repo: str = "vorarbeiter"
 ) -> list[str]:
