@@ -292,7 +292,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           repository: flathub/${{ inputs.app_id }}
           fetch-depth: 1
@@ -360,7 +360,7 @@ jobs:
     permissions:
       packages: write
     steps:
-      - uses: runs-on/action@v2
+      - uses: runs-on/action@v2.7.0
         if: ${{ inputs.build_type != 'default' }}
         with:
           show_costs: summary
@@ -544,7 +544,7 @@ jobs:
         id: setup-oras
         if: ${{ github.event.inputs.app_id != 'flathub' }}
         continue-on-error: true
-        uses: oras-project/setup-oras@v2
+        uses: oras-project/setup-oras@v2.0.3
 
       - name: Wait before retrying ORAS setup
         if: ${{ steps.setup-oras.outcome == 'failure' }}
@@ -553,7 +553,7 @@ jobs:
       - name: Retry ORAS setup
         if: ${{ steps.setup-oras.outcome == 'failure' }}
         continue-on-error: true
-        uses: oras-project/setup-oras@v2
+        uses: oras-project/setup-oras@v2.0.3
 
       - name: Delete image if too large
         if: ${{ github.event.inputs.app_id != 'flathub' }}
