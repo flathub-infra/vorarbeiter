@@ -58,11 +58,11 @@ PROTECTED_BRANCH_PATTERNS = (
 
 EXTENSION_BRANCH_ERROR = (
     "This submission is a runtime extension, so it cannot be merged into "
-    "`{target}`. Use `/merge:{branch} head=<sha>`."
+    "`{target}`. Use `/merge branch={branch} head=<sha>`."
 )
 NON_EXTENSION_BRANCH_ERROR = (
     "`{target}` is not a valid merge target for an app submission. Use "
-    "`/merge head=<sha>` for master or `/merge:beta head=<sha>` for beta."
+    "`/merge head=<sha>` for master or `/merge branch=beta head=<sha>` for beta."
 )
 EXTENSION_UNREADABLE_BRANCH_ERROR = (
     "This submission is a runtime extension whose manifest has no readable "
@@ -217,7 +217,7 @@ class MergeService:
             await self._post_comment(
                 pr_number,
                 "❌ Invalid `/merge` command format.\n"
-                "Usage: `/merge[:branch] head=<pr head commit sha 40 chars> "
+                "Usage: `/merge [branch=<branch>] head=<pr head commit sha 40 chars> "
                 "<optional extra collaborators @foo @baz>`\n"
                 "Apps default to `master`; runtime extensions merge into "
                 "`branch/<manifest branch>` unless a branch is given.",

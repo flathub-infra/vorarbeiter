@@ -10,7 +10,9 @@ class MergeCommand:
     branch_explicit: bool
 
 
-_COMMAND_PATTERN = re.compile(r"^/merge(?::([\w.-]+))? head=([a-fA-F0-9]{40})(.*)$")
+_COMMAND_PATTERN = re.compile(
+    r"^/merge(?: branch=([\w.-]+))? head=([a-fA-F0-9]{40})(.*)$"
+)
 
 _USERNAME_PATTERN = re.compile(r"@(?!flathub/)[a-zA-Z0-9-]{1,39}")
 _TEAM_PATTERN = re.compile(r"@flathub/[a-zA-Z0-9-]{1,39}")

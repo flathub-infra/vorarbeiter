@@ -93,14 +93,14 @@ class TestParseMergeCommand:
 
     def test_valid_merge_beta(self):
         sha = "b" * 40
-        cmd = parse_merge_command(f"/merge:beta head={sha}")
+        cmd = parse_merge_command(f"/merge branch=beta head={sha}")
         assert cmd is not None
         assert cmd.target_branch == "beta"
         assert cmd.pr_head_sha == sha
 
     def test_valid_merge_custom_branch(self):
         sha = "c" * 40
-        cmd = parse_merge_command(f"/merge:24.08 head={sha}")
+        cmd = parse_merge_command(f"/merge branch=24.08 head={sha}")
         assert cmd is not None
         assert cmd.target_branch == "branch/24.08"
 
@@ -130,42 +130,45 @@ class TestParseMergeCommand:
     def test_merge_short_sha(self):
         assert parse_merge_command("/merge head=abc123") is None
 
+    def test_colon_branch_notation_rejected(self):
+        assert parse_merge_command(f"/merge:beta head={'f' * 40}") is None
+
 
 class TestResolveTargetBranch:
     @pytest.mark.parametrize(
         ("comment", "manifest", "expected"),
         [
             ("/merge head=" + "a" * 40, {}, "master"),
-            ("/merge:beta head=" + "a" * 40, {}, "beta"),
+            ("/merge branch=beta head=" + "a" * 40, {}, "beta"),
             (
                 "/merge head=" + "a" * 40,
                 {"build-extension": True, "branch": "26.08"},
                 "branch/26.08",
             ),
             (
-                "/merge:26.08 head=" + "a" * 40,
+                "/merge branch=26.08 head=" + "a" * 40,
                 {"build-extension": True, "branch": "26.08"},
                 "branch/26.08",
             ),
             (
-                "/merge:beta head=" + "a" * 40,
+                "/merge branch=beta head=" + "a" * 40,
                 {"build-extension": True, "branch": "26.08"},
                 None,
             ),
-            ("/merge:24.08 head=" + "a" * 40, {}, None),
+            ("/merge branch=24.08 head=" + "a" * 40, {}, None),
             ("/merge head=" + "a" * 40, {"build-extension": True}, None),
             (
-                "/merge:25.08 head=" + "a" * 40,
+                "/merge branch=25.08 head=" + "a" * 40,
                 {"build-extension": True, "branch": "26.08"},
                 None,
             ),
-            ("/merge:26.08 head=" + "a" * 40, {"build-extension": True}, None),
+            ("/merge branch=26.08 head=" + "a" * 40, {"build-extension": True}, None),
             (
-                "/merge:26.08 head=" + "a" * 40,
+                "/merge branch=26.08 head=" + "a" * 40,
                 {"build-extension": True, "branch": 26.08},
                 None,
             ),
-            ("/merge:beta head=" + "a" * 40, {"build-extension": True}, None),
+            ("/merge branch=beta head=" + "a" * 40, {"build-extension": True}, None),
         ],
     )
     def test_resolve(self, comment, manifest, expected):
@@ -182,7 +185,7 @@ class TestResolveTargetBranch:
             "org.example.Ext.yaml",
             "id: org.example.Ext\nbranch: 26.10\nbuild-extension: true\n",
         )
-        command = parse_merge_command("/merge:26.10 head=" + "a" * 40)
+        command = parse_merge_command("/merge branch=26.10 head=" + "a" * 40)
         assert command is not None
 
         assert resolve_target_branch(command, manifest) == ("branch/26.10", None)
@@ -889,7 +892,7 @@ class TestMergeServiceProcess:
             patch.object(service, "_post_comment", new=AsyncMock()) as mock_comment,
         ):
             await service._process_merge(
-                comment_body=f"/merge:24.08 head={'a' * 40}",
+                comment_body=f"/merge branch=24.08 head={'a' * 40}",
                 pr_number=123,
                 comment_author="reviewer",
             )
@@ -1995,7 +1998,7 @@ async def _run_app_merge(client, comment_author="reviewer"):
 class TestAppMerge:
     def test_parse_rejects_submission_arguments(self):
         assert parse_app_merge_command(f"/merge head={'a' * 40}") == "a" * 40
-        assert parse_app_merge_command(f"/merge:beta head={'a' * 40}") is None
+        assert parse_app_merge_command(f"/merge branch=beta head={'a' * 40}") is None
         assert parse_app_merge_command(f"/merge head={'a' * 40} @user") is None
 
     @pytest.mark.asyncio
