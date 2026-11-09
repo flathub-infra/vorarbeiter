@@ -62,7 +62,7 @@ async def _run(
         patch("app.services.invite.get_github_client", return_value=client),
         patch(
             "app.services.invite.detect_appid_from_github",
-            new=AsyncMock(return_value=("manifest.json", appid)),
+            new=AsyncMock(return_value=("manifest.json", appid, {"id": appid})),
         ),
         patch("app.services.invite.add_issue_comment", new=post_comment),
     ):

@@ -7,6 +7,7 @@ class MergeCommand:
     target_branch: str
     pr_head_sha: str
     additional_collaborators: list[str]
+    branch_explicit: bool
 
 
 _COMMAND_PATTERN = re.compile(r"^/merge(?::([\w.-]+))? head=([a-fA-F0-9]{40})(.*)$")
@@ -24,8 +25,11 @@ def parse_merge_command(comment: str) -> MergeCommand | None:
     if not matched:
         return None
 
-    branch_match = matched.group(1) or "master"
-    if branch_match in ("master", "beta"):
+    branch_match = matched.group(1)
+    branch_explicit = branch_match is not None
+    if not branch_match:
+        target_branch = "master"
+    elif branch_match in ("master", "beta"):
         target_branch = branch_match
     else:
         target_branch = f"branch/{branch_match}"
@@ -40,6 +44,7 @@ def parse_merge_command(comment: str) -> MergeCommand | None:
         target_branch=target_branch,
         pr_head_sha=pr_head_sha,
         additional_collaborators=collaborators,
+        branch_explicit=branch_explicit,
     )
 
 

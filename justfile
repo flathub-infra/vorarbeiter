@@ -183,6 +183,17 @@ build app_id git_ref build_arch:
     manifest=$(just -f .flathub.justfile _get_manifest {{app_id}})
     subject=$(just -f .flathub.justfile _get_build_subject)
 
+    if [ "{{git_ref}}" = "refs/heads/master" ] || [ "{{git_ref}}" = "refs/heads/beta" ]; then
+        shown_manifest=$(flatpak-builder --show-manifest "$manifest") || {
+            echo "Error: failed to parse $manifest" >&2
+            exit 1
+        }
+        if jq -e '."build-extension" == true' <<< "$shown_manifest" > /dev/null; then
+            echo "Error: {{app_id}} is a runtime extension and cannot be built from {{git_ref}}" >&2
+            exit 1
+        fi
+    fi
+
     deps_args="--install-deps-from=flathub"
     if [ "$ref_branch" = "beta" ] || [ "$ref_branch" = "test" ]; then
         deps_args="$deps_args --install-deps-from=flathub-beta"

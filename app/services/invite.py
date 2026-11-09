@@ -86,7 +86,7 @@ class InviteService:
             )
             return
 
-        _, appid = await detect_appid_from_github(
+        _, appid, _ = await detect_appid_from_github(
             client, repo, repo_data.get("default_branch", "master")
         )
         if appid != command.repo:

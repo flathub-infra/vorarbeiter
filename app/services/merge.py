@@ -21,7 +21,7 @@ from app.models.merge_request import (
     MergeRequest,
     MergeStatus,
 )
-from app.schemas.merge import parse_app_merge_command, parse_merge_command
+from app.schemas.merge import MergeCommand, parse_app_merge_command, parse_merge_command
 from app.utils.github import (
     GQL_EXCEPTIONS,
     REVIEWERS_TEAM,
@@ -55,6 +55,40 @@ PROTECTED_BRANCH_PATTERNS = (
     "beta",
     "beta/*",
 )
+
+EXTENSION_BRANCH_ERROR = (
+    "This submission is a runtime extension, so it cannot be merged into "
+    "`{target}`. Use `/merge:{branch} head=<sha>`."
+)
+NON_EXTENSION_BRANCH_ERROR = (
+    "`{target}` is not a valid merge target for an app submission. Use "
+    "`/merge head=<sha>` for master or `/merge:beta head=<sha>` for beta."
+)
+EXTENSION_UNREADABLE_BRANCH_ERROR = (
+    "This submission is a runtime extension whose manifest has no readable "
+    "`branch` field. Add it to the manifest and quote the value."
+)
+
+
+def resolve_target_branch(
+    command: MergeCommand, manifest: dict[str, Any]
+) -> tuple[str | None, str | None]:
+    if manifest.get("build-extension") is not True:
+        if command.target_branch.startswith("branch/"):
+            return None, NON_EXTENSION_BRANCH_ERROR.format(target=command.target_branch)
+        return command.target_branch, None
+
+    manifest_branch = manifest.get("branch")
+    if not isinstance(manifest_branch, str) or not manifest_branch:
+        return None, EXTENSION_UNREADABLE_BRANCH_ERROR
+
+    required = f"branch/{manifest_branch}"
+    if command.branch_explicit and command.target_branch != required:
+        return None, EXTENSION_BRANCH_ERROR.format(
+            target=command.target_branch, branch=manifest_branch
+        )
+    return required, None
+
 
 CLOSE_COMMENT_TEMPLATE = (
     "A repository for this submission has been created: {repo_url} "
@@ -183,9 +217,10 @@ class MergeService:
             await self._post_comment(
                 pr_number,
                 "❌ Invalid `/merge` command format.\n"
-                "Usage: `/merge:<optional branch, default: master> "
-                "head=<pr head commit sha 40 chars> "
-                "<optional extra collaborators @foo @baz>`",
+                "Usage: `/merge[:branch] head=<pr head commit sha 40 chars> "
+                "<optional extra collaborators @foo @baz>`\n"
+                "Apps default to `master`; runtime extensions merge into "
+                "`branch/<manifest branch>` unless a branch is given.",
             )
             return
 
@@ -240,8 +275,8 @@ class MergeService:
         pr_author = pr_details["author"]
 
         client = get_github_client()
-        manifest_file, appid = await detect_appid_from_github(
-            client, fork_repo, fork_branch
+        manifest_file, appid, manifest = await detect_appid_from_github(
+            client, fork_repo, command.pr_head_sha
         )
         if not manifest_file or not appid:
             await self._post_comment(
@@ -249,7 +284,17 @@ class MergeService:
             )
             return
 
-        logger.info("Detected app ID", appid=appid, manifest_file=manifest_file)
+        target_branch, branch_error = resolve_target_branch(command, manifest)
+        if target_branch is None:
+            await self._post_comment(pr_number, f"❌ {branch_error}")
+            return
+
+        logger.info(
+            "Detected app ID",
+            appid=appid,
+            manifest_file=manifest_file,
+            target_branch=target_branch,
+        )
 
         if await self._has_active_merge_request(pr_number):
             await self._post_comment(
@@ -276,7 +321,7 @@ class MergeService:
             id=uuid.uuid4(),
             pr_number=pr_number,
             app_id=appid,
-            target_branch=command.target_branch,
+            target_branch=target_branch,
             pr_head_sha=command.pr_head_sha,
             collaborators=collaborators,
             status=MergeStatus.PUSHING,

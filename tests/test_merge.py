@@ -20,6 +20,7 @@ from app.services.merge import (
     MergeService,
     _FinalizeContext,
     _PrMetadata,
+    resolve_target_branch,
 )
 from app.utils.github import is_reviewer_or_admin
 from app.utils.manifest import _get_appid_from_manifest, _parse_manifest
@@ -130,7 +131,70 @@ class TestParseMergeCommand:
         assert parse_merge_command("/merge head=abc123") is None
 
 
+class TestResolveTargetBranch:
+    @pytest.mark.parametrize(
+        ("comment", "manifest", "expected"),
+        [
+            ("/merge head=" + "a" * 40, {}, "master"),
+            ("/merge:beta head=" + "a" * 40, {}, "beta"),
+            (
+                "/merge head=" + "a" * 40,
+                {"build-extension": True, "branch": "26.08"},
+                "branch/26.08",
+            ),
+            (
+                "/merge:26.08 head=" + "a" * 40,
+                {"build-extension": True, "branch": "26.08"},
+                "branch/26.08",
+            ),
+            (
+                "/merge:beta head=" + "a" * 40,
+                {"build-extension": True, "branch": "26.08"},
+                None,
+            ),
+            ("/merge:24.08 head=" + "a" * 40, {}, None),
+            ("/merge head=" + "a" * 40, {"build-extension": True}, None),
+            (
+                "/merge:25.08 head=" + "a" * 40,
+                {"build-extension": True, "branch": "26.08"},
+                None,
+            ),
+            ("/merge:26.08 head=" + "a" * 40, {"build-extension": True}, None),
+            (
+                "/merge:26.08 head=" + "a" * 40,
+                {"build-extension": True, "branch": 26.08},
+                None,
+            ),
+            ("/merge:beta head=" + "a" * 40, {"build-extension": True}, None),
+        ],
+    )
+    def test_resolve(self, comment, manifest, expected):
+        command = parse_merge_command(comment)
+        assert command is not None
+
+        branch, error = resolve_target_branch(command, manifest)
+
+        assert branch == expected
+        assert (error is None) == (expected is not None)
+
+    def test_resolve_uses_unquoted_yaml_branch(self):
+        manifest = _parse_manifest(
+            "org.example.Ext.yaml",
+            "id: org.example.Ext\nbranch: 26.10\nbuild-extension: true\n",
+        )
+        command = parse_merge_command("/merge:26.10 head=" + "a" * 40)
+        assert command is not None
+
+        assert resolve_target_branch(command, manifest) == ("branch/26.10", None)
+
+
 class TestManifestParsing:
+    def test_parse_yaml_keeps_unquoted_branch_as_text(self):
+        content = "id: org.example.Ext\nbranch: 26.10\nbuild-extension: true\n"
+        result = _parse_manifest("org.example.Ext.yaml", content)
+        assert result["branch"] == "26.10"
+        assert result["build-extension"] is True
+
     def test_parse_json_manifest(self):
         content = json.dumps(
             {"app-id": "org.example.App", "runtime": "org.freedesktop.Platform"}
@@ -230,9 +294,12 @@ class TestDetectAppidFromGithub:
 
         client.request = AsyncMock(side_effect=[list_response, file_response])
 
-        filename, appid = await detect_appid_from_github(client, "user/repo", "main")
+        filename, appid, manifest = await detect_appid_from_github(
+            client, "user/repo", "main"
+        )
         assert filename == "org.example.App.json"
         assert appid == "org.example.App"
+        assert manifest == {"app-id": "org.example.App"}
 
     @pytest.mark.asyncio
     async def test_detect_appid_yaml(self):
@@ -255,8 +322,66 @@ class TestDetectAppidFromGithub:
 
         client.request = AsyncMock(side_effect=[list_response, file_response])
 
-        filename, appid = await detect_appid_from_github(client, "user/repo", "main")
+        filename, appid, manifest = await detect_appid_from_github(
+            client, "user/repo", "main"
+        )
         assert filename == "org.example.App.yml"
+        assert appid == "org.example.App"
+        assert manifest == {
+            "app-id": "org.example.App",
+            "runtime": "org.freedesktop.Platform",
+        }
+
+    @pytest.mark.asyncio
+    async def test_detect_appid_prefers_json_manifest(self):
+        from app.utils.manifest import detect_appid_from_github
+
+        json_content = base64.b64encode(
+            json.dumps({"id": "org.example.App", "branch": "26.08"}).encode()
+        ).decode()
+        client = AsyncMock()
+
+        list_response = MagicMock()
+        list_response.json.return_value = [
+            {"name": "org.example.App.yml", "type": "file"},
+            {"name": "org.example.App.json", "type": "file"},
+        ]
+
+        json_response = MagicMock()
+        json_response.json.return_value = {"content": json_content}
+
+        client.request = AsyncMock(side_effect=[list_response, json_response])
+
+        filename, appid, manifest = await detect_appid_from_github(
+            client, "user/repo", "main"
+        )
+        assert filename == "org.example.App.json"
+        assert appid == "org.example.App"
+        assert manifest == {"id": "org.example.App", "branch": "26.08"}
+
+    @pytest.mark.asyncio
+    async def test_detect_appid_ignores_dotfile_named_like_manifest(self):
+        from app.utils.manifest import detect_appid_from_github
+
+        content = base64.b64encode(
+            json.dumps({"id": "org.example.App"}).encode()
+        ).decode()
+
+        client = AsyncMock()
+
+        list_response = MagicMock()
+        list_response.json.return_value = [
+            {"name": ".json", "type": "file"},
+            {"name": "org.example.App.json", "type": "file"},
+        ]
+
+        file_response = MagicMock()
+        file_response.json.return_value = {"content": content}
+
+        client.request = AsyncMock(side_effect=[list_response, file_response])
+
+        filename, appid, _ = await detect_appid_from_github(client, "user/repo", "main")
+        assert filename == "org.example.App.json"
         assert appid == "org.example.App"
 
     @pytest.mark.asyncio
@@ -270,9 +395,12 @@ class TestDetectAppidFromGithub:
         ]
         client.request = AsyncMock(return_value=list_response)
 
-        filename, appid = await detect_appid_from_github(client, "user/repo", "main")
+        filename, appid, manifest = await detect_appid_from_github(
+            client, "user/repo", "main"
+        )
         assert filename is None
         assert appid is None
+        assert manifest == {}
 
     @pytest.mark.asyncio
     async def test_detect_appid_name_mismatch(self):
@@ -293,9 +421,12 @@ class TestDetectAppidFromGithub:
 
         client.request = AsyncMock(side_effect=[list_response, file_response])
 
-        filename, appid = await detect_appid_from_github(client, "user/repo", "main")
+        filename, appid, manifest = await detect_appid_from_github(
+            client, "user/repo", "main"
+        )
         assert filename is None
         assert appid is None
+        assert manifest == {}
 
     @pytest.mark.asyncio
     async def test_detect_appid_api_failure(self):
@@ -304,9 +435,12 @@ class TestDetectAppidFromGithub:
         client = AsyncMock()
         client.request = AsyncMock(return_value=None)
 
-        filename, appid = await detect_appid_from_github(client, "user/repo", "main")
+        filename, appid, manifest = await detect_appid_from_github(
+            client, "user/repo", "main"
+        )
         assert filename is None
         assert appid is None
+        assert manifest == {}
 
 
 class TestReviewerOrAdminAuthorization:
@@ -646,7 +780,13 @@ class TestMergeServiceProcess:
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
-                new=AsyncMock(return_value=("org.example.App.yml", "org.example.App")),
+                new=AsyncMock(
+                    return_value=(
+                        "org.example.App.yml",
+                        "org.example.App",
+                        {"id": "org.example.App"},
+                    )
+                ),
             ),
             patch.object(
                 service, "_has_active_merge_request", new=AsyncMock(return_value=False)
@@ -665,6 +805,101 @@ class TestMergeServiceProcess:
                 pr_number=123,
                 comment_author="reviewer",
             )
+
+    @pytest.mark.asyncio
+    async def test_process_infers_runtime_extension_branch(self, db_session_maker):
+        service = MergeService()
+        merge_id = uuid.uuid4()
+        dispatched = AsyncMock()
+
+        mock_get_db = create_realistic_get_db(db_session_maker)
+
+        with (
+            patch("app.services.merge.get_db", side_effect=lambda: mock_get_db()),
+            patch.object(service, "_is_authorized", new=AsyncMock(return_value=True)),
+            patch.object(
+                service,
+                "_get_pr_details",
+                new=AsyncMock(return_value=_pr_details()),
+            ),
+            patch(
+                "app.services.merge.detect_appid_from_github",
+                new=AsyncMock(
+                    return_value=(
+                        "org.freedesktop.Sdk.Extension.llvm23.json",
+                        "org.freedesktop.Sdk.Extension.llvm23",
+                        {
+                            "id": "org.freedesktop.Sdk.Extension.llvm23",
+                            "build-extension": True,
+                            "branch": "26.08",
+                        },
+                    )
+                ),
+            ),
+            patch.object(
+                service, "_has_active_merge_request", new=AsyncMock(return_value=False)
+            ),
+            patch.object(
+                service, "_check_repo_exists", new=AsyncMock(return_value=False)
+            ),
+            patch.object(
+                service,
+                "_create_repo",
+                new=AsyncMock(
+                    return_value="https://github.com/flathub/"
+                    "org.freedesktop.Sdk.Extension.llvm23"
+                ),
+            ),
+            patch.object(service, "_dispatch_merge_workflow", new=dispatched),
+            patch.object(service, "_post_comment", new=AsyncMock()),
+            patch.object(uuid, "uuid4", side_effect=[merge_id]),
+        ):
+            await service._process_merge(
+                comment_body=f"/merge head={'a' * 40}",
+                pr_number=123,
+                comment_author="reviewer",
+            )
+
+        merge_request = dispatched.call_args.args[0]
+        assert merge_request.target_branch == "branch/26.08"
+
+    @pytest.mark.asyncio
+    async def test_process_rejects_version_branch_for_app(self):
+        service = MergeService()
+
+        with (
+            patch.object(service, "_is_authorized", new=AsyncMock(return_value=True)),
+            patch.object(
+                service,
+                "_get_pr_details",
+                new=AsyncMock(return_value=_pr_details()),
+            ),
+            patch(
+                "app.services.merge.detect_appid_from_github",
+                new=AsyncMock(
+                    return_value=(
+                        "org.example.App.yml",
+                        "org.example.App",
+                        {"id": "org.example.App"},
+                    )
+                ),
+            ),
+            patch.object(service, "_check_repo_exists", new=AsyncMock()) as mock_exists,
+            patch.object(service, "_create_repo", new=AsyncMock()) as mock_create,
+            patch.object(service, "_post_comment", new=AsyncMock()) as mock_comment,
+        ):
+            await service._process_merge(
+                comment_body=f"/merge:24.08 head={'a' * 40}",
+                pr_number=123,
+                comment_author="reviewer",
+            )
+
+        mock_exists.assert_not_called()
+        mock_create.assert_not_called()
+        assert (
+            "not a valid merge target for an app submission"
+            in (mock_comment.call_args.args[1])
+        )
 
     @pytest.mark.asyncio
     async def test_process_sets_pushing_before_dispatch(self, db_session_maker):
@@ -691,7 +926,13 @@ class TestMergeServiceProcess:
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
-                new=AsyncMock(return_value=("org.example.App.yml", "org.example.App")),
+                new=AsyncMock(
+                    return_value=(
+                        "org.example.App.yml",
+                        "org.example.App",
+                        {"id": "org.example.App"},
+                    )
+                ),
             ),
             patch.object(
                 service, "_has_active_merge_request", new=AsyncMock(return_value=False)
@@ -736,7 +977,13 @@ class TestMergeServiceProcess:
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
-                new=AsyncMock(return_value=("org.example.App.yml", "org.example.App")),
+                new=AsyncMock(
+                    return_value=(
+                        "org.example.App.yml",
+                        "org.example.App",
+                        {"id": "org.example.App"},
+                    )
+                ),
             ),
             patch.object(
                 service, "_has_active_merge_request", new=AsyncMock(return_value=False)
@@ -784,7 +1031,13 @@ class TestMergeServiceProcess:
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
-                new=AsyncMock(return_value=("org.example.App.yml", "org.example.App")),
+                new=AsyncMock(
+                    return_value=(
+                        "org.example.App.yml",
+                        "org.example.App",
+                        {"id": "org.example.App"},
+                    )
+                ),
             ),
             patch.object(
                 service, "_has_active_merge_request", new=AsyncMock(return_value=False)
@@ -869,7 +1122,13 @@ class TestMergeServiceProcess:
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
-                new=AsyncMock(return_value=("org.example.App.yml", "org.example.App")),
+                new=AsyncMock(
+                    return_value=(
+                        "org.example.App.yml",
+                        "org.example.App",
+                        {"id": "org.example.App"},
+                    )
+                ),
             ),
             patch.object(
                 service, "_check_repo_exists", new=AsyncMock(return_value=True)
@@ -918,7 +1177,13 @@ class TestMergeServiceProcess:
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
-                new=AsyncMock(return_value=("org.example.App.yml", "org.example.App")),
+                new=AsyncMock(
+                    return_value=(
+                        "org.example.App.yml",
+                        "org.example.App",
+                        {"id": "org.example.App"},
+                    )
+                ),
             ),
             patch.object(
                 service, "_has_active_merge_request", new=AsyncMock(return_value=True)
@@ -1142,7 +1407,13 @@ class TestMergeBuildEligibility:
             ),
             patch(
                 "app.services.merge.detect_appid_from_github",
-                new=AsyncMock(return_value=("org.example.App.yml", "org.example.App")),
+                new=AsyncMock(
+                    return_value=(
+                        "org.example.App.yml",
+                        "org.example.App",
+                        {"id": "org.example.App"},
+                    )
+                ),
             ),
             patch.object(
                 service, "_check_repo_exists", new=AsyncMock(return_value=False)

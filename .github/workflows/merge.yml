@@ -46,9 +46,61 @@ jobs:
           set -euo pipefail
           git init -q repo
           cd repo
-          git fetch "$FORK_URL" "$EXPECTED_SHA"
+          git remote add origin "$FORK_URL"
+          git fetch origin "$EXPECTED_SHA"
           fetched_sha=$(git rev-parse FETCH_HEAD)
           [ "$fetched_sha" = "$EXPECTED_SHA" ] || exit 1
+
+      - name: Pull linter image
+        if: inputs.target_branch == 'master' || inputs.target_branch == 'beta'
+        run: |
+          set -euo pipefail
+          for delay in 0 15 30 60 120; do
+            sleep "$delay"
+            docker pull ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged && exit 0
+          done
+          exit 1
+
+      - name: Guard runtime extensions
+        env:
+          APPID: ${{ inputs.appid }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          case "$TARGET_BRANCH" in
+            master|beta) ;;
+            *) exit 0 ;;
+          esac
+          manifest=""
+          for ext in json yaml yml; do
+            if git cat-file -e "$EXPECTED_SHA:$APPID.$ext" 2>/dev/null; then
+              manifest="$APPID.$ext"
+              break
+            fi
+          done
+          if [ -z "$manifest" ]; then
+            echo "No manifest named $APPID.{json,yaml,yml} at $EXPECTED_SHA"
+            exit 1
+          fi
+          git checkout --detach "$EXPECTED_SHA"
+          git submodule update --init --recursive --depth 1
+          if ! shown_manifest=$(
+            docker run --rm \
+              --volume "$PWD:/work" \
+              --workdir /work \
+              --entrypoint="" \
+              ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged \
+              flatpak-builder --show-manifest "/work/$manifest"
+          ); then
+            echo "Failed to read $manifest at $EXPECTED_SHA"
+            exit 1
+          fi
+          if jq -e '."build-extension" == true' <<< "$shown_manifest" > /dev/null; then
+            echo "Refusing to push runtime extension $APPID to $TARGET_BRANCH"
+            exit 1
+          fi
 
       - name: Push to flathub/${{ inputs.appid }}
         env:
