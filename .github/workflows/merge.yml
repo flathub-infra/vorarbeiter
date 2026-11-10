@@ -70,7 +70,8 @@ jobs:
         run: |
           set -euo pipefail
           case "$TARGET_BRANCH" in
-            master|beta) ;;
+            master) ref_branch=stable ;;
+            beta) ref_branch=beta ;;
             *) exit 0 ;;
           esac
           manifest=""
@@ -97,8 +98,8 @@ jobs:
             echo "Failed to read $manifest at $EXPECTED_SHA"
             exit 1
           fi
-          if jq -e '."build-extension" == true' <<< "$shown_manifest" > /dev/null; then
-            echo "Refusing to push runtime extension $APPID to $TARGET_BRANCH"
+          if jq -e --arg ref_branch "$ref_branch" '."build-extension" == true and .branch != null and (.branch | tostring) != $ref_branch' <<< "$shown_manifest" > /dev/null; then
+            echo "Refusing to push runtime extension $APPID with branch $(jq -r '.branch' <<< "$shown_manifest") to $TARGET_BRANCH"
             exit 1
           fi
 

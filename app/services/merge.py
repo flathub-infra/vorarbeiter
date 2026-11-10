@@ -56,6 +56,8 @@ PROTECTED_BRANCH_PATTERNS = (
     "beta/*",
 )
 
+CHANNEL_TARGETS = {"stable": "master", "beta": "beta"}
+
 EXTENSION_BRANCH_ERROR = (
     "This submission is a runtime extension, so it cannot be merged into "
     "`{target}`. Use `/merge branch={branch} head=<sha>`."
@@ -65,8 +67,8 @@ NON_EXTENSION_BRANCH_ERROR = (
     "`/merge head=<sha>` for master or `/merge branch=beta head=<sha>` for beta."
 )
 EXTENSION_UNREADABLE_BRANCH_ERROR = (
-    "This submission is a runtime extension whose manifest has no readable "
-    "`branch` field. Add it to the manifest and quote the value."
+    "This submission is a runtime extension whose manifest `branch` field "
+    "is unreadable. Quote the value."
 )
 
 
@@ -78,14 +80,19 @@ def resolve_target_branch(
             return None, NON_EXTENSION_BRANCH_ERROR.format(target=command.target_branch)
         return command.target_branch, None
 
-    manifest_branch = manifest.get("branch")
-    if not isinstance(manifest_branch, str) or not manifest_branch:
-        return None, EXTENSION_UNREADABLE_BRANCH_ERROR
+    if manifest.get("branch") is not None:
+        manifest_branch = manifest["branch"]
+        if not isinstance(manifest_branch, str) or not manifest_branch:
+            return None, EXTENSION_UNREADABLE_BRANCH_ERROR
+    elif command.target_branch == "master":
+        manifest_branch = "stable"
+    else:
+        manifest_branch = command.target_branch.removeprefix("branch/")
 
-    required = f"branch/{manifest_branch}"
+    required = CHANNEL_TARGETS.get(manifest_branch, f"branch/{manifest_branch}")
     if command.branch_explicit and command.target_branch != required:
         return None, EXTENSION_BRANCH_ERROR.format(
-            target=command.target_branch, branch=manifest_branch
+            target=command.target_branch, branch=required.removeprefix("branch/")
         )
     return required, None
 
@@ -219,8 +226,9 @@ class MergeService:
                 "❌ Invalid `/merge` command format.\n"
                 "Usage: `/merge [branch=<branch>] head=<pr head commit sha 40 chars> "
                 "<optional extra collaborators @foo @baz>`\n"
-                "Apps default to `master`; runtime extensions merge into "
-                "`branch/<manifest branch>` unless a branch is given.",
+                "Apps default to `master`. Runtime extensions follow their "
+                "manifest `branch`: `stable` merges into `master`, `beta` into "
+                "`beta`, anything else into `branch/<branch>`.",
             )
             return
 

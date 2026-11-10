@@ -188,8 +188,8 @@ build app_id git_ref build_arch:
             echo "Error: failed to parse $manifest" >&2
             exit 1
         }
-        if jq -e '."build-extension" == true' <<< "$shown_manifest" > /dev/null; then
-            echo "Error: {{app_id}} is a runtime extension and cannot be built from {{git_ref}}" >&2
+        if jq -e --arg ref_branch "$ref_branch" '."build-extension" == true and .branch != null and (.branch | tostring) != $ref_branch' <<< "$shown_manifest" > /dev/null; then
+            echo "Error: {{app_id}} is a runtime extension with branch $(jq -r '.branch' <<< "$shown_manifest") and cannot be built from {{git_ref}}" >&2
             exit 1
         fi
     fi

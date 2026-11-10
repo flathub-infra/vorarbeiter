@@ -156,19 +156,58 @@ class TestResolveTargetBranch:
                 None,
             ),
             ("/merge branch=24.08 head=" + "a" * 40, {}, None),
-            ("/merge head=" + "a" * 40, {"build-extension": True}, None),
+            ("/merge head=" + "a" * 40, {"build-extension": True}, "master"),
             (
                 "/merge branch=25.08 head=" + "a" * 40,
                 {"build-extension": True, "branch": "26.08"},
                 None,
             ),
-            ("/merge branch=26.08 head=" + "a" * 40, {"build-extension": True}, None),
+            (
+                "/merge branch=26.08 head=" + "a" * 40,
+                {"build-extension": True},
+                "branch/26.08",
+            ),
             (
                 "/merge branch=26.08 head=" + "a" * 40,
                 {"build-extension": True, "branch": 26.08},
                 None,
             ),
-            ("/merge branch=beta head=" + "a" * 40, {"build-extension": True}, None),
+            ("/merge branch=beta head=" + "a" * 40, {"build-extension": True}, "beta"),
+            (
+                "/merge head=" + "a" * 40,
+                {"build-extension": True, "branch": "stable"},
+                "master",
+            ),
+            (
+                "/merge branch=beta head=" + "a" * 40,
+                {"build-extension": True, "branch": "stable"},
+                None,
+            ),
+            (
+                "/merge head=" + "a" * 40,
+                {"build-extension": True, "branch": "beta"},
+                "beta",
+            ),
+            (
+                "/merge branch=master head=" + "a" * 40,
+                {"build-extension": True, "branch": "beta"},
+                None,
+            ),
+            (
+                "/merge branch=stable head=" + "a" * 40,
+                {"build-extension": True, "branch": "stable"},
+                None,
+            ),
+            (
+                "/merge branch=stable head=" + "a" * 40,
+                {"build-extension": True},
+                None,
+            ),
+            (
+                "/merge head=" + "a" * 40,
+                {"build-extension": True, "branch": None},
+                "master",
+            ),
         ],
     )
     def test_resolve(self, comment, manifest, expected):
