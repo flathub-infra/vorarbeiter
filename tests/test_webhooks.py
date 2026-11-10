@@ -849,8 +849,13 @@ def test_should_store_event_comment_with_bot_build():
         ("bot, build please", False),
         ("`bot, build`", False),
         ("> bot, build", False),
-        ("Bot, build", False),
+        ("Bot, build", True),
         ("bot,build", False),
+        ("bot, retry", True),
+        ("Bot, Retry", True),
+        ("please bot, retry this", False),
+        ("`bot, retry`", False),
+        ("> bot, retry", False),
     ],
 )
 def test_is_build_command(body, expected):
@@ -1592,6 +1597,59 @@ async def test_create_pipeline_push():
         assert mock_pipeline_service.create_pipeline.called
         assert mock_pipeline_service.start_pipeline.called
         assert isinstance(result, uuid.UUID)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "is_pr", "expected"),
+    [
+        ("bot, build", True, "pr"),
+        ("bot, retry", True, "pr"),
+        ("bot, build", False, "issue"),
+        ("bot, retry", False, "issue"),
+    ],
+)
+async def test_create_pipeline_command_routing(body, is_pr, expected):
+    from app.routes.webhooks import create_pipeline
+
+    pipeline_id = uuid.uuid4()
+    issue: dict[str, Any] = {
+        "number": 42,
+        "body": "Commit SHA: " + "a" * 40,
+        "user": {"login": "flathubbot"},
+    }
+    if is_pr:
+        issue["pull_request"] = {"url": "https://example.invalid/pull/42"}
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        payload={
+            "action": "created",
+            "issue": issue,
+            "comment": {"body": body, "id": 1, "user": {"login": "test-user"}},
+        },
+        repository="test-owner/test-repo",
+        actor="test-user",
+    )
+
+    retry = AsyncMock(return_value=pipeline_id)
+    comment = AsyncMock()
+    with (
+        patch("app.routes.webhooks.handle_issue_retry", retry),
+        patch("app.routes.webhooks.create_pr_comment", comment),
+        patch("app.routes.webhooks.settings.ff_disable_test_builds", True),
+    ):
+        result = await create_pipeline(event)
+
+    if expected == "issue":
+        assert result == pipeline_id
+        retry.assert_awaited_once()
+        assert retry.await_args is not None
+        assert retry.await_args.kwargs["issue_number"] == 42
+        comment.assert_not_awaited()
+    else:
+        assert result is None
+        retry.assert_not_awaited()
+        comment.assert_awaited_once()
 
 
 @pytest.mark.asyncio

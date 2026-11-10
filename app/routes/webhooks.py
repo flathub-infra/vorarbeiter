@@ -622,7 +622,10 @@ def is_initial_push(payload: dict[str, Any]) -> bool:
 
 
 def is_build_command(comment: str) -> bool:
-    return any(line.strip() == "bot, build" for line in comment.splitlines())
+    return any(
+        line.strip().lower() in ("bot, build", "bot, retry")
+        for line in comment.splitlines()
+    )
 
 
 def should_store_event(payload: dict) -> bool:
@@ -633,8 +636,7 @@ def should_store_event(payload: dict) -> bool:
     - A new PR is opened
     - A PR is updated
     - A new commit happens to master, beta or branch/*
-    - PR comment has a line that is exactly "bot, build"
-    - Issue comment contains "bot, retry" not inside quotes or inline code blocks
+    - PR or issue comment has a line that is exactly "bot, build" or "bot, retry"
     - Comment contains "bot, ping admins" not inside quotes or inline code blocks
     """
     ref = payload.get("ref", "")
@@ -722,9 +724,6 @@ def should_store_event(payload: dict) -> bool:
         filtered_comment = "\n".join(comment_lines)
 
         if is_build_command(comment):
-            return True
-
-        if "bot, retry" in filtered_comment.lower():
             return True
 
         if "bot, ping admins" in filtered_comment.lower():
@@ -1719,7 +1718,37 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             return None
 
         elif is_build_command(payload.get("comment", {}).get("body", "")):
-            if not pr_url or issue_number is None:
+            if not issue:
+                return None
+
+            if not issue.get("pull_request"):
+                if not issue_number or not issue_body:
+                    logger.error(
+                        "Missing issue number or body for retry request",
+                        repo=repo,
+                        issue_number=issue_number,
+                        comment_author=comment_author,
+                    )
+                    return None
+
+                if issue_author != "flathubbot":
+                    logger.info(
+                        "Retry comment on issue not created by flathubbot, ignoring",
+                        issue_author=issue_author,
+                        issue_number=issue_number,
+                    )
+                    return None
+
+                retry_pipeline_id = await handle_issue_retry(
+                    git_repo=event.repository,
+                    issue_number=issue_number,
+                    issue_body=issue_body,
+                    comment_author=comment_author,
+                )
+
+                return retry_pipeline_id
+
+            if issue_number is None:
                 return None
 
             if settings.ff_disable_test_builds:
@@ -1820,41 +1849,6 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             if base_sha is not None:
                 params["base_sha"] = base_sha
             explicit_pr_build = not await is_org_member("flathub", comment_author)
-
-        elif "bot, retry" in comment_body:
-            if not issue_number or not issue_body:
-                logger.error(
-                    "Missing issue number or body for retry request",
-                    repo=repo,
-                    issue_number=issue_number,
-                    comment_author=comment_author,
-                )
-                return None
-
-            if issue_author != "flathubbot":
-                logger.info(
-                    "Retry comment on issue not created by flathubbot, ignoring",
-                    issue_author=issue_author,
-                    issue_number=issue_number,
-                )
-                return None
-
-            if issue.get("pull_request"):
-                logger.info(
-                    "Retry comment on PR, ignoring (only for build failure issues)",
-                    repo=repo,
-                    issue_number=issue_number,
-                )
-                return None
-
-            retry_pipeline_id = await handle_issue_retry(
-                git_repo=event.repository,
-                issue_number=issue_number,
-                issue_body=issue_body,
-                comment_author=comment_author,
-            )
-
-            return retry_pipeline_id
 
     if sha:
         params["sha"] = sha
