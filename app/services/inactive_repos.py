@@ -2,11 +2,12 @@ import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import InactiveRepoSnapshot
@@ -280,6 +281,6 @@ async def publish_snapshot(db: AsyncSession, scan: InactiveRepoScanResult) -> bo
             "automatic_candidates": statement.excluded.automatic_candidates,
         },
         where=InactiveRepoSnapshot.scan_started_at < statement.excluded.scan_started_at,
-    ).returning(InactiveRepoSnapshot.organization)
-    result = await db.execute(statement)
-    return result.scalar_one_or_none() is not None
+    )
+    result = cast(CursorResult[Any], await db.execute(statement))
+    return result.rowcount > 0

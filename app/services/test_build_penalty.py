@@ -68,6 +68,7 @@ async def get_penalty_until(
     latest = max(
         finished_at.replace(tzinfo=UTC) if finished_at.tzinfo is None else finished_at
         for _, finished_at in rows
+        if finished_at is not None
     )
     until = latest + timedelta(minutes=settings.test_build_penalty_minutes)
     current = now or datetime.now(UTC)

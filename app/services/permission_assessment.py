@@ -401,7 +401,7 @@ async def _store(db: AsyncSession, pipeline: Pipeline, state: dict[str, Any]) ->
     await db.commit()
 
 
-def _submitted() -> Select[tuple[Pipeline]]:
+def _submitted() -> Select[Pipeline]:
     return select(Pipeline).where(
         Pipeline.flat_manager_repo == "test",
         Pipeline.provider_data[PROVIDER_DATA_KEY]["status"].as_string() == "submitted",
@@ -410,7 +410,7 @@ def _submitted() -> Select[tuple[Pipeline]]:
 
 def _latest_submitted(
     source_repository: str, pull_request_number: int
-) -> Select[tuple[Pipeline]]:
+) -> Select[Pipeline]:
     return (
         _submitted()
         .where(
