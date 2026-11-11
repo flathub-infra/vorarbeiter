@@ -10,13 +10,23 @@ class MergeCommand:
     branch_explicit: bool
 
 
+@dataclass
+class AppMergeCommand:
+    pr_head_sha: str
+    merge_method: str | None
+    skip_checks: bool
+
+
 _COMMAND_PATTERN = re.compile(
     r"^/merge(?: branch=([\w.-]+))? head=([a-fA-F0-9]{40})(.*)$"
 )
 
 _USERNAME_PATTERN = re.compile(r"@(?!flathub/)[a-zA-Z0-9-]{1,39}")
 _TEAM_PATTERN = re.compile(r"@flathub/[a-zA-Z0-9-]{1,39}")
-_APP_COMMAND_PATTERN = re.compile(r"^/merge head=([a-fA-F0-9]{40})\s*$")
+_APP_COMMAND_PATTERN = re.compile(
+    r"^/merge(?: method=(merge|squash|rebase))?"
+    r"(?: skip_checks=(true|false))? head=([a-fA-F0-9]{40})\s*$"
+)
 
 
 def parse_merge_command(comment: str) -> MergeCommand | None:
@@ -50,6 +60,12 @@ def parse_merge_command(comment: str) -> MergeCommand | None:
     )
 
 
-def parse_app_merge_command(comment: str) -> str | None:
+def parse_app_merge_command(comment: str) -> AppMergeCommand | None:
     matched = _APP_COMMAND_PATTERN.match(comment)
-    return matched.group(1) if matched else None
+    if not matched:
+        return None
+    return AppMergeCommand(
+        pr_head_sha=matched.group(3),
+        merge_method=matched.group(1),
+        skip_checks=matched.group(2) == "true",
+    )

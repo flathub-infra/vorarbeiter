@@ -446,15 +446,21 @@ class MergeService:
             logger.error("Missing PR number in merge command payload", repo=repo)
             return
 
-        sha = parse_app_merge_command(comment_body)
-        if not sha:
+        command = parse_app_merge_command(comment_body)
+        if not command:
             await create_pr_comment(
                 repo,
                 pr_number,
                 "❌ Invalid `/merge` command format.\n"
-                "Usage: `/merge head=<pr head commit sha 40 chars>`",
+                "Usage: `/merge [method=merge|squash|rebase] "
+                "[skip_checks=true|false] head=<pr head commit sha 40 chars>`",
             )
             return
+
+        sha = command.pr_head_sha
+        merge_method = command.merge_method or (
+            "rebase" if repo == "flathub/shared-modules" else "merge"
+        )
 
         logger.info(
             "Processing app merge command",
@@ -474,7 +480,9 @@ class MergeService:
             return
 
         pr = await self._get_app_pr(repo, pr_number)
-        error = await self._app_merge_blocker(repo, pr, sha, comment_author)
+        error = await self._app_merge_blocker(
+            repo, pr, sha, comment_author, skip_checks=command.skip_checks
+        )
         if error:
             await create_pr_comment(repo, pr_number, f"❌ Cannot merge: {error}.")
             return
@@ -486,7 +494,7 @@ class MergeService:
             content=json.dumps(
                 {
                     "sha": sha,
-                    "merge_method": "merge",
+                    "merge_method": merge_method,
                     "commit_message": f"Merged via /merge by @{comment_author}",
                 }
             ),
@@ -539,6 +547,8 @@ class MergeService:
         pr: dict[str, Any] | None,
         sha: str,
         comment_author: str,
+        *,
+        skip_checks: bool,
     ) -> str | None:
         if pr is None:
             return "failed to fetch PR details"
@@ -597,7 +607,9 @@ class MergeService:
             return f"`flathub/permissions` is `{permissions_state}` for `{sha}`"
 
         mergeable_state = pr.get("mergeable_state")
-        if mergeable_state != "clean":
+        if mergeable_state != "clean" and not (
+            skip_checks and mergeable_state == "blocked"
+        ):
             return APP_MERGE_STATE_ERRORS.get(
                 str(mergeable_state), f"PR merge state is `{mergeable_state}`"
             )

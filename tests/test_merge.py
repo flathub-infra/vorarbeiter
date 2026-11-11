@@ -2019,8 +2019,14 @@ def _app_merge_client(*, prs=None, protected=True, statuses=None):
     return client
 
 
-async def _run_app_merge(client, comment_author="reviewer", repo=APP_REPO):
+async def _run_app_merge(
+    client, comment_author="reviewer", repo=APP_REPO, method=None, skip_checks=None
+):
     service = MergeService()
+    method_arg = f" method={method}" if method else ""
+    skip_checks_arg = (
+        f" skip_checks={str(skip_checks).lower()}" if skip_checks is not None else ""
+    )
     with (
         patch("app.services.merge.get_github_client", return_value=client),
         patch("app.services.merge.create_pr_comment", new=AsyncMock()) as comment,
@@ -2028,15 +2034,38 @@ async def _run_app_merge(client, comment_author="reviewer", repo=APP_REPO):
         patch.object(service, "_is_authorized", new=AsyncMock(return_value=True)),
     ):
         await service._process_app_merge(
-            repo, 7, f"/merge head={'a' * 40}", comment_author
+            repo,
+            7,
+            f"/merge{method_arg}{skip_checks_arg} head={'a' * 40}",
+            comment_author,
         )
     merge_calls = [c for c in client.request.call_args_list if c.args[0] == "put"]
     return merge_calls, comment
 
 
 class TestAppMerge:
+    @pytest.mark.parametrize("method", [None, "merge", "squash", "rebase"])
+    def test_parses_method(self, method):
+        method_arg = f" method={method}" if method else ""
+        command = parse_app_merge_command(f"/merge{method_arg} head={'a' * 40}")
+
+        assert command is not None
+        assert command.pr_head_sha == "a" * 40
+        assert command.merge_method == method
+        assert command.skip_checks is False
+
+    @pytest.mark.parametrize(("raw", "expected"), [("true", True), ("false", False)])
+    def test_parses_skip_checks(self, raw, expected):
+        command = parse_app_merge_command(f"/merge skip_checks={raw} head={'a' * 40}")
+
+        assert command is not None
+        assert command.skip_checks is expected
+
     def test_parse_rejects_submission_arguments(self):
-        assert parse_app_merge_command(f"/merge head={'a' * 40}") == "a" * 40
+        assert parse_app_merge_command(f"/merge method=fast head={'a' * 40}") is None
+        assert (
+            parse_app_merge_command(f"/merge skip_checks=yes head={'a' * 40}") is None
+        )
         assert parse_app_merge_command(f"/merge branch=beta head={'a' * 40}") is None
         assert parse_app_merge_command(f"/merge head={'a' * 40} @user") is None
 
@@ -2052,6 +2081,17 @@ class TestAppMerge:
         comment.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_uses_requested_merge_method(self):
+        merge_calls, comment = await _run_app_merge(
+            _app_merge_client(), method="squash"
+        )
+
+        assert len(merge_calls) == 1
+        body = json.loads(merge_calls[0].kwargs["content"])
+        assert body["merge_method"] == "squash"
+        comment.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_waits_for_mergeable_state(self):
         client = _app_merge_client(
             prs=[{"mergeable_state": "unknown"}, {"mergeable_state": "clean"}]
@@ -2060,12 +2100,40 @@ class TestAppMerge:
         assert len(merge_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_shared_modules_allows_self_merge_without_build(self):
+    async def test_skip_checks_allows_blocked_merge(self):
         merge_calls, comment = await _run_app_merge(
-            _app_merge_client(statuses={}), "author1", "flathub/shared-modules"
+            _app_merge_client(prs=[{"mergeable_state": "blocked"}]),
+            skip_checks=True,
         )
+
         assert len(merge_calls) == 1
         comment.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_shared_modules_allows_blocked_merge_with_skip_checks(self):
+        merge_calls, comment = await _run_app_merge(
+            _app_merge_client(prs=[{"mergeable_state": "blocked"}], statuses={}),
+            "author1",
+            "flathub/shared-modules",
+            skip_checks=True,
+        )
+
+        assert len(merge_calls) == 1
+        body = json.loads(merge_calls[0].kwargs["content"])
+        assert body["merge_method"] == "rebase"
+        comment.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_shared_modules_refuses_blocked_merge_by_default(self):
+        merge_calls, comment = await _run_app_merge(
+            _app_merge_client(prs=[{"mergeable_state": "blocked"}], statuses={}),
+            "author1",
+            "flathub/shared-modules",
+        )
+
+        assert merge_calls == []
+        comment.assert_awaited_once()
+        assert comment.await_args.args[2].startswith("❌ Cannot merge:")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -2074,6 +2142,7 @@ class TestAppMerge:
             ({}, "author1"),
             ({"protected": False}, "reviewer"),
             ({"prs": [{"mergeable_state": "behind"}]}, "reviewer"),
+            ({"prs": [{"mergeable_state": "blocked"}]}, "reviewer"),
             ({"prs": [{"head": {"sha": "b" * 40}}]}, "reviewer"),
             (
                 {
@@ -2090,6 +2159,7 @@ class TestAppMerge:
             "self-merge",
             "unprotected",
             "behind",
+            "blocked",
             "sha-mismatch",
             "permissions-pending",
             "build-missing",
