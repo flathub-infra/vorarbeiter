@@ -2019,7 +2019,7 @@ def _app_merge_client(*, prs=None, protected=True, statuses=None):
     return client
 
 
-async def _run_app_merge(client, comment_author="reviewer"):
+async def _run_app_merge(client, comment_author="reviewer", repo=APP_REPO):
     service = MergeService()
     with (
         patch("app.services.merge.get_github_client", return_value=client),
@@ -2028,7 +2028,7 @@ async def _run_app_merge(client, comment_author="reviewer"):
         patch.object(service, "_is_authorized", new=AsyncMock(return_value=True)),
     ):
         await service._process_app_merge(
-            APP_REPO, 7, f"/merge head={'a' * 40}", comment_author
+            repo, 7, f"/merge head={'a' * 40}", comment_author
         )
     merge_calls = [c for c in client.request.call_args_list if c.args[0] == "put"]
     return merge_calls, comment
@@ -2058,6 +2058,14 @@ class TestAppMerge:
         )
         merge_calls, _ = await _run_app_merge(client)
         assert len(merge_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_shared_modules_allows_self_merge_without_build(self):
+        merge_calls, comment = await _run_app_merge(
+            _app_merge_client(statuses={}), "author1", "flathub/shared-modules"
+        )
+        assert len(merge_calls) == 1
+        comment.assert_not_awaited()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

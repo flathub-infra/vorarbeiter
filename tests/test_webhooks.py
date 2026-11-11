@@ -636,7 +636,11 @@ def test_receive_github_webhook_ignores_merge_comment_on_issue(client: TestClien
 
 @pytest.mark.parametrize(
     ("repo", "routed"),
-    [("flathub/org.example.App", True), ("flathub/shared-modules", False)],
+    [
+        ("flathub/org.example.App", True),
+        ("flathub/shared-modules", True),
+        ("flathub/org.freedesktop.Platform.GL.nvidia", False),
+    ],
 )
 def test_receive_github_webhook_routes_app_repo_merge_comment(
     client: TestClient, repo: str, routed: bool

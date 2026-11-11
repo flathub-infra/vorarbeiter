@@ -542,7 +542,8 @@ class MergeService:
     ) -> str | None:
         if pr is None:
             return "failed to fetch PR details"
-        if pr.get("user", {}).get("login") == comment_author:
+        shared_modules = repo == "flathub/shared-modules"
+        if pr.get("user", {}).get("login") == comment_author and not shared_modules:
             return "you cannot merge your own pull request"
         if pr.get("state") != "open":
             return "PR is not open"
@@ -589,7 +590,7 @@ class MergeService:
             for s in status_response.json().get("statuses") or []
         }
         build_state = statuses.get("flathub/build")
-        if build_state != "success":
+        if build_state != "success" and not shared_modules:
             return f"`flathub/build` is `{build_state or 'missing'}` for `{sha}`"
         permissions_state = statuses.get("flathub/permissions")
         if permissions_state not in (None, "success"):

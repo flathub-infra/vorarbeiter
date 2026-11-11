@@ -1289,7 +1289,7 @@ async def receive_github_webhook(
 
     if (
         repo_name.startswith("flathub/")
-        and repo_name not in ignored_repos
+        and (repo_name not in ignored_repos or repo_name == "flathub/shared-modules")
         and payload.get("action") == "created"
         and "issue" in payload
         and "comment" in payload
@@ -1300,7 +1300,7 @@ async def receive_github_webhook(
 
             asyncio.create_task(merge_service.handle_app_merge_command(payload))
             return {"message": "Merge command received and processing."}
-        if raw_comment.strip() == "/close":
+        if raw_comment.strip() == "/close" and repo_name not in ignored_repos:
             from app.services import merge_service
 
             asyncio.create_task(merge_service.handle_close_command(payload))
