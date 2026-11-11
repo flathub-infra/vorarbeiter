@@ -14,7 +14,7 @@ class MergeCommand:
 class AppMergeCommand:
     pr_head_sha: str
     merge_method: str | None
-    skip_checks: bool
+    force: bool
 
 
 _COMMAND_PATTERN = re.compile(
@@ -25,7 +25,7 @@ _USERNAME_PATTERN = re.compile(r"@(?!flathub/)[a-zA-Z0-9-]{1,39}")
 _TEAM_PATTERN = re.compile(r"@flathub/[a-zA-Z0-9-]{1,39}")
 _APP_COMMAND_PATTERN = re.compile(
     r"^/merge(?: method=(merge|squash|rebase))?"
-    r"(?: skip_checks=(true|false))? head=([a-fA-F0-9]{40})\s*$"
+    r"(?: force=(true|false))? head=([a-fA-F0-9]{40})\s*$"
 )
 
 
@@ -67,5 +67,5 @@ def parse_app_merge_command(comment: str) -> AppMergeCommand | None:
     return AppMergeCommand(
         pr_head_sha=matched.group(3),
         merge_method=matched.group(1),
-        skip_checks=matched.group(2) == "true",
+        force=matched.group(2) == "true",
     )

@@ -453,7 +453,7 @@ class MergeService:
                 pr_number,
                 "❌ Invalid `/merge` command format.\n"
                 "Usage: `/merge [method=merge|squash|rebase] "
-                "[skip_checks=true|false] head=<pr head commit sha 40 chars>`",
+                "[force=true|false] head=<pr head commit sha 40 chars>`",
             )
             return
 
@@ -481,7 +481,7 @@ class MergeService:
 
         pr = await self._get_app_pr(repo, pr_number)
         error = await self._app_merge_blocker(
-            repo, pr, sha, comment_author, skip_checks=command.skip_checks
+            repo, pr, sha, comment_author, force=command.force
         )
         if error:
             await create_pr_comment(repo, pr_number, f"❌ Cannot merge: {error}.")
@@ -548,7 +548,7 @@ class MergeService:
         sha: str,
         comment_author: str,
         *,
-        skip_checks: bool,
+        force: bool,
     ) -> str | None:
         if pr is None:
             return "failed to fetch PR details"
@@ -573,6 +573,9 @@ class MergeService:
         head_sha = pr.get("head", {}).get("sha")
         if head_sha != sha:
             return f"PR HEAD is `{head_sha}` but command specifies `{sha}`"
+
+        if force:
+            return None
 
         client = get_github_client()
         base = pr.get("base", {}).get("ref")
@@ -607,9 +610,7 @@ class MergeService:
             return f"`flathub/permissions` is `{permissions_state}` for `{sha}`"
 
         mergeable_state = pr.get("mergeable_state")
-        if mergeable_state != "clean" and not (
-            skip_checks and mergeable_state == "blocked"
-        ):
+        if mergeable_state != "clean":
             return APP_MERGE_STATE_ERRORS.get(
                 str(mergeable_state), f"PR merge state is `{mergeable_state}`"
             )

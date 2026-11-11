@@ -2020,13 +2020,11 @@ def _app_merge_client(*, prs=None, protected=True, statuses=None):
 
 
 async def _run_app_merge(
-    client, comment_author="reviewer", repo=APP_REPO, method=None, skip_checks=None
+    client, comment_author="reviewer", repo=APP_REPO, method=None, force=None
 ):
     service = MergeService()
     method_arg = f" method={method}" if method else ""
-    skip_checks_arg = (
-        f" skip_checks={str(skip_checks).lower()}" if skip_checks is not None else ""
-    )
+    force_arg = f" force={str(force).lower()}" if force is not None else ""
     with (
         patch("app.services.merge.get_github_client", return_value=client),
         patch("app.services.merge.create_pr_comment", new=AsyncMock()) as comment,
@@ -2036,7 +2034,7 @@ async def _run_app_merge(
         await service._process_app_merge(
             repo,
             7,
-            f"/merge{method_arg}{skip_checks_arg} head={'a' * 40}",
+            f"/merge{method_arg}{force_arg} head={'a' * 40}",
             comment_author,
         )
     merge_calls = [c for c in client.request.call_args_list if c.args[0] == "put"]
@@ -2052,20 +2050,18 @@ class TestAppMerge:
         assert command is not None
         assert command.pr_head_sha == "a" * 40
         assert command.merge_method == method
-        assert command.skip_checks is False
+        assert command.force is False
 
     @pytest.mark.parametrize(("raw", "expected"), [("true", True), ("false", False)])
-    def test_parses_skip_checks(self, raw, expected):
-        command = parse_app_merge_command(f"/merge skip_checks={raw} head={'a' * 40}")
+    def test_parses_force(self, raw, expected):
+        command = parse_app_merge_command(f"/merge force={raw} head={'a' * 40}")
 
         assert command is not None
-        assert command.skip_checks is expected
+        assert command.force is expected
 
     def test_parse_rejects_submission_arguments(self):
         assert parse_app_merge_command(f"/merge method=fast head={'a' * 40}") is None
-        assert (
-            parse_app_merge_command(f"/merge skip_checks=yes head={'a' * 40}") is None
-        )
+        assert parse_app_merge_command(f"/merge force=yes head={'a' * 40}") is None
         assert parse_app_merge_command(f"/merge branch=beta head={'a' * 40}") is None
         assert parse_app_merge_command(f"/merge head={'a' * 40} @user") is None
 
@@ -2100,22 +2096,29 @@ class TestAppMerge:
         assert len(merge_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_skip_checks_allows_blocked_merge(self):
+    async def test_force_skips_merge_checks(self):
         merge_calls, comment = await _run_app_merge(
-            _app_merge_client(prs=[{"mergeable_state": "blocked"}]),
-            skip_checks=True,
+            _app_merge_client(
+                prs=[{"mergeable_state": "blocked"}],
+                protected=False,
+                statuses={
+                    "flathub/build": "failure",
+                    "flathub/permissions": "failure",
+                },
+            ),
+            force=True,
         )
 
         assert len(merge_calls) == 1
         comment.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_shared_modules_allows_blocked_merge_with_skip_checks(self):
+    async def test_shared_modules_allows_blocked_merge_with_force(self):
         merge_calls, comment = await _run_app_merge(
             _app_merge_client(prs=[{"mergeable_state": "blocked"}], statuses={}),
             "author1",
             "flathub/shared-modules",
-            skip_checks=True,
+            force=True,
         )
 
         assert len(merge_calls) == 1
