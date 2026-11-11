@@ -133,6 +133,19 @@ class TestParseMergeCommand:
     def test_colon_branch_notation_rejected(self):
         assert parse_merge_command(f"/merge:beta head={'f' * 40}") is None
 
+    def test_arguments_in_any_order(self):
+        sha = "a" * 40
+        cmd = parse_merge_command(f"/merge head={sha} @user1 branch=beta")
+        assert cmd is not None
+        assert cmd.target_branch == "beta"
+        assert cmd.pr_head_sha == sha
+        assert cmd.additional_collaborators == ["user1"]
+
+    def test_rejects_unknown_or_duplicate_arguments(self):
+        sha = "a" * 40
+        assert parse_merge_command(f"/merge branh=beta head={sha}") is None
+        assert parse_merge_command(f"/merge head={sha} head={sha}") is None
+
 
 class TestResolveTargetBranch:
     @pytest.mark.parametrize(
@@ -2058,6 +2071,16 @@ class TestAppMerge:
 
         assert command is not None
         assert command.force is expected
+
+    def test_parses_arguments_in_any_order(self):
+        command = parse_app_merge_command(
+            f"/merge head={'a' * 40} force=true method=squash"
+        )
+
+        assert command is not None
+        assert command.pr_head_sha == "a" * 40
+        assert command.merge_method == "squash"
+        assert command.force is True
 
     def test_parse_rejects_submission_arguments(self):
         assert parse_app_merge_command(f"/merge method=fast head={'a' * 40}") is None

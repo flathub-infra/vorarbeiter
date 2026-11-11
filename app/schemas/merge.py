@@ -17,27 +17,51 @@ class AppMergeCommand:
     force: bool
 
 
-_COMMAND_PATTERN = re.compile(
-    r"^/merge(?: branch=([\w.-]+))? head=([a-fA-F0-9]{40})(.*)$"
-)
-
+_BRANCH_PATTERN = re.compile(r"[\w.-]+")
+_SHA_PATTERN = re.compile(r"[a-fA-F0-9]{40}")
 _USERNAME_PATTERN = re.compile(r"@(?!flathub/)[a-zA-Z0-9-]{1,39}")
 _TEAM_PATTERN = re.compile(r"@flathub/[a-zA-Z0-9-]{1,39}")
-_APP_COMMAND_PATTERN = re.compile(
-    r"^/merge(?: method=(merge|squash|rebase))?"
-    r"(?: force=(true|false))? head=([a-fA-F0-9]{40})\s*$"
-)
+_METHOD_PATTERN = re.compile(r"merge|squash|rebase")
+_FORCE_PATTERN = re.compile(r"true|false")
+
+
+def _split_args(
+    comment: str, keys: set[str]
+) -> tuple[dict[str, str], list[str]] | None:
+    comment = comment.rstrip()
+    if "\n" in comment:
+        return None
+    tokens = comment.split()
+    if not tokens or tokens[0] != "/merge":
+        return None
+    args: dict[str, str] = {}
+    rest: list[str] = []
+    for token in tokens[1:]:
+        key, sep, value = token.partition("=")
+        if sep and key in keys:
+            if key in args:
+                return None
+            args[key] = value
+        else:
+            rest.append(token)
+    return args, rest
 
 
 def parse_merge_command(comment: str) -> MergeCommand | None:
-    if not comment.startswith("/merge"):
+    split = _split_args(comment, {"branch", "head"})
+    if not split:
+        return None
+    args, rest = split
+    if any("=" in token for token in rest):
         return None
 
-    matched = _COMMAND_PATTERN.search(comment)
-    if not matched:
+    pr_head_sha = args.get("head")
+    if not pr_head_sha or not _SHA_PATTERN.fullmatch(pr_head_sha):
         return None
 
-    branch_match = matched.group(1)
+    branch_match = args.get("branch")
+    if branch_match is not None and not _BRANCH_PATTERN.fullmatch(branch_match):
+        return None
     branch_explicit = branch_match is not None
     if not branch_match:
         target_branch = "master"
@@ -46,11 +70,9 @@ def parse_merge_command(comment: str) -> MergeCommand | None:
     else:
         target_branch = f"branch/{branch_match}"
 
-    pr_head_sha = matched.group(2)
-
-    rest = matched.group(3)
-    collaborators = [m[1:] for m in _USERNAME_PATTERN.findall(rest)]
-    collaborators.extend(m[1:] for m in _TEAM_PATTERN.findall(rest))
+    rest_text = " ".join(rest)
+    collaborators = [m[1:] for m in _USERNAME_PATTERN.findall(rest_text)]
+    collaborators.extend(m[1:] for m in _TEAM_PATTERN.findall(rest_text))
 
     return MergeCommand(
         target_branch=target_branch,
@@ -61,11 +83,25 @@ def parse_merge_command(comment: str) -> MergeCommand | None:
 
 
 def parse_app_merge_command(comment: str) -> AppMergeCommand | None:
-    matched = _APP_COMMAND_PATTERN.match(comment)
-    if not matched:
+    split = _split_args(comment, {"method", "force", "head"})
+    if not split:
         return None
+    args, rest = split
+    if rest:
+        return None
+
+    pr_head_sha = args.get("head")
+    if not pr_head_sha or not _SHA_PATTERN.fullmatch(pr_head_sha):
+        return None
+    merge_method = args.get("method")
+    if merge_method is not None and not _METHOD_PATTERN.fullmatch(merge_method):
+        return None
+    force = args.get("force")
+    if force is not None and not _FORCE_PATTERN.fullmatch(force):
+        return None
+
     return AppMergeCommand(
-        pr_head_sha=matched.group(3),
-        merge_method=matched.group(1),
-        force=matched.group(2) == "true",
+        pr_head_sha=pr_head_sha,
+        merge_method=merge_method,
+        force=force == "true",
     )
