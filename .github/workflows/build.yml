@@ -389,6 +389,7 @@ jobs:
           chmod -R 777 ${GITHUB_WORKSPACE}/work
 
       - name: Free up disk space
+        if: ${{ inputs.build_type == 'default' }}
         run: |
           sudo swapoff -a || true
           sudo rm -rf /opt/ghc /usr/local/.ghcup || true
