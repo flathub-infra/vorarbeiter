@@ -667,7 +667,7 @@ async def test_start_pipeline_stores_default_build_type():
 
         await build_pipeline.start_pipeline(pipeline_id)
 
-        assert mock_pipeline.params["build_type"] == "medium"
+        assert mock_pipeline.params["build_type"] == "default"
         mock_p90.assert_called_once_with(mock_db_session, "org.example.app")
 
 
@@ -812,7 +812,7 @@ async def test_start_pipeline_reuses_stored_metadata():
         (10.0, "default"),
         (20.0, "default"),
         (20.1, "medium"),
-        (None, "medium"),
+        (None, "default"),
     ],
 )
 async def test_start_pipeline_p90_routing(

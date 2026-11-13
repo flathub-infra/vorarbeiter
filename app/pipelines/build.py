@@ -102,7 +102,7 @@ async def determine_build_type(db: AsyncSession, app_id: str) -> str:
         return app_build_types[app_id]
 
     p90 = await get_app_p90_build_time(db, app_id)
-    if p90 is not None and p90 <= FAST_BUILD_P90_THRESHOLD_MINUTES:
+    if p90 is None or p90 <= FAST_BUILD_P90_THRESHOLD_MINUTES:
         return "default"
 
     return "medium"
