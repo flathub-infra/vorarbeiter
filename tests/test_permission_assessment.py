@@ -806,6 +806,16 @@ async def test_large_pr_refresh_preserves_assessment_checks(
     if scenario in ("closed", "merged"):
         assert stored["closed"] is True
         assert not backend.requests
+    if scenario == "base_unknown":
+        with (
+            mock_http(handler),
+            patch.object(permission_assessment, "get_pull_request", get_pull_request),
+        ):
+            await permission_assessment.refresh_permission_review(
+                "flathub/org.test.App", 42
+            )
+        assert backend.posts == 1
+        assert backend.requests[-1].method == "GET"
 
 
 @pytest.mark.parametrize(
