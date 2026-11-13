@@ -9,7 +9,7 @@ runners:
   medium-arm64:
     cpu: [8, 16]
     ram: [32, 512]
-    volume: 160gb:gp3:250mbs:3000iops
+    volume: 80gb:gp3:125mbs:3000iops
     spot: price-capacity-optimized
     family: ["m9g", "m8g", "m7g", "m6g", "r9g", "r8g", "r7g", "r6g", "c9g", "c8g", "c7g", "c6g"]
     image: ubuntu24-full-arm64
