@@ -540,7 +540,9 @@ async def create_pr_comment(
 
 async def get_pull_request(git_repo: str, pr_number: int) -> dict[str, Any] | None:
     """Fetch review metadata without REST's changed-file processing limits."""
-    owner, name = git_repo.split("/", 1)
+    owner, _, name = git_repo.partition("/")
+    if not owner or not name:
+        return None
     response = await get_github_client().request(
         "post",
         "https://api.github.com/graphql",
