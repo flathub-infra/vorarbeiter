@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 
 from sqlalchemy import or_, select
 
@@ -65,12 +66,16 @@ async def get_penalty_until(
     ):
         return None
 
-    latest = max(
+    window = timedelta(minutes=settings.test_build_penalty_minutes)
+    finished = sorted(
         finished_at.replace(tzinfo=UTC) if finished_at.tzinfo is None else finished_at
         for _, finished_at in rows
         if finished_at is not None
     )
-    until = latest + timedelta(minutes=settings.test_build_penalty_minutes)
+    if any(newer - older > window for older, newer in pairwise(finished)):
+        return None
+
+    until = finished[-1] + window
     current = now or datetime.now(UTC)
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)

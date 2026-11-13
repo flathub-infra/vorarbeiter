@@ -101,6 +101,22 @@ async def test_expired_streak(db_session_maker):
 
 
 @pytest.mark.asyncio
+async def test_streak_broken_by_long_gap_between_builds(db_session_maker):
+    await add_builds(db_session_maker, [PipelineStatus.FAILED] * 2, age=60 * 24 * 20)
+    await add_builds(db_session_maker, [PipelineStatus.FAILED])
+    assert await get_penalty_until("flathub/org.example.App", 4, NOW) is None
+
+
+@pytest.mark.asyncio
+async def test_failures_within_the_penalty_window_still_pause(db_session_maker):
+    await add_builds(db_session_maker, [PipelineStatus.FAILED] * 2, age=59)
+    await add_builds(db_session_maker, [PipelineStatus.FAILED])
+    assert await get_penalty_until(
+        "flathub/org.example.App", 4, NOW
+    ) == NOW + timedelta(minutes=60)
+
+
+@pytest.mark.asyncio
 async def test_bot_failures_do_not_count(db_session_maker):
     await add_builds(
         db_session_maker, [PipelineStatus.FAILED] * 3, actors={1: "flathubbot"}
