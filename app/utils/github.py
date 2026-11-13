@@ -590,6 +590,12 @@ async def get_pull_request(git_repo: str, pr_number: int) -> dict[str, Any] | No
             "base": {"ref": branch, "sha": base},
         }
     except (AttributeError, KeyError, TypeError, ValueError):
+        logger.warning(
+            "Unusable pull request metadata",
+            git_repo=git_repo,
+            pr_number=pr_number,
+            exc_info=True,
+        )
         return None
 
 
