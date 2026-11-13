@@ -105,6 +105,7 @@ async def test_get_pull_request_states(mock_httpx, state):
     )
     with mock_httpx.patch():
         pr = await github_module.get_pull_request("flathub/test", 42)
+    assert pr is not None
     assert pr["state"] == ("open" if state == "OPEN" else "closed")
 
 
