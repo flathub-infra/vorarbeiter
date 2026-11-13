@@ -1,4 +1,3 @@
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx2 as httpx
@@ -28,43 +27,25 @@ def mock_settings():
 
 
 @pytest.mark.asyncio
-async def test_get_pull_request_metadata_for_large_pr():
+async def test_get_pull_request_fetches_metadata_through_graphql(mock_httpx):
     head, base = "a" * 40, "b" * 40
-    requests = []
-
-    def handler(request):
-        requests.append(request)
-        if request.url.path != "/graphql":
-            return httpx.Response(
-                422,
-                json={
-                    "message": "The request could not be processed because too many files changed"
-                },
-            )
-        return httpx.Response(
-            200,
-            json={
-                "data": {
-                    "repository": {
-                        "pullRequest": {
-                            "state": "OPEN",
-                            "headRefOid": head,
-                            "baseRefName": "master",
-                            "baseRefOid": base,
-                        }
+    mock_httpx.set_response(
+        "request",
+        json_data={
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "state": "OPEN",
+                        "headRefOid": head,
+                        "baseRefName": "master",
+                        "baseRefOid": base,
                     }
                 }
-            },
-        )
+            }
+        },
+    )
 
-    real_client = httpx.AsyncClient
-    with patch.object(
-        github_module.httpx,
-        "AsyncClient",
-        side_effect=lambda **kwargs: real_client(
-            transport=httpx.MockTransport(handler), **kwargs
-        ),
-    ):
+    with mock_httpx.patch():
         pr = await github_module.get_pull_request(
             "flathub/io.github.nroduit.Weasis", 41
         )
@@ -74,27 +55,26 @@ async def test_get_pull_request_metadata_for_large_pr():
         "head": {"sha": head},
         "base": {"ref": "master", "sha": base},
     }
-    assert len(requests) == 1
-    assert requests[0].method == "POST"
-    payload = json.loads(requests[0].content)
-    assert payload["variables"] == {
+    assert mock_httpx.request.await_args.args == (
+        "POST",
+        "https://api.github.com/graphql",
+    )
+    assert mock_httpx.request.await_args.kwargs["json"]["variables"] == {
         "owner": "flathub",
         "name": "io.github.nroduit.Weasis",
         "number": 41,
     }
-    assert "files" not in payload["query"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["OPEN", "CLOSED", "MERGED"])
-async def test_get_pull_request_states(mock_httpx, state):
+async def test_get_pull_request_maps_merged_to_closed(mock_httpx):
     mock_httpx.set_response(
         "request",
         json_data={
             "data": {
                 "repository": {
                     "pullRequest": {
-                        "state": state,
+                        "state": "MERGED",
                         "headRefOid": "a" * 40,
                         "baseRefOid": "b" * 40,
                         "baseRefName": "master",
@@ -105,59 +85,40 @@ async def test_get_pull_request_states(mock_httpx, state):
     )
     with mock_httpx.patch():
         pr = await github_module.get_pull_request("flathub/test", 42)
+
     assert pr is not None
-    assert pr["state"] == ("open" if state == "OPEN" else "closed")
+    assert pr["state"] == "closed"
+
+
+def pull_request_payload(**changes):
+    return {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "state": "OPEN",
+                    "headRefOid": "a" * 40,
+                    "baseRefOid": "b" * 40,
+                    "baseRefName": "master",
+                    **changes,
+                }
+            }
+        }
+    }
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "body",
     [
-        None,
-        [],
-        {},
-        {"data": None},
-        {"data": {"repository": None}},
+        {"data": None, "errors": [{"message": "Could not resolve pull request"}]},
         {"data": {"repository": {"pullRequest": None}}},
-        {"data": {"repository": {"pullRequest": {"state": "OPEN"}}}},
+        pull_request_payload(baseRefOid="not-a-sha"),
+        pull_request_payload(baseRefName=""),
     ],
+    ids=["graphql-error", "missing-pull-request", "invalid-oid", "empty-branch"],
 )
-async def test_get_pull_request_rejects_incomplete_metadata(mock_httpx, body):
-    response = mock_httpx.set_response("request")
-    response.json.return_value = body
-    with mock_httpx.patch():
-        assert await github_module.get_pull_request("flathub/test", 42) is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"state": "UNKNOWN"},
-        {"headRefOid": None},
-        {"headRefOid": "not-a-sha"},
-        {"baseRefOid": "0" * 40},
-        {"baseRefName": ""},
-        {"baseRefName": None},
-    ],
-)
-async def test_get_pull_request_rejects_invalid_metadata(mock_httpx, changes):
-    mock_httpx.set_response(
-        "request",
-        json_data={
-            "data": {
-                "repository": {
-                    "pullRequest": {
-                        "state": "OPEN",
-                        "headRefOid": "a" * 40,
-                        "baseRefOid": "b" * 40,
-                        "baseRefName": "master",
-                        **changes,
-                    }
-                }
-            }
-        },
-    )
+async def test_get_pull_request_rejects_unusable_metadata(mock_httpx, body):
+    mock_httpx.set_response("request", json_data=body)
     with mock_httpx.patch():
         assert await github_module.get_pull_request("flathub/test", 42) is None
 

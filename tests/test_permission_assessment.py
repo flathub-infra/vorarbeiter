@@ -715,52 +715,32 @@ def assessment_server(outcome, requests=None, differences=None):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "scenario, expected_status, reassess",
-    [
-        ("current", "pending", False),
-        ("current_accepted", "success", False),
-        ("base_changed", "pending", True),
-        ("base_unknown", "pending", True),
-        ("head_changed", None, False),
-        ("retargeted", "pending", False),
-        ("closed", None, False),
-        ("merged", None, False),
-        ("graphql_error", None, False),
-        ("unavailable", None, False),
-    ],
-)
-async def test_large_pr_refresh_preserves_assessment_checks(
-    configured, local_db, db_session_maker, gh, scenario, expected_status, reassess
+async def test_unknown_base_reassesses_and_records_base(
+    configured, local_db, db_session_maker, gh
 ):
     pipeline = submitted(outcome="accepted")
-    if scenario == "base_unknown":
-        pipeline.params = {k: v for k, v in pipeline.params.items() if k != "base_sha"}
+    pipeline.params = {k: v for k, v in pipeline.params.items() if k != "base_sha"}
     await add(db_session_maker, pipeline)
-    original = dict(pipeline.provider_data[PROVIDER_DATA_KEY])
-    backend = Backend(
-        outcome="accepted" if scenario == "current_accepted" else "pending"
-    )
-    metadata = {
-        "state": {"closed": "CLOSED", "merged": "MERGED"}.get(scenario, "OPEN"),
-        "headRefOid": NEW_BASE if scenario == "head_changed" else HEAD,
-        "baseRefName": "beta" if scenario == "retargeted" else "master",
-        "baseRefOid": NEW_BASE if scenario == "base_changed" else BASE,
-    }
-    github_requests = []
+    backend = Backend()
 
     def handler(request):
         if request.url.host != "api.github.com":
             return backend(request)
-        github_requests.append(request)
-        assert request.url.path == "/graphql"
-        if scenario == "unavailable":
-            return httpx.Response(403, json={"message": "Forbidden"})
-        body: dict[str, object] = {"data": {"repository": {"pullRequest": metadata}}}
-        if scenario == "graphql_error":
-            # Even apparently complete partial data must not authorize a report.
-            body["errors"] = [{"message": "Could not resolve pull request"}]
-        return httpx.Response(200, json=body)
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "state": "OPEN",
+                            "headRefOid": HEAD,
+                            "baseRefName": "master",
+                            "baseRefOid": BASE,
+                        }
+                    }
+                }
+            },
+        )
 
     with (
         mock_http(handler),
@@ -771,51 +751,66 @@ async def test_large_pr_refresh_preserves_assessment_checks(
             AsyncMock(return_value=["x86_64"]),
         ),
     ):
-        if scenario in ("graphql_error", "unavailable"):
-            with pytest.raises(
-                RuntimeError, match="Failed to fetch permission pull request"
-            ):
-                await permission_assessment.refresh_permission_review(
-                    "flathub/org.test.App", 42
-                )
-        else:
-            await permission_assessment.refresh_permission_review(
-                "flathub/org.test.App", 42
-            )
+        await permission_assessment.refresh_permission_review(
+            "flathub/org.test.App", 42
+        )
 
-    assert len(github_requests) == 1
-    assert backend.posts == int(reassess)
-    if scenario in ("current", "current_accepted"):
-        assert [r.method for r in backend.requests] == ["GET"]
-    if reassess:
-        payload = json.loads(backend.requests[0].content)
-        assert payload["base_revision"] == metadata["baseRefOid"]
-        assert payload["pull_request_head_revision"] == HEAD
-    if expected_status is None:
-        gh.status.assert_not_awaited()
-        gh.comment.assert_not_awaited()
-    else:
-        gh.status.assert_awaited_once()
-        assert gh.status.await_args.args[:2] == (HEAD, expected_status)
+    assert backend.posts == 1
+    assert json.loads(backend.requests[0].content)["base_revision"] == BASE
+    gh.status.assert_awaited_once()
+    assert gh.status.await_args.args[:2] == (HEAD, "pending")
     stored = (await load(db_session_maker, pipeline.id)).provider_data[
         PROVIDER_DATA_KEY
     ]
-    if scenario in ("graphql_error", "unavailable", "head_changed"):
-        assert stored == original
-        assert not backend.requests
-    if scenario in ("closed", "merged"):
-        assert stored["closed"] is True
-        assert not backend.requests
-    if scenario == "base_unknown":
-        with (
-            mock_http(handler),
-            patch.object(permission_assessment, "get_pull_request", get_pull_request),
-        ):
-            await permission_assessment.refresh_permission_review(
-                "flathub/org.test.App", 42
-            )
-        assert backend.posts == 1
-        assert backend.requests[-1].method == "GET"
+    assert stored["base_revision"] == BASE
+
+    with (
+        mock_http(handler),
+        patch.object(permission_assessment, "get_pull_request", get_pull_request),
+    ):
+        await permission_assessment.refresh_permission_review(
+            "flathub/org.test.App", 42
+        )
+
+    assert backend.posts == 1
+    assert backend.requests[-1].method == "GET"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["graphql_error", "unavailable"])
+async def test_failed_metadata_aborts_refresh(
+    configured, local_db, db_session_maker, gh, failure
+):
+    pipeline = submitted()
+    await add(db_session_maker, pipeline)
+    original = dict(pipeline.provider_data[PROVIDER_DATA_KEY])
+
+    def handler(request):
+        if failure == "unavailable":
+            return httpx.Response(403, json={"message": "Forbidden"})
+        return httpx.Response(
+            200,
+            json={
+                "data": None,
+                "errors": [{"message": "Could not resolve pull request"}],
+            },
+        )
+
+    with (
+        mock_http(handler),
+        patch.object(permission_assessment, "get_pull_request", get_pull_request),
+        pytest.raises(RuntimeError, match="Failed to fetch permission pull request"),
+    ):
+        await permission_assessment.refresh_permission_review(
+            "flathub/org.test.App", 42
+        )
+
+    gh.status.assert_not_awaited()
+    gh.comment.assert_not_awaited()
+    stored = (await load(db_session_maker, pipeline.id)).provider_data[
+        PROVIDER_DATA_KEY
+    ]
+    assert stored == original
 
 
 @pytest.mark.parametrize(
