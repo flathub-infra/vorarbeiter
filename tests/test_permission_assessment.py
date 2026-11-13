@@ -756,7 +756,7 @@ async def test_large_pr_refresh_preserves_assessment_checks(
         assert request.url.path == "/graphql"
         if scenario == "unavailable":
             return httpx.Response(403, json={"message": "Forbidden"})
-        body = {"data": {"repository": {"pullRequest": metadata}}}
+        body: dict[str, object] = {"data": {"repository": {"pullRequest": metadata}}}
         if scenario == "graphql_error":
             # Even apparently complete partial data must not authorize a report.
             body["errors"] = [{"message": "Could not resolve pull request"}]
