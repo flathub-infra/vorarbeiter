@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.config import settings
 from app.logger import setup_logging
 from app.queue import app
+from app.services import build_diagnosis
 
 
 def setup_observability() -> None:
@@ -37,6 +38,13 @@ async def run() -> None:
 
 
 def main() -> None:
+    missing = [
+        name.upper()
+        for name in build_diagnosis.REQUIRED_SETTINGS
+        if not getattr(settings, name)
+    ]
+    if missing:
+        sys.exit(f"Missing required environment variables: {', '.join(missing)}")
     setup_observability()
     asyncio.run(run())
 

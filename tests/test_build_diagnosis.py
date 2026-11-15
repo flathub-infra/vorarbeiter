@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from procrastinate.testing import InMemoryConnector
 from pydantic_ai.exceptions import ModelRateLimitError
+from pydantic_ai.models.decision import ChoiceAnswer, DecisionResponse
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import select
 
@@ -35,7 +36,15 @@ def connector(db_session_maker):
         patch("app.pipelines.build.get_db", get_test_db),
         patch("app.services.build_diagnosis.get_db", get_test_db),
         patch.object(settings, "ff_build_diagnosis", True),
-        patch.object(settings, "neuralwatt_api_key", "test"),
+        patch.multiple(
+            settings,
+            llm_url="https://llm.example/v1",
+            llm_api_key="test",
+            llm_model="llm",
+            decisions_url="https://decisions.example/v1",
+            decisions_api_key="test",
+            decisions_model="mammoth-1",
+        ),
         patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled",
             AsyncMock(return_value=False),
@@ -240,28 +249,46 @@ async def test_diagnosis_stores_resolved_evidence(db_session_maker, connector):
     output = {
         "issues": [
             {
-                "category": "compile-error",
                 "summary": "The wyrmsun patch did not apply.",
                 "evidence": [{"job": 1, "start_line": 20, "end_line": 21}],
             }
         ]
     }
 
+    decision = DecisionResponse(
+        answers={
+            "category": ChoiceAnswer(
+                choice="compile-error",
+                confidence=0.9,
+                probabilities={"compile-error": 0.95, "unknown": 0.05},
+            )
+        },
+        model_name="mammoth-1",
+    )
+    decide = AsyncMock(return_value=decision)
+
     with (
         mock_github(),
         build_diagnosis.agent.override(
             model=TestModel(call_tools=[], custom_output_args=output)
         ),
+        patch.object(build_diagnosis.SystemOneModel, "decide", decide),
     ):
         await diagnose(pipeline_id, attempts=0, rate_limit_retries=0)
 
     row = await get_row(db_session_maker, pipeline_id)
     assert row.status == BuildDiagnosisStatus.COMPLETED
     assert row.result is not None
-    assert row.result["issues"][0]["evidence"][0]["text"] == (
+    issue = row.result["issues"][0]
+    assert issue["evidence"][0]["text"] == (
         "2026-11-15T19:00:20.0000000Z line 20\n2026-11-15T19:00:21.0000000Z line 21"
     )
-    assert row.prompt_version == build_diagnosis.PROMPT_VERSION
+    assert issue["category"] == "compile-error"
+    request = decide.await_args_list[0].args[0]
+    assert request.state == {
+        "diagnosis": "The wyrmsun patch did not apply.",
+        "evidence": [issue["evidence"][0]["text"]],
+    }
 
 
 def test_out_of_range_citation_drops_issue():
@@ -272,22 +299,18 @@ def test_out_of_range_citation_drops_issue():
         {
             "issues": [
                 {
-                    "category": "compile-error",
                     "summary": "past the end",
                     "evidence": [{"job": 1, "start_line": 99, "end_line": 101}],
                 },
                 {
-                    "category": "linter",
                     "summary": "too long",
                     "evidence": [{"job": 1, "start_line": 1, "end_line": 16}],
                 },
                 {
-                    "category": "linter",
                     "summary": "unknown job",
                     "evidence": [{"job": 2, "start_line": 1, "end_line": 1}],
                 },
                 {
-                    "category": "unknown",
                     "summary": "valid",
                     "evidence": [{"job": 1, "start_line": 1, "end_line": 15}],
                 },
