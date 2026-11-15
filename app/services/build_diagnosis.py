@@ -40,9 +40,14 @@ from app.config import settings
 from app.database import get_db
 from app.models import BuildDiagnosis, BuildDiagnosisStatus, Pipeline
 from app.queue import app
-from app.services.github_actions import GitHubActionsService
+from app.services.github_actions import (
+    SPOT_INTERRUPTION,
+    GitHubActionsService,
+    is_infrastructure_cancellation,
+)
 from app.utils.github import (
     ensure_pr_comment,
+    get_check_run_annotations,
     get_github_actions_client,
     get_github_client,
 )
@@ -76,6 +81,15 @@ STEP_HEADER = re.compile(r"^\S+ ##\[group\]Run ")
 URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 MAX_SUMMARY_CHARS = 300
 MAX_COMMENT_ISSUES = 3
+CANCELLED = "cancelled"
+SPOT_SUMMARY = (
+    "AWS reclaimed the spot instance that ran the build, so the app is not at "
+    'fault. Comment "bot, build" to retry.'
+)
+GITHUB_CANCELLED_SUMMARY = (
+    "GitHub cancelled the build runner, so the app is not at fault. "
+    'Comment "bot, build" to retry.'
+)
 UNREPORTABLE_CATEGORIES = {"infrastructure", "unknown"}
 COMMENT_MARKER = "<!-- vorarbeiter:build-diagnosis:{pipeline_id} -->"
 
@@ -117,8 +131,7 @@ CATEGORY_QUESTION = ChoiceQuestion(
         "test-failure": "The project's own tests failed.",
         "out-of-resources": "Out of memory, disk space, or time.",
         "infrastructure": "The runner, the network, or a remote host failed, and the "
-        "app is not at fault: a spot-instance interruption, a connection timeout, a "
-        "missing pull request ref.",
+        "app is not at fault: a connection timeout, a missing pull request ref.",
         "unknown": "None of the above fit, or the evidence does not show the cause.",
     },
 )
@@ -136,6 +149,10 @@ class RateLimited(Exception):
     def __init__(self, retry_after: float | None):
         super().__init__(f"rate limited, retry after {retry_after}")
         self.retry_after = retry_after
+
+
+class Cancelled(Exception):
+    pass
 
 
 class Skipped(Exception):
@@ -383,6 +400,13 @@ async def load_jobs(owner: str, repo: str, run_id: int) -> list[JobLog]:
     jobs = await github.get_workflow_run_jobs(owner, repo, run_id)
     if jobs is None:
         raise TransientError("failed to fetch workflow run jobs")
+    annotations = await get_check_run_annotations(owner, repo, run_id)
+    if annotations is None:
+        raise TransientError("failed to fetch check run annotations")
+    messages = [a.get("message") or "" for a in annotations]
+    if is_infrastructure_cancellation(messages):
+        spot = any(m.startswith(SPOT_INTERRUPTION) for m in messages)
+        raise Cancelled(SPOT_SUMMARY if spot else GITHUB_CANCELLED_SUMMARY)
     failed = [job for job in jobs if job.get("conclusion") == "failure"]
     if not failed:
         raise Skipped("no failed job")
@@ -503,14 +527,22 @@ async def run_diagnosis(pipeline: Pipeline) -> dict[str, Any]:
         raise Skipped("no run_id")
 
     started = time.monotonic()
-    jobs = await load_jobs(owner, repo, int(run_id))
-    deps = Deps(
-        jobs=jobs,
-        repo=pipeline.params.get("repo"),
-        sha=pipeline.params.get("sha"),
-        app_id=pipeline.app_id,
-    )
-    values = await run_models(deps)
+    try:
+        jobs = await load_jobs(owner, repo, int(run_id))
+    except Cancelled as exc:
+        values = {
+            "result": {
+                "issues": [{"category": CANCELLED, "summary": str(exc), "evidence": []}]
+            }
+        }
+    else:
+        deps = Deps(
+            jobs=jobs,
+            repo=pipeline.params.get("repo"),
+            sha=pipeline.params.get("sha"),
+            app_id=pipeline.app_id,
+        )
+        values = await run_models(deps)
     return {
         **values,
         "status": BuildDiagnosisStatus.COMPLETED,

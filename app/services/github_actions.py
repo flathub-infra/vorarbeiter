@@ -11,6 +11,18 @@ from app.utils.github import get_check_run_annotations, get_github_actions_clien
 
 logger = structlog.get_logger(__name__)
 
+SPOT_INTERRUPTION = "AWS interrupted the EC2 Spot instance"
+GITHUB_CANCELLATIONS = (
+    "The operation was canceled.",
+    "The job was not acquired by Runner of",
+    "The self-hosted runner lost communication with the server.",
+)
+NOT_CANCELLATIONS = (
+    "Process completed with exit code",
+    "The run was canceled by",
+    "Canceling since a higher priority waiting request for",
+)
+
 
 class GitHubActionsService:
     base_url = "https://api.github.com"
@@ -207,34 +219,9 @@ class GitHubActionsService:
             logger.warning("Failed to fetch job annotations for cancellation detection")
             return False
 
-        cancel_annotation_strs = (
-            "The operation was canceled.",
-            "The job was not acquired by Runner of",
-            "The self-hosted runner lost communication with the server.",
-        )
-
-        cancelled = any(
-            any((a.get("message", "")).startswith(s) for s in cancel_annotation_strs)
-            for a in annotations
-        )
-
-        has_exit_or_user_cancel = any(
-            a.get("message", "").startswith(
-                (
-                    "Process completed with exit code",
-                    "The run was canceled by",
-                    "Canceling since a higher priority waiting request for",
-                )
-            )
-            for a in annotations
-        )
-
-        spot_interrupted = any(
-            a.get("message", "").startswith("AWS interrupted the EC2 Spot instance")
-            for a in annotations
-        )
-
-        if spot_interrupted or (cancelled and not has_exit_or_user_cancel):
+        if is_infrastructure_cancellation(
+            [a.get("message") or "" for a in annotations]
+        ):
             logger.info(
                 "Run detected as cancelled by GitHub via job annotation",
                 run_id=run_id_int,
@@ -242,3 +229,11 @@ class GitHubActionsService:
             return True
 
         return False
+
+
+def is_infrastructure_cancellation(messages: list[str]) -> bool:
+    if any(m.startswith(SPOT_INTERRUPTION) for m in messages):
+        return True
+    cancelled = any(m.startswith(GITHUB_CANCELLATIONS) for m in messages)
+    has_exit_or_user_cancel = any(m.startswith(NOT_CANCELLATIONS) for m in messages)
+    return cancelled and not has_exit_or_user_cancel

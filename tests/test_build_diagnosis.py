@@ -1,5 +1,5 @@
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -51,10 +51,6 @@ def connector(db_session_maker):
             decisions_model="mammoth-1",
         ),
         patch(
-            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled",
-            AsyncMock(return_value=False),
-        ),
-        patch(
             "app.pipelines.build.GitHubNotifier.handle_build_completion",
             AsyncMock(),
         ),
@@ -63,7 +59,9 @@ def connector(db_session_maker):
         yield connector
 
 
-async def failure_callback(db_session_maker) -> uuid.UUID:
+async def failure_callback(
+    db_session_maker, infrastructure_cancellation: bool = False
+) -> uuid.UUID:
     pipeline_id = uuid.uuid4()
     async with db_session_maker() as db:
         db.add(
@@ -79,13 +77,23 @@ async def failure_callback(db_session_maker) -> uuid.UUID:
         await db.commit()
     build = BuildPipeline()
     build.start_pending_builds = AsyncMock(return_value=[])
-    await build.handle_status_callback(pipeline_id, {"status": "failure"})
+    with patch(
+        "app.services.github_actions.GitHubActionsService.check_run_was_cancelled",
+        AsyncMock(return_value=infrastructure_cancellation),
+    ):
+        await build.handle_status_callback(pipeline_id, {"status": "failure"})
     return pipeline_id
 
 
 @pytest.mark.asyncio
-async def test_failure_defers_one_job(db_session_maker, connector):
-    pipeline_id = await failure_callback(db_session_maker)
+@pytest.mark.parametrize(
+    ("infrastructure_cancellation", "status"),
+    [(False, PipelineStatus.FAILED), (True, PipelineStatus.CANCELLED)],
+)
+async def test_failure_defers_one_job(
+    db_session_maker, connector, infrastructure_cancellation, status
+):
+    pipeline_id = await failure_callback(db_session_maker, infrastructure_cancellation)
 
     jobs = list(connector.jobs.values())
     assert [(j["task_name"], j["queue_name"]) for j in jobs] == [
@@ -94,6 +102,9 @@ async def test_failure_defers_one_job(db_session_maker, connector):
     assert jobs[0]["args"] == {"pipeline_id": str(pipeline_id)}
     async with db_session_maker() as db:
         assert await db.get(BuildDiagnosis, pipeline_id) is not None
+        pipeline = await db.get(Pipeline, pipeline_id)
+    assert pipeline is not None
+    assert pipeline.status == status
 
 
 @pytest.mark.asyncio
@@ -102,7 +113,11 @@ async def test_repeated_callback_defers_none(db_session_maker, connector):
     build = BuildPipeline()
     build.start_pending_builds = AsyncMock(return_value=[])
 
-    await build.handle_status_callback(pipeline_id, {"status": "failure"})
+    with patch(
+        "app.services.github_actions.GitHubActionsService.check_run_was_cancelled",
+        AsyncMock(return_value=False),
+    ):
+        await build.handle_status_callback(pipeline_id, {"status": "failure"})
 
     assert len(connector.jobs) == 1
     async with db_session_maker() as db:
@@ -147,33 +162,93 @@ LOG = "\n".join(
 ).encode()
 
 
-def mock_github(run_status: str = "completed"):
+@contextmanager
+def mock_github(run_status: str = "completed", annotations: tuple[str, ...] = ()):
     async def download(self, owner, repo, job_id, dest, max_bytes):
         dest.write_bytes(LOG)
         return len(LOG)
 
-    return patch.multiple(
-        "app.services.build_diagnosis.GitHubActionsService",
-        get_workflow_run_details=AsyncMock(return_value={"status": run_status}),
-        get_workflow_run_jobs=AsyncMock(
-            return_value=[
-                {
-                    "id": 7,
-                    "name": "build-x86_64",
-                    "conclusion": "failure",
-                    "steps": [
-                        {
-                            "name": "Build",
-                            "conclusion": "failure",
-                            "started_at": "2026-11-15T19:00:10Z",
-                            "completed_at": "2026-11-15T19:00:30Z",
-                        }
-                    ],
-                }
-            ]
+    with (
+        patch.multiple(
+            "app.services.build_diagnosis.GitHubActionsService",
+            get_workflow_run_details=AsyncMock(return_value={"status": run_status}),
+            get_workflow_run_jobs=AsyncMock(
+                return_value=[
+                    {
+                        "id": 7,
+                        "name": "build-x86_64",
+                        "conclusion": "failure",
+                        "steps": [
+                            {
+                                "name": "Build",
+                                "conclusion": "failure",
+                                "started_at": "2026-11-15T19:00:10Z",
+                                "completed_at": "2026-11-15T19:00:30Z",
+                            }
+                        ],
+                    }
+                ]
+            ),
+            download_job_log=download,
         ),
-        download_job_log=download,
-    )
+        patch(
+            "app.services.build_diagnosis.get_check_run_annotations",
+            AsyncMock(return_value=[{"message": m} for m in annotations]),
+        ),
+    ):
+        yield
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("annotations", "summary"),
+    [
+        (
+            (
+                "Process completed with exit code 137.",
+                "AWS interrupted the EC2 Spot instance running this job.",
+            ),
+            build_diagnosis.SPOT_SUMMARY,
+        ),
+        (
+            ("The job was not acquired by Runner of type hosted even after multiple",),
+            build_diagnosis.GITHUB_CANCELLED_SUMMARY,
+        ),
+    ],
+)
+async def test_cancelled_run_is_reported_without_models(
+    db_session_maker, connector, annotations, summary
+):
+    pipeline_id = await pending_row(db_session_maker)
+    async with db_session_maker() as db:
+        pipeline = await db.get(Pipeline, pipeline_id)
+        assert pipeline is not None
+        pipeline.params = {
+            **pipeline.params,
+            "pr_number": "5",
+            "ref": "refs/pull/5/head",
+        }
+        await db.commit()
+    run = AsyncMock()
+    ensure = AsyncMock(return_value=True)
+
+    with (
+        mock_github(annotations=annotations),
+        patch.object(build_diagnosis.agent, "run", run),
+        patch.object(settings, "ff_build_diagnosis_comments", True),
+        patch("app.services.build_diagnosis.ensure_pr_comment", ensure),
+    ):
+        await diagnose(pipeline_id, attempts=0, rate_limit_retries=0)
+
+    row = await get_row(db_session_maker, pipeline_id)
+    assert row.status == BuildDiagnosisStatus.COMPLETED
+    assert row.result == {
+        "issues": [{"category": "cancelled", "summary": summary, "evidence": []}]
+    }
+    run.assert_not_awaited()
+    body = ensure.await_args_list[0].args[3]
+    assert summary in body
+    assert row.comment_posted_at is not None
 
 
 @pytest.mark.asyncio
