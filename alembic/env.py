@@ -31,6 +31,10 @@ target_metadata = Base.metadata
 # ... etc.
 
 
+def include_name(name, type_, parent_names):
+    return not (type_ == "table" and name.startswith("procrastinate_"))
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -52,6 +56,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         # compare_type=True might need to be added here too for offline mode
         compare_type=True,
+        include_name=include_name,
     )
 
     with context.begin_transaction():
@@ -83,6 +88,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_name=include_name,
         )
 
         with context.begin_transaction():
