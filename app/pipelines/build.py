@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.services import github_actions_service
+from app.services.build_diagnosis import enqueue_diagnosis
 from app.services.github_actions import GitHubActionsService
 from app.services.github_notifier import GitHubNotifier
 from app.utils.flat_manager import (
@@ -832,6 +833,8 @@ class BuildPipeline:
                         status_value = "cancelled"
                     else:
                         pipeline.status = PipelineStatus.FAILED
+                        if settings.ff_build_diagnosis:
+                            await enqueue_diagnosis(db, pipeline)
                     pipeline.finished_at = datetime.now(tz=UTC)
                 case "cancelled":
                     pipeline.status = PipelineStatus.CANCELLED

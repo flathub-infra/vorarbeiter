@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     permission_status_repos: list[str] = []
     statuspage_url: str = "https://status.flathub.org"
     sentry_dsn: str | None = None
+    ff_build_diagnosis: bool = False
     ff_reprocheck_issues: bool = False
     ff_disable_admin_ping_comment: bool = False
     ff_disable_test_builds: bool = False
