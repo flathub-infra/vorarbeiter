@@ -1,6 +1,29 @@
-from procrastinate import JobContext, builtin_tasks
+import uuid
+
+from procrastinate import JobContext, RetryStrategy, builtin_tasks
 
 from app.queue import app
+from app.services import build_diagnosis
+
+
+@app.task(
+    name=build_diagnosis.TASK_NAME,
+    queue=build_diagnosis.QUEUE,
+    pass_context=True,
+    retry=RetryStrategy(
+        wait=60,
+        retry_exceptions={
+            build_diagnosis.RunNotCompleted,
+            build_diagnosis.TransientError,
+        },
+    ),
+)
+async def diagnose_build(
+    context: JobContext, pipeline_id: str, rate_limit_retries: int = 0
+) -> None:
+    await build_diagnosis.diagnose(
+        uuid.UUID(pipeline_id), context.job.attempts, rate_limit_retries
+    )
 
 
 @app.periodic(cron="*/10 * * * *")  # pyrefly: ignore[bad-argument-type]

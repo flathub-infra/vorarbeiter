@@ -1,8 +1,10 @@
 import json
 import zipfile
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
+import httpx2 as httpx
 import structlog
 
 from app.utils.github import get_check_run_annotations, get_github_actions_client
@@ -140,6 +142,26 @@ class GitHubActionsService:
         except Exception as e:
             logger.exception("Error extracting logs", error=str(e))
             return None
+
+    async def download_job_log(
+        self, owner: str, repo: str, job_id: int, dest: Path, max_bytes: int
+    ) -> int:
+        url = f"{self.base_url}/repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
+        written = 0
+        async with (
+            httpx.AsyncClient(follow_redirects=True, timeout=60) as client,
+            client.stream(
+                "GET", url, headers=get_github_actions_client().headers
+            ) as response,
+        ):
+            response.raise_for_status()
+            with dest.open("wb") as f:
+                async for chunk in response.aiter_bytes():
+                    written += len(chunk)
+                    if written > max_bytes:
+                        break
+                    f.write(chunk)
+        return written
 
     async def check_run_was_cancelled(self, provider_data: dict[str, Any]) -> bool:
         run_id = provider_data.get("run_id")

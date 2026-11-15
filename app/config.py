@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     statuspage_url: str = "https://status.flathub.org"
     sentry_dsn: str | None = None
     ff_build_diagnosis: bool = False
+    neuralwatt_api_key: str = ""
+    build_diagnosis_model: str = "deepseek-v4.1-flash-flex"
     ff_reprocheck_issues: bool = False
     ff_disable_admin_ping_comment: bool = False
     ff_disable_test_builds: bool = False
