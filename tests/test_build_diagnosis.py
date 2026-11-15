@@ -1,8 +1,10 @@
 import uuid
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from procrastinate.testing import InMemoryConnector
 from pydantic_ai.exceptions import ModelRateLimitError
 from pydantic_ai.models.decision import ChoiceAnswer, DecisionResponse
@@ -10,6 +12,7 @@ from pydantic_ai.models.test import TestModel
 from sqlalchemy import select
 
 from app.config import settings
+from app.main import app as main_app
 from app.models import BuildDiagnosis, BuildDiagnosisStatus, Pipeline, PipelineStatus
 from app.pipelines.build import BuildPipeline
 from app.queue import app as queue_app
@@ -18,7 +21,9 @@ from app.services.build_diagnosis import (
     Diagnosis,
     JobLog,
     RunNotCompleted,
+    comment_body,
     diagnose,
+    post_comment,
     resolve_issues,
 )
 
@@ -319,3 +324,89 @@ def test_out_of_range_citation_drops_issue():
     )
 
     assert [i["summary"] for i in resolve_issues(diagnosis, [log])] == ["valid"]
+
+
+ISSUE = {
+    "summary": "See https://example.com @flathub/admins **now**",
+    "category": "compile-error",
+    "evidence": [
+        {
+            "job_name": "build-x86_64",
+            "start_line": 20,
+            "end_line": 21,
+            "text": "2026-11-15T19:00:20.0000000Z ```\n2026-11-15T19:00:21.0000000Z boom",
+        }
+    ],
+}
+
+
+def test_comment_ends_with_marker_and_strips_markup():
+    pipeline_id = uuid.uuid4()
+
+    body = comment_body(pipeline_id, [ISSUE])
+
+    assert body.endswith(f"<!-- vorarbeiter:build-diagnosis:{pipeline_id} -->")
+    assert "See flathub/admins now" in body
+    assert "````\n```\nboom\n````" in body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("category", "newer", "posted"),
+    [
+        ("compile-error", False, True),
+        ("unknown", False, False),
+        ("linter", True, False),
+    ],
+)
+async def test_comment_gates(db_session_maker, connector, category, newer, posted):
+    pipeline_id = await pending_row(db_session_maker)
+    async with db_session_maker() as db:
+        pipeline = await db.get(Pipeline, pipeline_id)
+        assert pipeline is not None
+        pipeline.params = {
+            **pipeline.params,
+            "pr_number": "5",
+            "ref": "refs/pull/5/head",
+        }
+        if newer:
+            db.add(
+                Pipeline(
+                    app_id="org.test.App",
+                    status=PipelineStatus.PENDING,
+                    params=pipeline.params,
+                    created_at=pipeline.created_at + timedelta(minutes=1),
+                    callback_token="token2",
+                )
+            )
+        await db.commit()
+    ensure = AsyncMock(return_value=True)
+
+    with (
+        patch.object(settings, "ff_build_diagnosis_comments", True),
+        patch("app.services.build_diagnosis.ensure_pr_comment", ensure),
+    ):
+        await post_comment(pipeline, [{**ISSUE, "category": category}])
+
+    assert ensure.await_count == int(posted)
+    row = await get_row(db_session_maker, pipeline_id)
+    assert (row.comment_posted_at is not None) == posted
+
+
+@pytest.mark.asyncio
+async def test_diagnosis_endpoint(db_session_maker):
+    pipeline_id = await pending_row(db_session_maker)
+
+    @asynccontextmanager
+    async def get_test_db(*, use_replica: bool = False):
+        async with db_session_maker() as db:
+            yield db
+
+    with patch("app.routes.pipelines.get_db", get_test_db):
+        client = TestClient(main_app)
+        found = client.get(f"/api/pipelines/{pipeline_id}/diagnosis")
+        missing = client.get(f"/api/pipelines/{uuid.uuid4()}/diagnosis")
+
+    assert found.status_code == 200
+    assert found.json()["status"] == "pending"
+    assert missing.status_code == 404

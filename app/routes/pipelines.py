@@ -10,9 +10,10 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_db
-from app.models import Pipeline, PipelineStatus, PipelineTrigger
+from app.models import BuildDiagnosis, Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines import BuildPipeline
 from app.schemas.pipelines import (
+    BuildDiagnosisResponse,
     PipelineResponse,
     PipelineSummary,
     PipelineTriggerRequest,
@@ -231,6 +232,25 @@ async def get_pipeline(
             )
 
         return pipeline_service.pipeline_to_response(pipeline)
+
+
+@pipelines_router.get(
+    "/pipelines/{pipeline_id:uuid}/diagnosis",
+    response_model=BuildDiagnosisResponse,
+    status_code=http_status.HTTP_200_OK,
+)
+async def get_pipeline_diagnosis(
+    pipeline_id: uuid.UUID,
+):
+    async with get_db(use_replica=True) as db:
+        diagnosis = await db.get(BuildDiagnosis, pipeline_id)
+        if not diagnosis:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Diagnosis for pipeline {pipeline_id} not found",
+            )
+
+        return BuildDiagnosisResponse.model_validate(diagnosis)
 
 
 @pipelines_router.post(

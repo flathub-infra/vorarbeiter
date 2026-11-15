@@ -32,6 +32,7 @@ from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.usage import UsageLimits
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,7 +41,11 @@ from app.database import get_db
 from app.models import BuildDiagnosis, BuildDiagnosisStatus, Pipeline
 from app.queue import app
 from app.services.github_actions import GitHubActionsService
-from app.utils.github import get_github_actions_client, get_github_client
+from app.utils.github import (
+    ensure_pr_comment,
+    get_github_actions_client,
+    get_github_client,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -68,6 +73,11 @@ REQUIRED_SETTINGS = (
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 TIMESTAMP = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?Z ")
 STEP_HEADER = re.compile(r"^\S+ ##\[group\]Run ")
+URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+MAX_SUMMARY_CHARS = 300
+MAX_COMMENT_ISSUES = 3
+UNREPORTABLE_CATEGORIES = {"infrastructure", "unknown"}
+COMMENT_MARKER = "<!-- vorarbeiter:build-diagnosis:{pipeline_id} -->"
 
 PROMPT_VERSION = "1"
 INSTRUCTIONS = """\
@@ -596,3 +606,78 @@ async def diagnose(
         await mark(pipeline_id, BuildDiagnosisStatus.FAILED, repr(exc))
     else:
         await store(pipeline_id, **values)
+        try:
+            await post_comment(pipeline, values["result"]["issues"])
+        except Exception as exc:
+            sentry_sdk.capture_exception(exc)
+            logger.exception(
+                "Build diagnosis comment failed", pipeline_id=str(pipeline_id)
+            )
+
+
+def clean_summary(summary: str) -> str:
+    summary = URL.sub("", summary)
+    summary = summary.translate(str.maketrans("", "", "@`*_[]()#>~|<"))
+    return " ".join(summary.split())[:MAX_SUMMARY_CHARS]
+
+
+def fenced(text: str) -> str:
+    fence = "`" * max(3, max((len(m) for m in re.findall(r"`+", text)), default=0) + 1)
+    return f"{fence}\n{text}\n{fence}"
+
+
+def comment_body(pipeline_id: uuid.UUID, issues: list[dict[str, Any]]) -> str:
+    parts = ["Possible cause of the build failure (automated diagnosis):"]
+    for issue in issues[:MAX_COMMENT_ISSUES]:
+        parts.append(clean_summary(issue["summary"]))
+        for ev in issue["evidence"]:
+            text = "\n".join(
+                TIMESTAMP.sub("", line, count=1) for line in ev["text"].splitlines()
+            )
+            parts.append(
+                f"{ev['job_name']}, lines {ev['start_line']}-{ev['end_line']}:\n"
+                f"{fenced(text)}"
+            )
+    parts.append(COMMENT_MARKER.format(pipeline_id=pipeline_id))
+    return "\n\n".join(parts)
+
+
+async def post_comment(pipeline: Pipeline, issues: list[dict[str, Any]]) -> None:
+    pr_number = pipeline.params.get("pr_number")
+    git_repo = pipeline.params.get("repo")
+    reportable = [i for i in issues if i["category"] not in UNREPORTABLE_CATEGORIES]
+    if not settings.ff_build_diagnosis_comments or not pr_number or not git_repo:
+        return
+    if not reportable:
+        return
+
+    async with get_db() as db:
+        newer = await db.scalar(
+            select(Pipeline.id)
+            .where(
+                Pipeline.params["repo"].as_string() == git_repo,
+                Pipeline.params["ref"].as_string() == pipeline.params.get("ref"),
+                Pipeline.created_at > pipeline.created_at,
+            )
+            .limit(1)
+        )
+    if newer is not None:
+        logger.info(
+            "Skipping build diagnosis comment, newer pipeline exists",
+            pipeline_id=str(pipeline.id),
+            newer_pipeline_id=str(newer),
+        )
+        return
+
+    marker = COMMENT_MARKER.format(pipeline_id=pipeline.id)
+    if await ensure_pr_comment(
+        git_repo, int(pr_number), marker, comment_body(pipeline.id, reportable)
+    ):
+        await store(pipeline.id, comment_posted_at=datetime.now(UTC))
+    else:
+        logger.warning(
+            "Could not post build diagnosis comment",
+            pipeline_id=str(pipeline.id),
+            git_repo=git_repo,
+            pr_number=pr_number,
+        )

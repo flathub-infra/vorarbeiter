@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     statuspage_url: str = "https://status.flathub.org"
     sentry_dsn: str | None = None
     ff_build_diagnosis: bool = False
+    ff_build_diagnosis_comments: bool = False
     llm_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""

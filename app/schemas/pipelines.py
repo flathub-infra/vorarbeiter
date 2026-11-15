@@ -3,9 +3,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
-from app.models import PipelineStatus, PipelineTrigger
+from app.models import BuildDiagnosisStatus, PipelineStatus, PipelineTrigger
 
 
 class PipelineType(str, Enum):
@@ -76,6 +76,23 @@ class PipelineResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     published_at: datetime | None = None
+
+
+class BuildDiagnosisResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    pipeline_id: uuid.UUID
+    status: BuildDiagnosisStatus
+    result: dict[str, Any] | None
+    error: str | None
+    model: str | None
+    prompt_version: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    duration_seconds: float | None
+    comment_posted_at: datetime | None
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class PipelineStatusCallback(BaseModel):
