@@ -384,12 +384,21 @@ def test_out_of_range_citation_drops_issue():
                 },
                 {
                     "summary": "too long",
-                    "evidence": [{"job": 1, "start_line": 1, "end_line": 16}],
+                    "evidence": [
+                        {"job": 1, "start_line": 1, "end_line": 1},
+                        {"job": 1, "start_line": 1, "end_line": 16},
+                    ],
                 },
                 {
                     "summary": "unknown job",
                     "evidence": [{"job": 2, "start_line": 1, "end_line": 1}],
                 },
+            ]
+        }
+    )
+    valid = Diagnosis.model_validate(
+        {
+            "issues": [
                 {
                     "summary": "valid",
                     "evidence": [{"job": 1, "start_line": 1, "end_line": 15}],
@@ -398,7 +407,8 @@ def test_out_of_range_citation_drops_issue():
         }
     )
 
-    assert [i["summary"] for i in resolve_issues(diagnosis, [log])] == ["valid"]
+    assert resolve_issues(diagnosis, [log]) == []
+    assert [i["summary"] for i in resolve_issues(valid, [log])] == ["valid"]
 
 
 ISSUE = {
