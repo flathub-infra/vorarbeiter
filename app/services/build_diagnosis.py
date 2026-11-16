@@ -42,7 +42,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import BuildDiagnosis, BuildDiagnosisStatus, Pipeline
+from app.models import (
+    BuildDiagnosis,
+    BuildDiagnosisStatus,
+    BuildFailureIssue,
+    Pipeline,
+)
 from app.queue import app
 from app.services import build_docs
 from app.services.build_sources import SourceWorkspace
@@ -1000,13 +1005,25 @@ def comment_body(pipeline_id: uuid.UUID, issues: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+async def comment_target(
+    db: AsyncSession, pipeline: Pipeline, git_repo: str
+) -> int | None:
+    if pr_number := pipeline.params.get("pr_number"):
+        return int(pr_number)
+    return await db.scalar(
+        select(BuildFailureIssue.issue_number).where(
+            BuildFailureIssue.app_id == pipeline.app_id,
+            BuildFailureIssue.flat_manager_repo == pipeline.flat_manager_repo,
+            BuildFailureIssue.git_repo == git_repo,
+            BuildFailureIssue.issue_number.is_not(None),
+        )
+    )
+
+
 async def post_comment(pipeline: Pipeline, issues: list[dict[str, Any]]) -> None:
-    pr_number = pipeline.params.get("pr_number")
     git_repo = pipeline.params.get("repo")
     reportable = [i for i in issues if i["category"] not in UNREPORTABLE_CATEGORIES]
-    if not settings.ff_build_diagnosis_comments or not pr_number or not git_repo:
-        return
-    if not reportable:
+    if not settings.ff_build_diagnosis_comments or not git_repo or not reportable:
         return
 
     async with get_db() as db:
@@ -1019,6 +1036,7 @@ async def post_comment(pipeline: Pipeline, issues: list[dict[str, Any]]) -> None
             )
             .limit(1)
         )
+        target = await comment_target(db, pipeline, git_repo)
     if newer is not None:
         logger.info(
             "Skipping build diagnosis comment, newer pipeline exists",
@@ -1027,9 +1045,16 @@ async def post_comment(pipeline: Pipeline, issues: list[dict[str, Any]]) -> None
         )
         return
 
+    if target is None:
+        logger.info(
+            "Skipping build diagnosis comment, no pull request or build issue",
+            pipeline_id=str(pipeline.id),
+        )
+        return
+
     marker = COMMENT_MARKER.format(pipeline_id=pipeline.id)
     if await ensure_pr_comment(
-        git_repo, int(pr_number), marker, comment_body(pipeline.id, reportable)
+        git_repo, target, marker, comment_body(pipeline.id, reportable)
     ):
         await store(pipeline.id, comment_posted_at=datetime.now(UTC))
     else:
@@ -1037,5 +1062,5 @@ async def post_comment(pipeline: Pipeline, issues: list[dict[str, Any]]) -> None
             "Could not post build diagnosis comment",
             pipeline_id=str(pipeline.id),
             git_repo=git_repo,
-            pr_number=pr_number,
+            comment_target=target,
         )

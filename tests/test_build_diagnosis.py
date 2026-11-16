@@ -14,7 +14,13 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.main import app as main_app
-from app.models import BuildDiagnosis, BuildDiagnosisStatus, Pipeline, PipelineStatus
+from app.models import (
+    BuildDiagnosis,
+    BuildDiagnosisStatus,
+    BuildFailureIssue,
+    Pipeline,
+    PipelineStatus,
+)
 from app.pipelines.build import BuildPipeline
 from app.queue import app as queue_app
 from app.services import build_diagnosis
@@ -708,6 +714,33 @@ async def test_comment_gates(db_session_maker, connector, category, newer, poste
     assert ensure.await_count == int(posted)
     row = await get_row(db_session_maker, pipeline_id)
     assert (row.comment_posted_at is not None) == posted
+
+
+@pytest.mark.asyncio
+async def test_comment_posts_to_stable_build_issue(db_session_maker):
+    pipeline_id = await pending_row(db_session_maker)
+    async with db_session_maker() as db:
+        pipeline = await db.get(Pipeline, pipeline_id)
+        assert pipeline is not None
+        pipeline.flat_manager_repo = "stable"
+        db.add(
+            BuildFailureIssue(
+                app_id=pipeline.app_id,
+                flat_manager_repo="stable",
+                git_repo="flathub/org.test.App",
+                issue_number=346,
+            )
+        )
+        await db.commit()
+    ensure = AsyncMock(return_value=True)
+
+    with (
+        patch.object(settings, "ff_build_diagnosis_comments", True),
+        patch("app.services.build_diagnosis.ensure_pr_comment", ensure),
+    ):
+        await post_comment(pipeline, [ISSUE])
+
+    assert ensure.await_args_list[0].args[0:2] == ("flathub/org.test.App", 346)
 
 
 @pytest.mark.asyncio
