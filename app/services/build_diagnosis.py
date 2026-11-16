@@ -94,12 +94,10 @@ MAX_SUMMARY_CHARS = 300
 MAX_COMMENT_ISSUES = 3
 CANCELLED = "cancelled"
 SPOT_SUMMARY = (
-    "AWS reclaimed the spot instance that ran the build, so the app is not at "
-    'fault. Comment "bot, build" to retry.'
+    'AWS reclaimed the spot instance that ran the build. Comment "bot, build" to retry.'
 )
 GITHUB_CANCELLED_SUMMARY = (
-    "GitHub cancelled the build runner, so the app is not at fault. "
-    'Comment "bot, build" to retry.'
+    'GitHub cancelled the build runner. Comment "bot, build" to retry.'
 )
 UNREPORTABLE_CATEGORIES = {"infrastructure", "unknown"}
 COMMENT_MARKER = "<!-- vorarbeiter:build-diagnosis:{pipeline_id} -->"
