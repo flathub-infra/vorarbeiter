@@ -307,21 +307,31 @@ def parse_log(raw: bytes, name: str, steps: list[dict[str, Any]]) -> JobLog:
             current = match.group(1)
         stamps.append(current)
     headers = [n for n, line in enumerate(lines, 1) if STEP_HEADER.match(line)]
+    with_header = [
+        s.get("number")
+        for s in steps
+        if s.get("conclusion") != "skipped"
+        and s.get("name") not in ("Set up job", "Complete job")
+        and not s.get("name", "").startswith("Post ")
+    ]
+    header_of = (
+        dict(zip(with_header, headers, strict=True))
+        if len(with_header) == len(headers)
+        else {}
+    )
 
     ranges = []
     for step in failed:
+        if (header := header_of.get(step.get("number"))) is not None:
+            later = [n for n in headers if n > header]
+            ranges.append((header, later[0] - 1 if later else len(lines)))
+            continue
         if not step.get("started_at") or not step.get("completed_at"):
             continue
         lo, hi = step["started_at"][:19], step["completed_at"][:19]
         in_window = [n for n in range(1, len(lines) + 1) if lo <= stamps[n - 1] <= hi]
-        if not in_window:
-            continue
-        start = next((n for n in headers if stamps[n - 1] >= lo), in_window[0])
-        end = next(
-            (n - 1 for n in headers if n > start and stamps[n - 1] >= hi),
-            in_window[-1],
-        )
-        ranges.append((start, end))
+        if in_window:
+            ranges.append((in_window[0], in_window[-1]))
 
     if ranges:
         start, end = min(r[0] for r in ranges), max(r[1] for r in ranges)

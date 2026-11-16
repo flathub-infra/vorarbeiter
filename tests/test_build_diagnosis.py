@@ -23,6 +23,7 @@ from app.services.build_diagnosis import (
     RunNotCompleted,
     comment_body,
     diagnose,
+    parse_log,
     post_comment,
     resolve_issues,
 )
@@ -409,6 +410,53 @@ def test_out_of_range_citation_drops_issue():
 
     assert resolve_issues(diagnosis, [log]) == []
     assert [i["summary"] for i in resolve_issues(valid, [log])] == ["valid"]
+
+
+def step(number, name, conclusion="success", start="00", end="00"):
+    return {
+        "number": number,
+        "name": name,
+        "conclusion": conclusion,
+        "started_at": f"2026-11-15T19:00:{start}Z",
+        "completed_at": f"2026-11-15T19:00:{end}Z",
+    }
+
+
+def test_step_window_without_own_header():
+    raw = (
+        b"2026-11-15T19:00:00.1Z setting up\n"
+        b"2026-11-15T19:00:00.2Z ##[error]runner image missing\n"
+        b"2026-11-15T19:00:03.0Z ##[group]Run echo next\n"
+        b"2026-11-15T19:00:03.1Z next\n"
+    )
+    steps = [
+        step(1, "Set up job", "failure", end="01"),
+        step(2, "Next", start="03", end="03"),
+    ]
+
+    log = parse_log(raw, "build", steps)
+
+    assert (log.start, log.end) == (1, 2)
+
+
+def test_step_window_in_same_second_as_previous_step():
+    raw = (
+        b"2026-11-15T19:00:05.1Z ##[group]Run echo first\n"
+        b"2026-11-15T19:00:05.2Z first\n"
+        b"2026-11-15T19:00:05.3Z ##[group]Run make\n"
+        b"2026-11-15T19:00:05.4Z error: boom\n"
+        b"2026-11-15T19:00:05.5Z ##[error]Process completed with exit code 2.\n"
+    )
+    steps = [
+        step(1, "Set up job"),
+        step(2, "First", start="05", end="05"),
+        step(3, "Build", "failure", start="05", end="05"),
+        step(4, "Complete job"),
+    ]
+
+    log = parse_log(raw, "build", steps)
+
+    assert (log.start, log.end) == (3, 5)
 
 
 ISSUE = {
