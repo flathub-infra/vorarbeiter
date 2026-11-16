@@ -23,7 +23,7 @@ dependencies = [
     "httpx2>=2.9.1",
     "pyjwt[crypto]>=2.14.0",
     "procrastinate==3.11.0",
-    "pydantic-ai-slim[openai]>=2.68.0",
+    "pydantic-ai-slim[openai,web-fetch]>=2.68.0",
     "zstandard>=0.25.0",
 ]
 
