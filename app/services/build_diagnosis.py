@@ -625,6 +625,13 @@ async def diagnose(
             return
         pipeline = await db.get(Pipeline, pipeline_id)
     assert pipeline is not None
+    if attempts >= MAX_ATTEMPTS:
+        await mark(
+            pipeline_id,
+            BuildDiagnosisStatus.FAILED,
+            f"gave up after {MAX_ATTEMPTS} attempts: the worker stopped during the job",
+        )
+        return
 
     try:
         async with asyncio.timeout(TASK_TIMEOUT):

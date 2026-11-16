@@ -275,6 +275,23 @@ async def test_incomplete_run_retries_then_fails(db_session_maker, connector):
 
 
 @pytest.mark.asyncio
+async def test_job_restarted_after_last_attempt_fails_without_work(
+    db_session_maker, connector
+):
+    pipeline_id = await pending_row(db_session_maker)
+    load_jobs = AsyncMock()
+
+    with patch("app.services.build_diagnosis.load_jobs", load_jobs):
+        await diagnose(
+            pipeline_id, attempts=build_diagnosis.MAX_ATTEMPTS, rate_limit_retries=0
+        )
+
+    load_jobs.assert_not_awaited()
+    row = await get_row(db_session_maker, pipeline_id)
+    assert row.status == BuildDiagnosisStatus.FAILED
+
+
+@pytest.mark.asyncio
 async def test_unexpected_exception_marks_failed(db_session_maker, connector):
     pipeline_id = await pending_row(db_session_maker)
 
