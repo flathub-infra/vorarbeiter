@@ -660,6 +660,13 @@ def test_comment_ends_with_marker_and_strips_markup():
     assert "````\n```\nboom\n````" in body
 
 
+def test_comment_suggests_mirror_urls_for_source_download():
+    body = comment_body(uuid.uuid4(), [{**ISSUE, "category": "source-download"}])
+
+    assert "mirror-urls" in body
+    assert "mirror-urls" not in comment_body(uuid.uuid4(), [ISSUE])
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("category", "newer", "posted"),

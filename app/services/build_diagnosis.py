@@ -100,6 +100,10 @@ GITHUB_CANCELLED_SUMMARY = (
     'GitHub cancelled the build runner. Comment "bot, build" to retry.'
 )
 UNREPORTABLE_CATEGORIES = {"infrastructure", "unknown"}
+CATEGORY_HINTS = {
+    "source-download": "If the host is unreliable, add a fallback URL to that source "
+    "with the mirror-urls key.",
+}
 COMMENT_MARKER = "<!-- vorarbeiter:build-diagnosis:{pipeline_id} -->"
 
 PROMPT_VERSION = "4"
@@ -131,8 +135,8 @@ CATEGORY_QUESTION = ChoiceQuestion(
     "diagnosis and the log lines that show the error. Classify the failure by its "
     "cause, not by the build step that failed.",
     criteria={
-        "source-download": "A source was fetched but is wrong: a checksum mismatch, "
-        "a 404, or a moved file.",
+        "source-download": "A source could not be downloaded because the source host "
+        "timed out or dropped the connection.",
         "missing-dependency": "Something the build needs is not available: a library, "
         "a tool or toolchain version, an SDK extension, an included manifest, or a "
         "package missing from vendored or generated offline sources.",
@@ -977,6 +981,8 @@ def comment_body(pipeline_id: uuid.UUID, issues: list[dict[str, Any]]) -> str:
     parts = ["Possible cause of the build failure (automated diagnosis):"]
     for issue in issues[:MAX_COMMENT_ISSUES]:
         parts.append(clean_summary(issue["summary"]))
+        if hint := CATEGORY_HINTS.get(issue["category"]):
+            parts.append(hint)
         for ev in issue["evidence"]:
             text = "\n".join(
                 TIMESTAMP.sub("", line, count=1) for line in ev["text"].splitlines()
