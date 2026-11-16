@@ -712,6 +712,8 @@ async def test_comment_gates(db_session_maker, connector, category, newer, poste
         await post_comment(pipeline, [{**ISSUE, "category": category}])
 
     assert ensure.await_count == int(posted)
+    if posted:
+        assert ensure.await_args_list[0].args[0:2] == ("flathub/org.test.App", 5)
     row = await get_row(db_session_maker, pipeline_id)
     assert (row.comment_posted_at is not None) == posted
 
