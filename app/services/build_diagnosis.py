@@ -848,14 +848,24 @@ async def run_diagnosis(pipeline: Pipeline, row: BuildDiagnosis) -> dict[str, An
             except Cancelled as exc:
                 issue = {"category": CANCELLED, "summary": str(exc), "evidence": []}
                 return completed({"result": {"issues": [issue]}}, started)
-            deps = Deps(
-                jobs=jobs,
-                repo=pipeline.params.get("repo"),
-                sha=pipeline.params.get("sha"),
-                app_id=pipeline.app_id,
-                base_sha=pipeline.params.get("base_sha"),
-            )
-            values = await run_llm(deps, http)
+            for attempt in (1, 2):
+                deps = Deps(
+                    jobs=jobs,
+                    repo=pipeline.params.get("repo"),
+                    sha=pipeline.params.get("sha"),
+                    app_id=pipeline.app_id,
+                    base_sha=pipeline.params.get("base_sha"),
+                )
+                values = await run_llm(deps, http)
+                if values["result"]["issues"]:
+                    break
+                logger.info(
+                    "Diagnosis returned a run with no issues",
+                    pipeline_id=str(pipeline.id),
+                    attempt=attempt,
+                )
+            else:
+                raise DiagnosisFailed("the diagnosis returned no issues twice")
             await store(pipeline.id, **values, request_ids=list(request_ids))
         else:
             values = {"result": row.result}

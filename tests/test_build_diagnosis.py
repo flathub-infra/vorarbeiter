@@ -402,6 +402,73 @@ async def test_diagnosis_stores_resolved_evidence(db_session_maker, connector):
 
 
 @pytest.mark.asyncio
+async def test_empty_diagnosis_is_retried(db_session_maker, connector):
+    pipeline_id = await pending_row(db_session_maker)
+    issue = {
+        "summary": "The wyrmsun patch did not apply.",
+        "evidence": [
+            {
+                "job": 1,
+                "job_name": "build-x86_64",
+                "start_line": 20,
+                "end_line": 21,
+                "text": "line 20\nline 21",
+            }
+        ],
+    }
+    run_llm = AsyncMock(
+        side_effect=[
+            {"result": {"issues": []}},
+            {
+                "result": {"issues": [issue]},
+                "model": "llm",
+                "input_tokens": 1,
+                "output_tokens": 1,
+            },
+        ]
+    )
+    decision = DecisionResponse(
+        answers={
+            "category": ChoiceAnswer(
+                choice="compile-error",
+                confidence=0.9,
+                probabilities={"compile-error": 0.95, "unknown": 0.05},
+            )
+        },
+        model_name="mammoth-1",
+    )
+    with (
+        mock_github(),
+        patch.object(build_diagnosis, "run_llm", run_llm),
+        patch.object(
+            build_diagnosis.SystemOneModel, "decide", AsyncMock(return_value=decision)
+        ),
+    ):
+        await diagnose(pipeline_id, attempts=0, rate_limit_retries=0)
+
+    row = await get_row(db_session_maker, pipeline_id)
+    assert row.status == BuildDiagnosisStatus.COMPLETED
+    assert row.result is not None
+    assert row.result["issues"][0]["category"] == "compile-error"
+    assert run_llm.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_empty_diagnosis_fails_after_retry(db_session_maker, connector):
+    pipeline_id = await pending_row(db_session_maker)
+    run_llm = AsyncMock(return_value={"result": {"issues": []}})
+
+    with mock_github(), patch.object(build_diagnosis, "run_llm", run_llm):
+        await diagnose(pipeline_id, attempts=0, rate_limit_retries=0)
+
+    row = await get_row(db_session_maker, pipeline_id)
+    assert row.status == BuildDiagnosisStatus.FAILED
+    assert row.error is not None
+    assert "returned no issues twice" in row.error
+    assert run_llm.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_decisions_rate_limit_keeps_llm_result(db_session_maker, connector):
     pipeline_id = await pending_row(db_session_maker)
     output = {
