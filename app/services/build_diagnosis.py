@@ -1036,7 +1036,6 @@ async def post_comment(pipeline: Pipeline, issues: list[dict[str, Any]]) -> None
             )
             .limit(1)
         )
-        target = await comment_target(db, pipeline, git_repo)
     if newer is not None:
         logger.info(
             "Skipping build diagnosis comment, newer pipeline exists",
@@ -1045,6 +1044,8 @@ async def post_comment(pipeline: Pipeline, issues: list[dict[str, Any]]) -> None
         )
         return
 
+    async with get_db() as db:
+        target = await comment_target(db, pipeline, git_repo)
     if target is None:
         logger.info(
             "Skipping build diagnosis comment, no pull request or build issue",
