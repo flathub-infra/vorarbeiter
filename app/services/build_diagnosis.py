@@ -105,6 +105,10 @@ CATEGORY_HINTS = {
     "with the mirror-urls key.",
 }
 COMMENT_MARKER = "<!-- vorarbeiter:build-diagnosis:{pipeline_id} -->"
+COMMENT_DISCLAIMER = (
+    "<sub>This text is written by a language model based on the build logs. "
+    "It can be wrong or incomplete. Check the log lines before you act on it.</sub>"
+)
 
 PROMPT_VERSION = "4"
 INSTRUCTIONS = """\
@@ -978,7 +982,7 @@ def fenced(text: str) -> str:
 
 
 def comment_body(pipeline_id: uuid.UUID, issues: list[dict[str, Any]]) -> str:
-    parts = ["Possible cause of the build failure (automated diagnosis):"]
+    parts = []
     for issue in issues[:MAX_COMMENT_ISSUES]:
         parts.append(clean_summary(issue["summary"]))
         if hint := CATEGORY_HINTS.get(issue["category"]):
@@ -991,6 +995,7 @@ def comment_body(pipeline_id: uuid.UUID, issues: list[dict[str, Any]]) -> str:
                 f"{ev['job_name']}, lines {ev['start_line']}-{ev['end_line']}:\n"
                 f"{fenced(text)}"
             )
+    parts.append(COMMENT_DISCLAIMER)
     parts.append(COMMENT_MARKER.format(pipeline_id=pipeline_id))
     return "\n\n".join(parts)
 
