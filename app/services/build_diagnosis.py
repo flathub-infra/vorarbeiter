@@ -247,7 +247,7 @@ agent = Agent(
         timeout=600,
         max_tokens=16000,
         temperature=0,
-        openai_reasoning_effort="low",
+        openai_reasoning_effort="high",
     ),
 )
 
