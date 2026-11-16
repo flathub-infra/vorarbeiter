@@ -84,7 +84,6 @@ class BuildDiagnosisResponse(BaseModel):
     pipeline_id: uuid.UUID
     status: BuildDiagnosisStatus
     result: dict[str, Any] | None
-    error: str | None
     model: str | None
     prompt_version: str | None
     input_tokens: int | None
