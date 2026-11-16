@@ -104,7 +104,7 @@ Input:
 
 Method:
 1. Start from the end of the failed step and work backwards to the first error that caused the failure. In flatpak-builder output the failing module is named in "Error: module <name>: Child process exited with code N"; the cause is in the lines above it.
-2. Ignore lines that appear in every Flathub build: "<runtime> not installed" before the runtime install, the source scripts printed by the workflow (lines that contain print(f"..."), retry messages from the download wrapper, and "##[error]Process completed with exit code N".
+2. Ignore lines that appear in every Flathub build: "<runtime> not installed" before the runtime install, the source scripts printed by the workflow, which contain print(f"..."), retry messages from the download wrapper, and "##[error]Process completed with exit code N".
 3. Ignore errors that the build recovered from, such as an optional check that failed while configure continued. The cause is the error after which the build stopped.
 4. Use read_manifest when the cause can be in the manifest: a wrong checksum, a missing module or extension, a bad source URL, a patch, or a linter error.
 
