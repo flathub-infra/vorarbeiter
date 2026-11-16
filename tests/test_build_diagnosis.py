@@ -389,6 +389,56 @@ async def test_diagnosis_stores_resolved_evidence(db_session_maker, connector):
     }
 
 
+@pytest.mark.asyncio
+async def test_decisions_rate_limit_keeps_llm_result(db_session_maker, connector):
+    pipeline_id = await pending_row(db_session_maker)
+    output = {
+        "issues": [
+            {
+                "summary": "The wyrmsun patch did not apply.",
+                "evidence": [{"job": 1, "start_line": 20, "end_line": 21}],
+            }
+        ]
+    }
+    decision = DecisionResponse(
+        answers={
+            "category": ChoiceAnswer(
+                choice="compile-error",
+                confidence=0.9,
+                probabilities={"compile-error": 0.95, "unknown": 0.05},
+            )
+        },
+        model_name="mammoth-1",
+    )
+    decide = AsyncMock(
+        side_effect=[ModelRateLimitError("mammoth-1", "429", retry_after=60), decision]
+    )
+    run = AsyncMock(wraps=build_diagnosis.agent.run)
+
+    with (
+        mock_github(),
+        build_diagnosis.agent.override(
+            model=TestModel(call_tools=[], custom_output_args=output)
+        ),
+        patch.object(build_diagnosis.agent, "run", run),
+        patch.object(build_diagnosis.SystemOneModel, "decide", decide),
+    ):
+        await diagnose(pipeline_id, attempts=0, rate_limit_retries=0)
+        row = await get_row(db_session_maker, pipeline_id)
+        assert row.status == BuildDiagnosisStatus.PENDING
+        assert row.result is not None
+        assert "category" not in row.result["issues"][0]
+
+        await diagnose(pipeline_id, attempts=0, rate_limit_retries=1)
+
+    row = await get_row(db_session_maker, pipeline_id)
+    assert row.status == BuildDiagnosisStatus.COMPLETED
+    assert row.result is not None
+    assert row.result["issues"][0]["category"] == "compile-error"
+    assert run.await_count == 1
+    assert decide.await_count == 2
+
+
 def test_out_of_range_citation_drops_issue():
     log = JobLog(
         name="build", lines=["a"] * 100, failed_steps=["Build"], start=1, end=100

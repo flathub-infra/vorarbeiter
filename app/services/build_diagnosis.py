@@ -3,6 +3,8 @@ import re
 import tempfile
 import time
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -463,73 +465,71 @@ def category_state(issue: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def run_models(deps: Deps) -> dict[str, Any]:
-    request_ids: list[str] = []
+@contextmanager
+def model_errors() -> Generator[None]:
+    try:
+        yield
+    except ModelRateLimitError as exc:
+        raise RateLimited(exc.retry_after) from exc
+    except (
+        ModelUnavailableError,
+        ModelConnectionError,
+        ModelServerError,
+    ) as exc:
+        raise TransientError(repr(exc)) from exc
+    except (OutputTokenLimitExceeded, UsageLimitExceeded) as exc:
+        raise DiagnosisFailed(repr(exc)) from exc
 
-    async def record_cost(response: httpx.Response) -> None:
-        if request_id := response.headers.get("X-Request-ID"):
-            request_ids.append(request_id)
 
-    async with httpx.AsyncClient(event_hooks={"response": [record_cost]}) as http:
-        llm = OpenAIChatModel(
-            settings.llm_model,
-            provider=OpenAIProvider(
-                base_url=settings.llm_url,
-                api_key=settings.llm_api_key,
-                http_client=http,
-            ),
+async def run_llm(deps: Deps, http: httpx.AsyncClient) -> dict[str, Any]:
+    llm = OpenAIChatModel(
+        settings.llm_model,
+        provider=OpenAIProvider(
+            base_url=settings.llm_url,
+            api_key=settings.llm_api_key,
+            http_client=http,
+        ),
+    )
+    with model_errors():
+        result = await agent.run(
+            first_message(deps.jobs),
+            model=llm,
+            deps=deps,
+            usage_limits=UsageLimits(request_limit=15),
         )
-        decisions = SystemOneModel(
-            settings.decisions_model,
-            provider=SystemOneProvider(
-                base_url=settings.decisions_url,
-                api_key=settings.decisions_api_key,
-                http_client=http,
-            ),
-        )
-        try:
-            result = await agent.run(
-                first_message(deps.jobs),
-                model=llm,
-                deps=deps,
-                usage_limits=UsageLimits(request_limit=15),
-            )
-            issues = resolve_issues(result.output, deps.jobs)
-            for issue in issues:
-                response = await decisions.decide(
-                    DecisionRequest(
-                        state=category_state(issue),
-                        questions={"category": CATEGORY_QUESTION},
-                    ),
-                    DecisionModelSettings(timeout=60),
-                )
-                answer = response.answers["category"]
-                assert isinstance(answer, ChoiceAnswer)
-                issue["category"] = answer.choice
-                issue["category_probabilities"] = answer.probabilities
-        except ModelRateLimitError as exc:
-            raise RateLimited(exc.retry_after) from exc
-        except (
-            ModelUnavailableError,
-            ModelConnectionError,
-            ModelServerError,
-        ) as exc:
-            raise TransientError(repr(exc)) from exc
-        except (OutputTokenLimitExceeded, UsageLimitExceeded) as exc:
-            raise DiagnosisFailed(repr(exc)) from exc
     return {
-        "result": {
-            "issues": issues,
-            "decisions_model": settings.decisions_model,
-        },
+        "result": {"issues": resolve_issues(result.output, deps.jobs)},
         "model": settings.llm_model,
         "input_tokens": result.usage.input_tokens,
         "output_tokens": result.usage.output_tokens,
-        "request_ids": request_ids,
     }
 
 
-async def run_diagnosis(pipeline: Pipeline) -> dict[str, Any]:
+async def classify(issues: list[dict[str, Any]], http: httpx.AsyncClient) -> None:
+    decisions = SystemOneModel(
+        settings.decisions_model,
+        provider=SystemOneProvider(
+            base_url=settings.decisions_url,
+            api_key=settings.decisions_api_key,
+            http_client=http,
+        ),
+    )
+    with model_errors():
+        for issue in issues:
+            response = await decisions.decide(
+                DecisionRequest(
+                    state=category_state(issue),
+                    questions={"category": CATEGORY_QUESTION},
+                ),
+                DecisionModelSettings(timeout=60),
+            )
+            answer = response.answers["category"]
+            assert isinstance(answer, ChoiceAnswer)
+            issue["category"] = answer.choice
+            issue["category_probabilities"] = answer.probabilities
+
+
+async def run_diagnosis(pipeline: Pipeline, row: BuildDiagnosis) -> dict[str, Any]:
     provider_data = pipeline.provider_data or {}
     owner = provider_data.get("owner")
     repo = provider_data.get("repo")
@@ -538,22 +538,36 @@ async def run_diagnosis(pipeline: Pipeline) -> dict[str, Any]:
         raise Skipped("no run_id")
 
     started = time.monotonic()
-    try:
-        jobs = await load_jobs(owner, repo, int(run_id))
-    except Cancelled as exc:
-        values = {
-            "result": {
-                "issues": [{"category": CANCELLED, "summary": str(exc), "evidence": []}]
-            }
-        }
-    else:
-        deps = Deps(
-            jobs=jobs,
-            repo=pipeline.params.get("repo"),
-            sha=pipeline.params.get("sha"),
-            app_id=pipeline.app_id,
-        )
-        values = await run_models(deps)
+    request_ids = list(row.request_ids or [])
+
+    async def record_cost(response: httpx.Response) -> None:
+        if request_id := response.headers.get("X-Request-ID"):
+            request_ids.append(request_id)
+
+    async with httpx.AsyncClient(event_hooks={"response": [record_cost]}) as http:
+        if row.result is None:
+            try:
+                jobs = await load_jobs(owner, repo, int(run_id))
+            except Cancelled as exc:
+                issue = {"category": CANCELLED, "summary": str(exc), "evidence": []}
+                return completed({"result": {"issues": [issue]}}, started)
+            deps = Deps(
+                jobs=jobs,
+                repo=pipeline.params.get("repo"),
+                sha=pipeline.params.get("sha"),
+                app_id=pipeline.app_id,
+            )
+            values = await run_llm(deps, http)
+            await store(pipeline.id, **values, request_ids=list(request_ids))
+        else:
+            values = {"result": row.result}
+        await classify(values["result"]["issues"], http)
+
+    values["result"]["decisions_model"] = settings.decisions_model
+    return completed({**values, "request_ids": request_ids}, started)
+
+
+def completed(values: dict[str, Any], started: float) -> dict[str, Any]:
     return {
         **values,
         "status": BuildDiagnosisStatus.COMPLETED,
@@ -635,7 +649,7 @@ async def diagnose(
 
     try:
         async with asyncio.timeout(TASK_TIMEOUT):
-            values = await run_diagnosis(pipeline)
+            values = await run_diagnosis(pipeline, row)
     except RateLimited as exc:
         await reschedule(pipeline_id, rate_limit_retries, exc)
     except (RunNotCompleted, TransientError) as exc:
