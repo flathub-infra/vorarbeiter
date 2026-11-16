@@ -718,8 +718,7 @@ async def test_comment_gates(db_session_maker, connector, category, newer, poste
     assert (row.comment_posted_at is not None) == posted
 
 
-@pytest.mark.asyncio
-async def test_comment_posts_to_stable_build_issue(db_session_maker):
+async def stable_failure_issue(db_session_maker, issue_number: int = 346) -> Pipeline:
     pipeline_id = await pending_row(db_session_maker)
     async with db_session_maker() as db:
         pipeline = await db.get(Pipeline, pipeline_id)
@@ -730,19 +729,34 @@ async def test_comment_posts_to_stable_build_issue(db_session_maker):
                 app_id=pipeline.app_id,
                 flat_manager_repo="stable",
                 git_repo="flathub/org.test.App",
-                issue_number=346,
+                issue_number=issue_number,
             )
         )
         await db.commit()
+    return pipeline
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("issue_state", "posted"), [("open", True), ("closed", False)])
+async def test_comment_follows_stable_build_issue(
+    db_session_maker, issue_state, posted
+):
+    pipeline = await stable_failure_issue(db_session_maker)
     ensure = AsyncMock(return_value=True)
 
     with (
         patch.object(settings, "ff_build_diagnosis_comments", True),
         patch("app.services.build_diagnosis.ensure_pr_comment", ensure),
+        patch(
+            "app.services.build_diagnosis.get_github_issue",
+            AsyncMock(return_value={"state": issue_state}),
+        ),
     ):
         await post_comment(pipeline, [ISSUE])
 
-    assert ensure.await_args_list[0].args[0:2] == ("flathub/org.test.App", 346)
+    assert ensure.await_count == int(posted)
+    if posted:
+        assert ensure.await_args_list[0].args[0:2] == ("flathub/org.test.App", 346)
 
 
 @pytest.mark.asyncio

@@ -61,6 +61,7 @@ from app.utils.github import (
     get_check_run_annotations,
     get_github_actions_client,
     get_github_client,
+    get_github_issue,
 )
 from app.utils.manifest import _parse_manifest
 
@@ -1010,7 +1011,7 @@ async def comment_target(
 ) -> int | None:
     if pr_number := pipeline.params.get("pr_number"):
         return int(pr_number)
-    return await db.scalar(
+    issue_number = await db.scalar(
         select(BuildFailureIssue.issue_number).where(
             BuildFailureIssue.app_id == pipeline.app_id,
             BuildFailureIssue.flat_manager_repo == pipeline.flat_manager_repo,
@@ -1018,6 +1019,12 @@ async def comment_target(
             BuildFailureIssue.issue_number.is_not(None),
         )
     )
+    if issue_number is None:
+        return None
+    issue = await get_github_issue(git_repo, issue_number)
+    if issue is None or issue.get("state") != "open":
+        return None
+    return issue_number
 
 
 async def post_comment(pipeline: Pipeline, issues: list[dict[str, Any]]) -> None:
