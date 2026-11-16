@@ -402,7 +402,7 @@ def test_out_of_range_citation_drops_issue():
 
 
 ISSUE = {
-    "summary": "See https://example.com @flathub/admins **now**",
+    "summary": "See https://example.com @flathub/admins **now** in gst_plugins_bad (foo)",
     "category": "compile-error",
     "evidence": [
         {
@@ -421,7 +421,7 @@ def test_comment_ends_with_marker_and_strips_markup():
     body = comment_body(pipeline_id, [ISSUE])
 
     assert body.endswith(f"<!-- vorarbeiter:build-diagnosis:{pipeline_id} -->")
-    assert "See flathub/admins now" in body
+    assert "See flathub/admins now in gst_plugins_bad (foo)" in body
     assert "````\n```\nboom\n````" in body
 
 

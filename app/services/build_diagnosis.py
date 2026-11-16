@@ -649,7 +649,7 @@ async def diagnose(
 
 def clean_summary(summary: str) -> str:
     summary = URL.sub("", summary)
-    summary = summary.translate(str.maketrans("", "", "@`*_[]()#>~|<"))
+    summary = summary.translate(str.maketrans("", "", "@`*[]#>~|<"))
     return " ".join(summary.split())[:MAX_SUMMARY_CHARS]
 
 
