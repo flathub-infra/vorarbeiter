@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     decisions_url: str = ""
     decisions_api_key: str = ""
     decisions_model: str = ""
+    source_download_max_bytes: int = 100 * 1024 * 1024
+    source_extracted_max_bytes: int = 512 * 1024 * 1024
+    source_max_files: int = 20000
+    source_timeout_seconds: int = 180
+    source_cache_entries: int = 8
+    source_read_max_bytes: int = 2 * 1024 * 1024
+    source_search_max_bytes: int = 20 * 1024 * 1024
+    source_search_max_files: int = 500
     ff_reprocheck_issues: bool = False
     ff_disable_admin_ping_comment: bool = False
     ff_disable_test_builds: bool = False

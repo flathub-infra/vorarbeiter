@@ -24,6 +24,7 @@ dependencies = [
     "pyjwt[crypto]>=2.14.0",
     "procrastinate==3.11.0",
     "pydantic-ai-slim[openai]>=2.68.0",
+    "zstandard>=0.25.0",
 ]
 
 [dependency-groups]

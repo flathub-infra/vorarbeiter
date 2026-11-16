@@ -22,9 +22,11 @@ from app.services.build_diagnosis import (
     Deps,
     Diagnosis,
     JobLog,
+    RepoFileTooLarge,
     RunNotCompleted,
     comment_body,
     diagnose,
+    fetch_repo_file,
     included_paths,
     parse_log,
     post_comment,
@@ -557,6 +559,9 @@ def test_included_paths_follow_manifest_and_stay_in_repo():
         "x.json",
         "mod/y.json",
     }
+    recursive = {"modules": []}
+    recursive["modules"].append(recursive)
+    assert included_paths(recursive, "") == set()
 
 
 @pytest.mark.asyncio
@@ -573,6 +578,62 @@ async def test_read_file_refuses_files_the_manifest_does_not_include():
 
     assert "is not included by the manifest" in result
     fetch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fetch_repo_file_follows_submodule_at_pinned_commit():
+    missing = SimpleNamespace(status_code=404, content=b"", text="")
+    submodule = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "type": "submodule",
+            "sha": "b" * 40,
+            "submodule_git_url": "https://github.com/flathub/shared-modules.git",
+        },
+    )
+    content = SimpleNamespace(status_code=200, content=b"{}", text="{}")
+    client = SimpleNamespace(
+        request=AsyncMock(side_effect=[missing, missing, submodule, content])
+    )
+
+    with patch("app.services.build_diagnosis.get_github_client", return_value=client):
+        result = await fetch_repo_file(
+            "flathub/org.test.App", "a" * 40, "shared-modules/foo/foo.json"
+        )
+
+    assert result == "{}"
+    url = client.request.await_args_list[-1].args[1]
+    assert "/repos/flathub/shared-modules/contents/foo/foo.json?" in url
+    assert f"ref={'b' * 40}" in url
+
+
+@pytest.mark.asyncio
+async def test_fetch_repo_file_quotes_path_without_losing_revision():
+    response = SimpleNamespace(status_code=200, content=b"{}", text="{}")
+    client = SimpleNamespace(request=AsyncMock(return_value=response))
+
+    with patch("app.services.build_diagnosis.get_github_client", return_value=client):
+        result = await fetch_repo_file(
+            "flathub/org.test.App", "a" * 40, "org.test.App#.json"
+        )
+
+    assert result == "{}"
+    url = client.request.await_args.args[1]
+    assert "/contents/org.test.App%23.json?" in url
+    assert f"ref={'a' * 40}" in url
+
+
+@pytest.mark.asyncio
+async def test_fetch_repo_file_rejects_truncation():
+    response = SimpleNamespace(status_code=200, content=b"four", text="four")
+    client = SimpleNamespace(request=AsyncMock(return_value=response))
+
+    with (
+        patch("app.services.build_diagnosis.get_github_client", return_value=client),
+        patch("app.services.build_diagnosis.MAX_FILE_BYTES", 3),
+        pytest.raises(RepoFileTooLarge, match="exceeds 3 bytes"),
+    ):
+        await fetch_repo_file("flathub/org.test.App", "a" * 40, "large.json")
 
 
 ISSUE = {
