@@ -1,6 +1,7 @@
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,13 +19,16 @@ from app.pipelines.build import BuildPipeline
 from app.queue import app as queue_app
 from app.services import build_diagnosis
 from app.services.build_diagnosis import (
+    Deps,
     Diagnosis,
     JobLog,
     RunNotCompleted,
     comment_body,
     diagnose,
+    included_paths,
     parse_log,
     post_comment,
+    read_file,
     resolve_issues,
 )
 
@@ -524,6 +528,51 @@ def test_step_window_in_same_second_as_previous_step():
     log = parse_log(raw, "build", steps)
 
     assert (log.start, log.end) == (3, 5)
+
+
+def test_included_paths_follow_manifest_and_stay_in_repo():
+    manifest = {
+        "modules": [
+            "shared-modules/libfoo.json",
+            {
+                "name": "app",
+                "sources": [
+                    "generated-sources.json",
+                    {"type": "patch", "path": "patches/fix.patch"},
+                    {"type": "patch", "paths": ["../../etc/passwd", "/etc/shadow"]},
+                    {"type": "git", "url": "https://example.com/app.git"},
+                ],
+                "modules": [{"name": "dep", "sources": ["dep/sources.json"]}],
+            },
+        ]
+    }
+
+    assert included_paths(manifest, "") == {
+        "shared-modules/libfoo.json",
+        "generated-sources.json",
+        "patches/fix.patch",
+        "dep/sources.json",
+    }
+    assert included_paths({"sources": ["../x.json", "y.json"]}, "mod") == {
+        "x.json",
+        "mod/y.json",
+    }
+
+
+@pytest.mark.asyncio
+async def test_read_file_refuses_files_the_manifest_does_not_include():
+    deps = Deps(
+        jobs=[], repo="flathub/org.test.App", sha="a" * 40, app_id="org.test.App"
+    )
+    deps.manifest = "id: org.test.App"
+    deps.included = {"sources.json"}
+    fetch = AsyncMock(return_value="[]")
+
+    with patch("app.services.build_diagnosis.fetch_repo_file", fetch):
+        result = await read_file(SimpleNamespace(deps=deps), "../secrets.txt")
+
+    assert "is not included by the manifest" in result
+    fetch.assert_not_awaited()
 
 
 ISSUE = {
