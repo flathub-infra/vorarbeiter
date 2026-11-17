@@ -73,7 +73,9 @@ def connector(db_session_maker):
 
 
 async def failure_callback(
-    db_session_maker, infrastructure_cancellation: bool = False
+    db_session_maker,
+    infrastructure_cancellation: bool = False,
+    params: dict | None = None,
 ) -> uuid.UUID:
     pipeline_id = uuid.uuid4()
     async with db_session_maker() as db:
@@ -82,7 +84,7 @@ async def failure_callback(
                 id=pipeline_id,
                 app_id="org.test.App",
                 status=PipelineStatus.RUNNING,
-                params={"repo": "flathub/org.test.App"},
+                params=params or {"repo": "flathub/org.test.App"},
                 provider_data={},
                 callback_token="token",
             )
@@ -137,6 +139,21 @@ async def test_repeated_callback_defers_none(db_session_maker, connector):
         rows = (await db.execute(select(BuildDiagnosis))).scalars().all()
         pipeline = await db.get(Pipeline, pipeline_id)
     assert len(rows) == 1
+    assert pipeline is not None
+    assert pipeline.status == PipelineStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_submission_pull_request_defers_none(db_session_maker, connector):
+    pipeline_id = await failure_callback(
+        db_session_maker,
+        params={"repo": "flathub/flathub", "pr_number": "42"},
+    )
+
+    assert connector.jobs == {}
+    async with db_session_maker() as db:
+        assert await db.get(BuildDiagnosis, pipeline_id) is None
+        pipeline = await db.get(Pipeline, pipeline_id)
     assert pipeline is not None
     assert pipeline.status == PipelineStatus.FAILED
 
