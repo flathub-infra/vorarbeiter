@@ -360,7 +360,7 @@ class TestMiscellaneous:
                 "name": "upload",
                 "sub": "build/12345",
                 "scope": ["upload"],
-                "prefix": ["org.test.App"],
+                "prefixes": ["org.test.App"],
                 "duration": 24 * 60 * 60,
             },
         )

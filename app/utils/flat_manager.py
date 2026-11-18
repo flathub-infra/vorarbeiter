@@ -162,7 +162,7 @@ class FlatManagerClient:
                 "name": "upload",
                 "sub": f"build/{build_id}",
                 "scope": ["upload"],
-                "prefix": [app_id],
+                "prefixes": [app_id],
                 "duration": 24 * 60 * 60,
             },
         )

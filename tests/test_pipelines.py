@@ -246,7 +246,7 @@ async def test_start_pipeline_branch_mapping(
     assert "token_subset" in token_url
     assert token_data["name"] == "upload"
     assert token_data["scope"] == ["upload"]
-    assert token_data["prefix"] == [app_id]
+    assert token_data["prefixes"] == [app_id]
 
     mock_github_provider.dispatch.assert_awaited_once()
     call_args, _call_kwargs = mock_github_provider.dispatch.call_args
