@@ -162,7 +162,7 @@ class FlatManagerClient:
                 "name": "upload",
                 "sub": f"build/{build_id}",
                 "scope": ["upload"],
-                "prefixes": [app_id],
+                "prefixes": list(dict.fromkeys([app_id, app_id.replace("-", "_")])),
                 "duration": 24 * 60 * 60,
             },
         )
