@@ -1411,34 +1411,131 @@ async def test_is_eol_only_push_skips_zero_sha(mock_httpx):
     mock_httpx.request.assert_not_called()
 
 
+def github_repo(contents: dict[str, str], tree: list[dict] | None = None, **compare):
+    tree = tree or [
+        {"path": path, "type": "blob", "mode": "100644"} for path in contents
+    ]
+
+    async def request(method, url, **kwargs):
+        response = MagicMock()
+        if "/compare/" in url:
+            response.json.return_value = compare
+        elif "/git/trees/" in url:
+            response.json.return_value = {"truncated": False, "tree": tree}
+        else:
+            path = url.split("/contents/", 1)[1].split("?", 1)[0]
+            if path not in contents:
+                return None
+            response.text = contents[path]
+        return response
+
+    client = MagicMock()
+    client.request = request
+    return patch("app.routes.webhooks.get_github_client", return_value=client)
+
+
+SKIP_CI_MANIFEST = """
+id: org.test.App
+modules:
+  - modules/dep.json
+  - name: app
+    sources:
+      - type: file
+        path: org.test.App.metainfo.xml
+      - type: patch
+        paths: [patches/a.patch]
+      - shared-modules/lib/lib.json
+"""
+SKIP_CI_FILES = {
+    "org.test.App.yml": SKIP_CI_MANIFEST,
+    "modules/dep.json": '{"name": "dep", "sources": [{"type": "dir", "path": "src"}]}',
+    "org.test.App.metainfo.xml": "",
+    "patches/a.patch": "",
+    "README.md": "",
+}
+SKIP_CI_TREE = [
+    *({"path": path, "type": "blob", "mode": "100644"} for path in SKIP_CI_FILES),
+    {"path": "shared-modules", "type": "commit", "mode": "160000"},
+]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("message", "pulls", "expected"),
+    ("changed", "messages", "status", "expected"),
     [
-        ("Fix typo [skip ci]", [], True),
-        ("Fix typo [skip ci]", [{"number": 7}], False),
-        ("Fix typo", [], False),
+        ([{"filename": "README.md"}], ["Docs [skip ci]"], "ahead", True),
+        ([{"filename": "docs/shot.png"}], ["Docs [skip ci]"], "ahead", True),
+        ([{"filename": "README.md"}], ["[skip ci]", "[skip ci]"], "ahead", True),
+        ([{"filename": "README.md"}], ["Docs"], "ahead", False),
+        ([{"filename": "README.md"}], ["[skip ci]", "Docs"], "ahead", False),
+        ([{"filename": "README.md"}], ["Docs [skip ci]"], "diverged", False),
+        ([{"filename": "org.test.App.yml"}], ["[skip ci]"], "ahead", False),
+        ([{"filename": "modules/dep.json"}], ["[skip ci]"], "ahead", False),
+        ([{"filename": "modules/src/main.c"}], ["[skip ci]"], "ahead", False),
+        ([{"filename": "patches/a.patch"}], ["[skip ci]"], "ahead", False),
+        ([{"filename": "shared-modules"}], ["[skip ci]"], "ahead", False),
+        ([{"filename": "flathub.json"}], ["[skip ci]"], "ahead", False),
+        (
+            [{"filename": "notes.txt", "previous_filename": "patches/a.patch"}],
+            ["[skip ci]"],
+            "ahead",
+            False,
+        ),
     ],
 )
-async def test_is_skip_ci_push(message, pulls, expected, mock_httpx):
-    from app.routes.webhooks import is_skip_ci_push
+async def test_is_skip_ci_change(changed, messages, status, expected):
+    from app.routes.webhooks import is_skip_ci_change
 
-    payload = {**SAMPLE_PUSH_PAYLOAD, "head_commit": {"message": message}}
-    mock_httpx.set_response("request", json_data=pulls)
+    with github_repo(
+        SKIP_CI_FILES,
+        SKIP_CI_TREE,
+        status=status,
+        commits=[{"commit": {"message": message}} for message in messages],
+        total_commits=len(messages),
+        files=changed,
+    ):
+        result = await is_skip_ci_change(
+            "flathub/org.test.App", "a" * 40, "b" * 40, require_fast_forward=True
+        )
 
-    with mock_httpx.patch():
-        assert await is_skip_ci_push(payload) is expected
+    assert result is expected
 
 
 @pytest.mark.asyncio
-async def test_is_skip_ci_push_builds_when_lookup_fails(mock_httpx):
-    from app.routes.webhooks import is_skip_ci_push
+@pytest.mark.parametrize(
+    ("files", "tree"),
+    [
+        ({**SKIP_CI_FILES, "modules/dep.json": None}, None),
+        ({**SKIP_CI_FILES, "modules/dep.json": "{not json"}, None),
+        (
+            SKIP_CI_FILES,
+            [
+                *SKIP_CI_TREE,
+                {"path": "patches", "type": "blob", "mode": "120000"},
+            ],
+        ),
+        ({"README.md": ""}, None),
+    ],
+    ids=["missing-include", "broken-include", "symlinked-path", "no-manifest"],
+)
+async def test_is_skip_ci_change_builds_when_manifest_unresolvable(files, tree):
+    from app.routes.webhooks import is_skip_ci_change
 
-    payload = {**SAMPLE_PUSH_PAYLOAD, "head_commit": {"message": "[skip ci]"}}
-    mock_httpx.set_response("request", side_effect=httpx.ConnectError("boom"))
+    files = {path: text for path, text in files.items() if text is not None}
+    with github_repo(
+        files,
+        tree
+        or [p for p in SKIP_CI_TREE if p["path"] in files or p["type"] == "commit"],
+        status="ahead",
+        commits=[{"commit": {"message": "[skip ci]"}}],
+        total_commits=1,
+        files=[{"filename": "README.md"}],
+    ):
+        result = await is_skip_ci_change(
+            "flathub/org.test.App", "a" * 40, "b" * 40, require_fast_forward=True
+        )
 
-    with mock_httpx.patch(), patch("asyncio.sleep", AsyncMock()):
-        assert await is_skip_ci_push(payload) is False
+    assert result is False
 
 
 @pytest.mark.asyncio

@@ -53,8 +53,11 @@ from app.utils.github import (
     update_commit_status,
     validate_pipeline_commit_params,
 )
+from app.utils.manifest import manifest_read_paths
 
 logger = structlog.get_logger(__name__)
+
+MAX_COMPARE_FILES = 300
 
 webhooks_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
@@ -920,19 +923,78 @@ async def is_eol_only_push(
     return await check_eol_only_change(repo, before, after)
 
 
-async def is_skip_ci_push(payload: dict[str, Any]) -> bool:
-    message = (payload.get("head_commit") or {}).get("message") or ""
-    if "[skip ci]" not in message:
+async def is_skip_ci_change(
+    repo: str, base: str, head: str, require_fast_forward: bool
+) -> bool:
+    client = get_github_client()
+    response = await client.request(
+        "get",
+        f"https://api.github.com/repos/{repo}/compare/{base}...{head}",
+        context={"repo": repo, "base": base, "head": head},
+    )
+    if response is None:
+        return False
+    comparison = response.json()
+    if require_fast_forward and comparison.get("status") != "ahead":
+        return False
+    commits = comparison.get("commits")
+    if (
+        not isinstance(commits, list)
+        or not commits
+        or comparison.get("total_commits") != len(commits)
+        or not all(
+            "[skip ci]" in ((commit.get("commit") or {}).get("message") or "")
+            for commit in commits
+        )
+    ):
+        return False
+    files = comparison.get("files")
+    if not isinstance(files, list) or len(files) >= MAX_COMPARE_FILES:
         return False
 
-    repo = payload["repository"]["full_name"]
-    sha = payload["after"]
-    response = await get_github_client().request(
-        "get",
-        f"https://api.github.com/repos/{repo}/commits/{sha}/pulls",
-        context={"repo": repo, "sha": sha},
+    read = await manifest_read_paths(client, repo, head, repo.split("/", 1)[1])
+    if read is None:
+        return False
+    changed = {
+        file[key]
+        for file in files
+        for key in ("filename", "previous_filename")
+        if file.get(key)
+    }
+    return not any(
+        path == read_path or path.startswith(f"{read_path}/")
+        for path in changed
+        for read_path in read
     )
-    return response is not None and response.json() == []
+
+
+async def is_skip_ci_pr(payload: dict[str, Any]) -> bool:
+    pr = payload["pull_request"]
+    base = normalize_git_oid(pr.get("base", {}).get("sha"))
+    head = normalize_git_oid(pr.get("head", {}).get("sha"))
+    if base is None or head is None:
+        return False
+    return await is_skip_ci_change(
+        payload["repository"]["full_name"], base, head, require_fast_forward=False
+    )
+
+
+async def handle_skip_ci_pr(payload: dict[str, Any]) -> None:
+    repo = payload["repository"]["full_name"]
+    sha = payload["pull_request"]["head"]["sha"]
+    await update_commit_status(
+        sha=sha,
+        state="success",
+        git_repo=repo,
+        description="[skip ci] - build skipped",
+    )
+    await update_commit_status(
+        sha=sha,
+        state="success",
+        git_repo=repo,
+        description="[skip ci] - permissions unchanged",
+        context=PERMISSION_STATUS_CONTEXT,
+    )
 
 
 async def handle_eol_only_pr(
@@ -1457,6 +1519,16 @@ async def receive_github_webhook(
                     "message": "EOL-only PR - build skipped",
                     "event_id": str(event.id),
                 }
+            if is_pr_event and not draft_lifecycle and await is_skip_ci_pr(payload):
+                if payload.get("action") == "synchronize":
+                    await cancel_automatic_pending_pr_builds(
+                        repo_name, payload["pull_request"]["number"]
+                    )
+                await handle_skip_ci_pr(payload)
+                return {
+                    "message": "[skip ci] PR - build skipped",
+                    "event_id": str(event.id),
+                }
             pipeline_id = await create_pipeline(event)
 
         except Exception as e:
@@ -1620,7 +1692,16 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             await handle_eol_only_push(event, ref, sha, eol_data)
             return None
 
-        if await is_skip_ci_push(payload):
+        if (
+            before is not None
+            and all(
+                "[skip ci]" in (commit.get("message") or "")
+                for commit in payload["commits"]
+            )
+            and await is_skip_ci_change(
+                event.repository, before, sha, require_fast_forward=True
+            )
+        ):
             logger.info("Skipping push build due to [skip ci]", repo=event.repository)
             return None
 
