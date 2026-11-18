@@ -27,7 +27,7 @@ on:
         required: true
       flat_manager_token:
         description: 'Repository token'
-        required: true
+        required: false
       build_url:
         description: 'Build ID'
         required: true
@@ -229,7 +229,7 @@ jobs:
 
           CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
           echo "::add-mask::$CALLBACK_TOKEN"
-          curl -fsS --retry-all-errors --retry 5 --retry-delay 10 \
+          curl -fsS -o /dev/null --retry-all-errors --retry 5 --retry-delay 10 \
             --retry-max-time 150 --connect-timeout 60 -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CALLBACK_TOKEN" \
@@ -377,9 +377,11 @@ jobs:
           echo "PR_TARGET_BRANCH=${{ inputs.pr_target_branch }}" >> $GITHUB_ENV
           echo "BUILD_URL=${{ inputs.build_url }}" >> $GITHUB_ENV
           echo "BUILD_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-          REPO_TOKEN="$(jq -r '.inputs.flat_manager_token' $GITHUB_EVENT_PATH)"
-          echo "::add-mask::$REPO_TOKEN"
-          echo "REPO_TOKEN=$REPO_TOKEN" >> $GITHUB_ENV
+          REPO_TOKEN="$(jq -r '.inputs.flat_manager_token // empty' $GITHUB_EVENT_PATH)"
+          if [[ -n "$REPO_TOKEN" ]]; then
+            echo "::add-mask::$REPO_TOKEN"
+            echo "REPO_TOKEN=$REPO_TOKEN" >> $GITHUB_ENV
+          fi
 
       - name: Create work directory
         run: |
@@ -539,7 +541,20 @@ jobs:
 
           test -f "$APP_ID_FILE" || { echo "Failed to find file $APP_ID_FILE"; exit 1; }
 
-          echo "APP_ID=$(cat $APP_ID_FILE)" >> $GITHUB_ENV
+          APP_ID="$(cat $APP_ID_FILE)"
+          echo "APP_ID=$APP_ID" >> $GITHUB_ENV
+
+          CALLBACK_TOKEN="$(jq -r '.inputs.callback_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$CALLBACK_TOKEN"
+          REPO_TOKEN="$(curl -fsS --retry-all-errors --retry 5 --retry-delay 10 \
+            --retry-max-time 150 --connect-timeout 60 -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CALLBACK_TOKEN" \
+            -d "$(jq -n --arg app_id "$APP_ID" '{app_id: $app_id}')" \
+            "${{ inputs.callback_url }}/metadata" | jq -r '.flat_manager_token // empty')"
+          test -n "$REPO_TOKEN" || { echo "No upload token returned for $APP_ID"; exit 1; }
+          echo "::add-mask::$REPO_TOKEN"
+          echo "REPO_TOKEN=$REPO_TOKEN" >> $GITHUB_ENV
 
       - name: Set up ORAS
         id: setup-oras

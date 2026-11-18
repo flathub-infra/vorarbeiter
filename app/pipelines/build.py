@@ -541,9 +541,10 @@ class BuildPipeline:
 
                     pipeline.build_id = build_id
 
-                    upload_token = await self.flat_manager.create_token_subset(
-                        build_id=build_id, app_id=pipeline.app_id
-                    )
+                    if pipeline.app_id != "flathub":
+                        upload_token = await self.flat_manager.create_token_subset(
+                            build_id=build_id, app_id=pipeline.app_id
+                        )
                 except Exception as e:
                     logger.exception(
                         "Failed to create build in flat-manager",
@@ -574,9 +575,10 @@ class BuildPipeline:
                     {
                         "build_url": self.flat_manager.get_build_url(pipeline.build_id),
                         "flat_manager_repo": flat_manager_repo,
-                        "flat_manager_token": upload_token,
                     }
                 )
+                if upload_token:
+                    inputs["flat_manager_token"] = upload_token
 
             if workflow_id == "reprocheck.yml":
                 build_pipeline_id = pipeline.params.get("build_pipeline_id")
@@ -694,6 +696,19 @@ class BuildPipeline:
             if parsed_data.end_of_life_rebase:
                 pipeline.end_of_life_rebase = parsed_data.end_of_life_rebase
                 updates["end_of_life_rebase"] = pipeline.end_of_life_rebase
+
+            if (
+                parsed_data.app_id
+                and (pipeline.params or {}).get("repo") == "flathub/flathub"
+            ):
+                if parsed_data.app_id != pipeline.app_id:
+                    raise ValueError("App ID does not match the pipeline app ID")
+                assert pipeline.build_id is not None
+                updates[
+                    "flat_manager_token"
+                ] = await self.flat_manager.create_token_subset(
+                    build_id=pipeline.build_id, app_id=pipeline.app_id
+                )
 
             await db.commit()
             return pipeline, updates
