@@ -19,7 +19,6 @@ dependencies = [
     "gql[requests]>=4.0.0,<5",
     "jinja2>=3.1.0",
     "pyyaml>=6.0.3",
-    "pygobject>=3.56.3",
     "httpx2>=2.9.1",
     "pyjwt[crypto]>=2.14.0",
     "procrastinate==3.11.0",

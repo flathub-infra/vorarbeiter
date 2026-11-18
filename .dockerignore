@@ -1,0 +1,9 @@
+*
+!alembic
+!alembic.ini
+!app
+!docker-entrypoint.sh
+!pyproject.toml
+!scripts
+!uv.lock
+**/__pycache__

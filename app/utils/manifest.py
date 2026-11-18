@@ -2,20 +2,27 @@ import base64
 import binascii
 import json
 import os
+import re
 from typing import Any
 
-import gi
 import structlog
 import yaml
-
-gi.require_version("Json", "1.0")
-from gi.repository import GLib, Json
 
 from app.utils.github import GitHubAPIClient
 
 logger = structlog.get_logger(__name__)
 
 MANIFEST_PRECEDENCE = {".json": 0, ".yaml": 1, ".yml": 2}
+_RELAXED_JSON_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\'([^\']*)\'|/\*.*?\*/', re.DOTALL)
+
+
+def _relaxed_json_token_to_json(match: re.Match[str]) -> str:
+    token = match.group(0)
+    if token.startswith('"'):
+        return token
+    if token.startswith("'"):
+        return json.dumps(match.group(1))
+    return " "
 
 
 def _yaml_scalar_text(content: str, key: str) -> str | None:
@@ -47,25 +54,14 @@ def _parse_manifest(filename: str, content: str) -> dict[str, Any]:
             )
             return {}
 
-    parser = Json.Parser()
     try:
-        parser.load_from_data(content, -1)
-    except GLib.Error as err:
-        logger.error(
-            "Failed to parse JSON manifest", filename=filename, error=err.message
+        result = json.loads(
+            _RELAXED_JSON_TOKEN.sub(
+                _relaxed_json_token_to_json, content.removeprefix("\ufeff")
+            )
         )
-        return {}
-
-    root = parser.get_root()
-    if root is None:
-        return {}
-
-    try:
-        result = json.loads(Json.to_string(root, False))
     except ValueError as err:
-        logger.error(
-            "Failed to convert JSON manifest", filename=filename, error=str(err)
-        )
+        logger.error("Failed to parse JSON manifest", filename=filename, error=str(err))
         return {}
 
     return result if isinstance(result, dict) else {}
