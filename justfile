@@ -100,6 +100,11 @@ checkout repo ref:
     git init
     git remote add origin {{repo}}
     git fetch --depth 1 origin {{ref}}
+    reserved=$(git ls-tree --name-only FETCH_HEAD -- repo builddir .flatpak-builder .flathub.justfile tmp .local app_id .ccache-marker)
+    if [ -n "$reserved" ]; then
+        echo "Repository contains paths reserved for the build: $reserved" >&2
+        exit 1
+    fi
     git checkout FETCH_HEAD
     git submodule update --init --recursive --depth 1
 
