@@ -920,6 +920,21 @@ async def is_eol_only_push(
     return await check_eol_only_change(repo, before, after)
 
 
+async def is_skip_ci_push(payload: dict[str, Any]) -> bool:
+    message = (payload.get("head_commit") or {}).get("message") or ""
+    if "[skip ci]" not in message:
+        return False
+
+    repo = payload["repository"]["full_name"]
+    sha = payload["after"]
+    response = await get_github_client().request(
+        "get",
+        f"https://api.github.com/repos/{repo}/commits/{sha}/pulls",
+        context={"repo": repo, "sha": sha},
+    )
+    return response is not None and response.json() == []
+
+
 async def handle_eol_only_pr(
     payload: dict[str, Any], eol_data: dict[str, str] | None
 ) -> None:
@@ -1603,6 +1618,10 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
         is_eol_only, eol_data = await is_eol_only_push(payload)
         if is_eol_only:
             await handle_eol_only_push(event, ref, sha, eol_data)
+            return None
+
+        if await is_skip_ci_push(payload):
+            logger.info("Skipping push build due to [skip ci]", repo=event.repository)
             return None
 
     elif "comment" in payload:

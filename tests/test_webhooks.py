@@ -1412,6 +1412,36 @@ async def test_is_eol_only_push_skips_zero_sha(mock_httpx):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "pulls", "expected"),
+    [
+        ("Fix typo [skip ci]", [], True),
+        ("Fix typo [skip ci]", [{"number": 7}], False),
+        ("Fix typo", [], False),
+    ],
+)
+async def test_is_skip_ci_push(message, pulls, expected, mock_httpx):
+    from app.routes.webhooks import is_skip_ci_push
+
+    payload = {**SAMPLE_PUSH_PAYLOAD, "head_commit": {"message": message}}
+    mock_httpx.set_response("request", json_data=pulls)
+
+    with mock_httpx.patch():
+        assert await is_skip_ci_push(payload) is expected
+
+
+@pytest.mark.asyncio
+async def test_is_skip_ci_push_builds_when_lookup_fails(mock_httpx):
+    from app.routes.webhooks import is_skip_ci_push
+
+    payload = {**SAMPLE_PUSH_PAYLOAD, "head_commit": {"message": "[skip ci]"}}
+    mock_httpx.set_response("request", side_effect=httpx.ConnectError("boom"))
+
+    with mock_httpx.patch(), patch("asyncio.sleep", AsyncMock()):
+        assert await is_skip_ci_push(payload) is False
+
+
+@pytest.mark.asyncio
 async def test_handle_eol_only_pr_satisfies_required_checks(mock_httpx):
     from app.routes.webhooks import handle_eol_only_pr
 
