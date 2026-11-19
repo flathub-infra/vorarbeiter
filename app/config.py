@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     sentry_dsn: str | None = None
     ff_build_diagnosis: bool = False
     ff_build_diagnosis_comments: bool = False
+    ff_auto_retry_cancelled_test_builds: bool = False
     llm_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""

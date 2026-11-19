@@ -1,7 +1,7 @@
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -439,6 +439,78 @@ async def test_notify_pr_build_complete_cancelled(github_notifier, mock_pipeline
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("auto_retry", "restart"),
+    [
+        ("started", "Restarting the build automatically."),
+        ("queued", "Restarting the build automatically when capacity is free."),
+    ],
+)
+async def test_notify_pr_build_complete_cancelled_auto_retry(
+    github_notifier, mock_pipeline, auto_retry, restart
+):
+    with (
+        patch(
+            "app.services.github_notifier.settings.ff_disable_admin_ping_comment",
+            False,
+        ),
+        patch("app.services.github_notifier.create_pr_comment") as mock_comment,
+    ):
+        await github_notifier.notify_pr_build_complete(
+            mock_pipeline, "cancelled", auto_retry=auto_retry
+        )
+
+        mock_comment.assert_called_once_with(
+            git_repo="flathub/org.test.App",
+            pr_number=42,
+            comment=(
+                "❌ [Test build](https://example.com/logs/123) was interrupted by an "
+                f"infrastructure problem. {restart}\n\n"
+                "<details><summary>Help</summary>\n\n"
+                "- <code>bot, build</code> - Restart the test build\n"
+                "- <code>bot, ping admins</code> - Contact Flathub admins\n"
+                "</details>"
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_notify_pr_build_started_skips_auto_retry(github_notifier, mock_pipeline):
+    mock_pipeline.params["auto_retried"] = True
+
+    with patch("app.services.github_notifier.create_pr_comment") as mock_comment:
+        await github_notifier.notify_pr_build_started(mock_pipeline, "http://log")
+
+        mock_comment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_build_completion_cancelled_auto_retry_skips_status(
+    github_notifier, mock_pipeline
+):
+    with (
+        patch.object(
+            github_notifier, "notify_build_status", new_callable=AsyncMock
+        ) as mock_status,
+        patch.object(
+            github_notifier, "notify_pr_build_complete", new_callable=AsyncMock
+        ) as mock_comment,
+        patch(
+            "app.services.github_notifier.BuildFailureIssueService.handle_result"
+        ) as mock_lifecycle,
+    ):
+        await github_notifier.handle_build_completion(
+            mock_pipeline, "cancelled", auto_retry="started"
+        )
+
+        mock_status.assert_not_called()
+        mock_lifecycle.assert_awaited_once_with(mock_pipeline, "cancelled")
+        mock_comment.assert_awaited_once_with(
+            mock_pipeline, "cancelled", auto_retry="started"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "log_url,build",
     [
         ("https://example.com/logs/123", "[Test build](https://example.com/logs/123)"),
@@ -535,7 +607,7 @@ async def test_handle_build_completion_failure_stable(github_notifier, mock_pipe
 
         mock_status.assert_called_once_with(mock_pipeline, "failure")
         mock_lifecycle.assert_awaited_once_with(mock_pipeline, "failure")
-        mock_pr.assert_called_once_with(mock_pipeline, "failure")
+        mock_pr.assert_called_once_with(mock_pipeline, "failure", auto_retry=None)
 
 
 @pytest.mark.asyncio

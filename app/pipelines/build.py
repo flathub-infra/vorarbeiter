@@ -7,7 +7,7 @@ import httpx2 as httpx
 import sentry_sdk
 import structlog
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -22,7 +22,12 @@ from app.utils.flat_manager import (
     get_flat_manager_client,
     get_flat_manager_repo,
 )
-from app.utils.github import validate_pipeline_commit_params
+from app.utils.github import (
+    get_github_client,
+    normalize_git_oid,
+    update_commit_status,
+    validate_pipeline_commit_params,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -67,6 +72,7 @@ FAST_BUILD_MIN_BUILDS = 3
 FAST_BUILD_LOOKBACK_DAYS = 90
 SPOT_BUILD_TYPES = ("medium", "large")
 PR_BUILD_DEBOUNCE_SECONDS = 300
+AutoRetryOutcome = Literal["started", "queued", "failed", "superseded"]
 
 
 async def get_app_p90_build_time(db: AsyncSession, app_id: str) -> float | None:
@@ -793,28 +799,158 @@ class BuildPipeline:
             )
             return False
 
-    async def _auto_retry_on_demand(self, pipeline: Pipeline) -> bool:
+    async def _should_auto_retry(self, pipeline: Pipeline) -> bool:
+        params = pipeline.params or {}
+        if params.get("repo") == "flathub/flathub":
+            return False
+        if not params.get("pr_number"):
+            return False
+        if params.get("workflow_id", "build.yml") != "build.yml":
+            return False
+        if settings.ff_disable_test_builds:
+            return False
+        if not await self._pr_accepts_retry(pipeline):
+            return False
+        return not await self._has_active_or_newer_pipeline(pipeline)
+
+    async def _pr_accepts_retry(self, pipeline: Pipeline) -> bool:
+        params = pipeline.params or {}
+        repo = params.get("repo")
+        try:
+            response = await get_github_client().request(
+                "get",
+                f"https://api.github.com/repos/{repo}/pulls/{params.get('pr_number')}",
+                context={"repo": repo, "pr_number": params.get("pr_number")},
+            )
+            if response is None:
+                return False
+            data = response.json()
+            if not isinstance(data, dict):
+                return False
+            head = data.get("head") or {}
+            return (
+                data.get("state") == "open"
+                and not data.get("draft")
+                and normalize_git_oid(head.get("sha")) == params.get("sha")
+            )
+        except Exception:
+            logger.exception(
+                "Failed to fetch pull request for auto-retry",
+                pipeline_id=str(pipeline.id),
+            )
+            return False
+
+    async def _has_active_or_newer_pipeline(self, pipeline: Pipeline) -> bool:
+        params = pipeline.params or {}
+        async with get_db() as db:
+            newer = await db.scalar(
+                select(Pipeline.id)
+                .where(
+                    Pipeline.params["repo"].as_string() == params.get("repo"),
+                    Pipeline.params["ref"].as_string() == params.get("ref"),
+                    or_(
+                        Pipeline.created_at > pipeline.created_at,
+                        Pipeline.status.in_(
+                            [PipelineStatus.PENDING, PipelineStatus.RUNNING]
+                        ),
+                    ),
+                )
+                .limit(1)
+            )
+        return newer is not None
+
+    async def _retry_on_demand(self, pipeline: Pipeline) -> AutoRetryOutcome:
+        params = {
+            key: value
+            for key, value in (pipeline.params or {}).items()
+            if key not in ("infra_cancelled", "verified_sha", "reprocheck_result")
+        }
+        params.update({"auto_retried": True, "use_spot": False})
         try:
             retry_pipeline = await self.create_pipeline(
-                app_id=pipeline.app_id,
-                params={**pipeline.params, "auto_retried": True, "use_spot": False},
-                actor=pipeline.actor,
+                app_id=pipeline.app_id, params=params, actor=pipeline.actor
             )
-            retry_pipeline = await self.start_pipeline(pipeline_id=retry_pipeline.id)
         except Exception as e:
             logger.exception(
-                "Failed to auto-retry cancelled build",
+                "Failed to create auto-retry pipeline",
                 pipeline_id=str(pipeline.id),
                 error=str(e),
             )
-            return False
+            return "failed"
+        outcome: AutoRetryOutcome = "started"
+        try:
+            if params.get("workflow_id", "build.yml") == "build.yml":
+                retry_pipeline = await self.prepare_pipeline_for_start(
+                    retry_pipeline.id
+                )
+                if retry_pipeline.status != PipelineStatus.PENDING:
+                    return "superseded"
+                await self.supersede_conflicting_test_pipelines(retry_pipeline.id)
+                retry_pipeline = await self.prepare_pipeline_for_start(
+                    retry_pipeline.id
+                )
+                if retry_pipeline.status != PipelineStatus.PENDING:
+                    return "superseded"
+                if await self.should_queue_test_build(retry_pipeline.id):
+                    await self._set_retry_enqueued_status(retry_pipeline)
+                    outcome = "queued"
+            if outcome == "started":
+                await self.start_pipeline(pipeline_id=retry_pipeline.id)
+        except Exception as e:
+            status = await self._cancel_retry(retry_pipeline.id)
+            if status == PipelineStatus.RUNNING:
+                return "started"
+            if status != PipelineStatus.PENDING:
+                return "superseded"
+            logger.exception(
+                "Failed to start auto-retry pipeline",
+                pipeline_id=str(pipeline.id),
+                retry_pipeline_id=str(retry_pipeline.id),
+                error=str(e),
+            )
+            return "failed"
         logger.info(
             "Auto-retrying cancelled build",
             original_pipeline_id=str(pipeline.id),
             retry_pipeline_id=str(retry_pipeline.id),
             flat_manager_repo=pipeline.flat_manager_repo,
+            outcome=outcome,
         )
-        return True
+        return outcome
+
+    @staticmethod
+    async def _cancel_retry(pipeline_id: uuid.UUID) -> PipelineStatus:
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id, with_for_update=True)
+            assert pipeline is not None
+            status = pipeline.status
+            if status == PipelineStatus.PENDING:
+                pipeline.status = PipelineStatus.CANCELLED
+                pipeline.finished_at = datetime.now(tz=UTC)
+                await db.commit()
+            return status
+
+    @staticmethod
+    async def _set_retry_enqueued_status(pipeline: Pipeline) -> None:
+        params = pipeline.params or {}
+        sha = params.get("sha")
+        git_repo = params.get("repo")
+        if not sha or not git_repo:
+            return
+        try:
+            await update_commit_status(
+                sha=sha,
+                state="pending",
+                git_repo=git_repo,
+                description="Build enqueued",
+                target_url=f"{settings.base_url}/api/pipelines/{pipeline.id}",
+            )
+        except Exception as e:
+            logger.exception(
+                "Failed to set commit status for enqueued auto-retry",
+                pipeline_id=str(pipeline.id),
+                error=str(e),
+            )
 
     async def handle_status_callback(
         self,
@@ -863,14 +999,18 @@ class BuildPipeline:
 
             await db.commit()
 
-            if (
-                infrastructure_cancellation
-                and pipeline.flat_manager_repo in ["stable", "beta"]
-                and not pipeline.params.get("auto_retried")
-                and await self._auto_retry_on_demand(pipeline)
-            ):
-                await self.start_pending_builds()
-                return pipeline, updates
+            auto_retry: AutoRetryOutcome | None = None
+            if infrastructure_cancellation and not pipeline.params.get("auto_retried"):
+                if pipeline.flat_manager_repo in ["stable", "beta"]:
+                    if await self._retry_on_demand(pipeline) in ("started", "queued"):
+                        await self.start_pending_builds()
+                        return pipeline, updates
+                elif (
+                    pipeline.flat_manager_repo == "test"
+                    and settings.ff_auto_retry_cancelled_test_builds
+                    and await self._should_auto_retry(pipeline)
+                ):
+                    auto_retry = await self._retry_on_demand(pipeline)
             if (
                 status_value == "success"
                 and pipeline.params.get("workflow_id", "build.yml") == "build.yml"
@@ -923,7 +1063,10 @@ class BuildPipeline:
             elif pipeline.params.get("workflow_id", "build.yml") == "build.yml":
                 github_notifier = GitHubNotifier()
                 await github_notifier.handle_build_completion(
-                    pipeline, status_value, flat_manager_client=None
+                    pipeline,
+                    status_value,
+                    flat_manager_client=None,
+                    auto_retry=auto_retry,
                 )
 
             updates["pipeline_status"] = status_value
@@ -948,7 +1091,7 @@ class BuildPipeline:
                     pipeline.status = PipelineStatus.CANCELLED
                     pipeline.finished_at = datetime.now(tz=UTC)
                     await db.commit()
-                    if await self._auto_retry_on_demand(pipeline):
+                    if await self._retry_on_demand(pipeline) in ("started", "queued"):
                         await self.start_pending_builds()
                         return pipeline, {"pipeline_status": status_value}
 

@@ -482,11 +482,12 @@ async def test_reprocheck_infrastructure_cancellation_retries_on_demand_once(
         "build_type": "medium",
         **({"auto_retried": True, "use_spot": False} if auto_retried else {}),
     }
+    stale = {"verified_sha": "a" * 40, "reprocheck_result": {"status_code": "1"}}
     reprocheck_pipeline = Pipeline(
         id=uuid.uuid4(),
         app_id=original_pipeline.app_id,
         status=PipelineStatus.RUNNING,
-        params=params,
+        params={**params, **stale},
         callback_token="reprocheck-token",
         created_at=datetime.now(UTC),
         triggered_by=PipelineTrigger.MANUAL,
@@ -504,6 +505,14 @@ async def test_reprocheck_infrastructure_cancellation_retries_on_demand_once(
         patch.object(
             BuildPipeline, "start_pipeline", new_callable=AsyncMock
         ) as start_pipeline,
+        patch.object(
+            BuildPipeline,
+            "supersede_conflicting_test_pipelines",
+            new_callable=AsyncMock,
+        ) as supersede,
+        patch.object(
+            BuildPipeline, "should_queue_test_build", new_callable=AsyncMock
+        ) as should_queue,
     ):
         start_pipeline.side_effect = lambda pipeline_id: Pipeline(id=pipeline_id)
         pipeline, updates = await BuildPipeline().handle_reprocheck_callback(
@@ -533,3 +542,5 @@ async def test_reprocheck_infrastructure_cancellation_retries_on_demand_once(
             "use_spot": False,
         }
         start_pipeline.assert_awaited_once_with(pipeline_id=retries[0].id)
+        supersede.assert_not_awaited()
+        should_queue.assert_not_awaited()

@@ -1,12 +1,13 @@
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines.build import BuildPipeline
@@ -894,6 +895,17 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
             patch.object(
                 build_pipeline, "start_pipeline", new_callable=AsyncMock
             ) as mock_start,
+            patch.object(
+                build_pipeline, "prepare_pipeline_for_start", new_callable=AsyncMock
+            ) as mock_prepare,
+            patch.object(
+                build_pipeline,
+                "supersede_conflicting_test_pipelines",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                build_pipeline, "should_queue_test_build", new_callable=AsyncMock
+            ) as mock_queue,
         ):
             retry_pipeline = Pipeline(
                 id=uuid.uuid4(),
@@ -906,6 +918,8 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
                 callback_token="test_token",
             )
             mock_create.return_value = retry_pipeline
+            mock_prepare.return_value = retry_pipeline
+            mock_queue.return_value = False
             mock_start.return_value = retry_pipeline
 
             pipeline, _updates = await build_pipeline.handle_status_callback(
@@ -958,6 +972,17 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
             patch.object(
                 build_pipeline, "start_pipeline", new_callable=AsyncMock
             ) as mock_start,
+            patch.object(
+                build_pipeline, "prepare_pipeline_for_start", new_callable=AsyncMock
+            ) as mock_prepare,
+            patch.object(
+                build_pipeline,
+                "supersede_conflicting_test_pipelines",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                build_pipeline, "should_queue_test_build", new_callable=AsyncMock
+            ) as mock_queue,
         ):
             retry_pipeline = Pipeline(
                 id=uuid.uuid4(),
@@ -970,6 +995,8 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
                 callback_token="test_token",
             )
             mock_create.return_value = retry_pipeline
+            mock_prepare.return_value = retry_pipeline
+            mock_queue.return_value = False
             mock_start.return_value = retry_pipeline
 
             pipeline, _updates = await build_pipeline.handle_status_callback(
@@ -987,6 +1014,568 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
     }
     assert call_args.kwargs["actor"] == sample_pipeline.actor
     assert sample_pipeline.params == original_params
+
+
+def _retry_pipeline(status=PipelineStatus.PENDING, params=None):
+    return Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=status,
+        params=params or {"auto_retried": True},
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="retry_token",
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_status_callback_auto_retry_test_cancelled(
+    build_pipeline, mock_db, sample_pipeline
+):
+    sample_pipeline.flat_manager_repo = "test"
+    sample_pipeline.actor = "contributor"
+    sample_pipeline.params = {
+        "repo": "flathub/test-app",
+        "ref": "refs/pull/7/head",
+        "sha": "a" * 40,
+        "base_sha": "b" * 40,
+        "pr_number": "7",
+        "start_after": 1.0,
+    }
+    mock_db.get.return_value = sample_pipeline
+    mock_db.flush = AsyncMock()
+    mock_get_db = create_mock_get_db(mock_db)
+    notifier = MagicMock()
+    notifier.handle_build_completion = AsyncMock()
+    retry_pipeline = _retry_pipeline()
+
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch.object(settings, "ff_auto_retry_cancelled_test_builds", True),
+        patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
+        patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled,
+        patch.object(
+            build_pipeline, "_pr_accepts_retry", new_callable=AsyncMock
+        ) as mock_pr,
+        patch.object(
+            build_pipeline, "_has_active_or_newer_pipeline", new_callable=AsyncMock
+        ) as mock_active,
+        patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create,
+        patch.object(
+            build_pipeline, "prepare_pipeline_for_start", new_callable=AsyncMock
+        ) as mock_prepare,
+        patch.object(
+            build_pipeline,
+            "supersede_conflicting_test_pipelines",
+            new_callable=AsyncMock,
+        ),
+        patch.object(
+            build_pipeline, "should_queue_test_build", new_callable=AsyncMock
+        ) as mock_queue,
+        patch.object(
+            build_pipeline, "start_pipeline", new_callable=AsyncMock
+        ) as mock_start,
+    ):
+        mock_check_cancelled.return_value = True
+        mock_pr.return_value = True
+        mock_active.return_value = False
+        mock_create.return_value = retry_pipeline
+        mock_prepare.return_value = retry_pipeline
+        mock_queue.return_value = False
+        mock_start.return_value = retry_pipeline
+
+        pipeline, _updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "failure"}
+        )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    retry_params = mock_create.call_args.kwargs["params"]
+    assert retry_params["auto_retried"] is True
+    assert retry_params["use_spot"] is False
+    assert "infra_cancelled" not in retry_params
+    assert retry_params["sha"] == "a" * 40
+    assert retry_params["pr_number"] == "7"
+    assert retry_params["start_after"] == 1.0
+    assert mock_create.call_args.kwargs["actor"] == "contributor"
+    mock_start.assert_awaited_once_with(pipeline_id=retry_pipeline.id)
+    notifier.handle_build_completion.assert_awaited_once_with(
+        sample_pipeline, "cancelled", flat_manager_client=None, auto_retry="started"
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_status_callback_auto_retry_chain_is_capped(
+    build_pipeline, mock_db, sample_pipeline
+):
+    sample_pipeline.flat_manager_repo = "test"
+    sample_pipeline.params = {
+        "repo": "flathub/test-app",
+        "ref": "refs/pull/7/head",
+        "sha": "a" * 40,
+        "pr_number": "7",
+        "auto_retried": True,
+    }
+    mock_db.get.return_value = sample_pipeline
+    mock_get_db = create_mock_get_db(mock_db)
+    notifier = MagicMock()
+    notifier.handle_build_completion = AsyncMock()
+
+    with (
+        patch("app.pipelines.build.get_db", mock_get_db),
+        patch.object(settings, "ff_auto_retry_cancelled_test_builds", True),
+        patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
+        patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
+        ) as mock_check_cancelled,
+        patch.object(
+            build_pipeline, "_should_auto_retry", new_callable=AsyncMock
+        ) as mock_should,
+        patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create,
+    ):
+        mock_check_cancelled.return_value = True
+
+        pipeline, _updates = await build_pipeline.handle_status_callback(
+            sample_pipeline.id, {"status": "failure"}
+        )
+
+    assert pipeline.status == PipelineStatus.CANCELLED
+    mock_should.assert_not_awaited()
+    mock_create.assert_not_awaited()
+    notifier.handle_build_completion.assert_awaited_once_with(
+        sample_pipeline, "cancelled", flat_manager_client=None, auto_retry=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_should_auto_retry_guards(build_pipeline):
+    base = {
+        "repo": "flathub/test-app",
+        "ref": "refs/pull/7/head",
+        "sha": "a" * 40,
+        "pr_number": "7",
+    }
+
+    def pipeline(params):
+        return Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.flathub.Test",
+            status=PipelineStatus.CANCELLED,
+            params=params,
+            created_at=datetime.now(UTC),
+            triggered_by=PipelineTrigger.WEBHOOK,
+            provider_data={},
+            callback_token="t",
+        )
+
+    with (
+        patch.object(
+            build_pipeline, "_pr_accepts_retry", new_callable=AsyncMock
+        ) as mock_pr,
+        patch.object(
+            build_pipeline, "_has_active_or_newer_pipeline", new_callable=AsyncMock
+        ) as mock_active,
+    ):
+        assert (
+            await build_pipeline._should_auto_retry(
+                pipeline({**base, "repo": "flathub/flathub"})
+            )
+            is False
+        )
+        assert (
+            await build_pipeline._should_auto_retry(pipeline({"repo": "flathub/x"}))
+            is False
+        )
+        assert (
+            await build_pipeline._should_auto_retry(
+                pipeline({**base, "workflow_id": "reprocheck.yml"})
+            )
+            is False
+        )
+        mock_pr.assert_not_awaited()
+
+        with patch.object(settings, "ff_disable_test_builds", True):
+            assert await build_pipeline._should_auto_retry(pipeline(base)) is False
+        mock_pr.assert_not_awaited()
+
+        mock_pr.return_value = False
+        assert await build_pipeline._should_auto_retry(pipeline(base)) is False
+
+        mock_pr.return_value = True
+        mock_active.return_value = True
+        assert await build_pipeline._should_auto_retry(pipeline(base)) is False
+
+        mock_active.return_value = False
+        assert await build_pipeline._should_auto_retry(pipeline(base)) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"state": "open", "draft": False, "head": {"sha": "a" * 40}}, True),
+        ({"state": "closed", "draft": False, "head": {"sha": "a" * 40}}, False),
+        ({"state": "open", "draft": True, "head": {"sha": "a" * 40}}, False),
+        ({"state": "open", "draft": False, "head": {"sha": "b" * 40}}, False),
+        ({"state": "open", "draft": False, "head": {}}, False),
+    ],
+)
+async def test_pr_accepts_retry_checks_state_draft_and_sha(
+    build_pipeline, payload, expected
+):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=PipelineStatus.CANCELLED,
+        params={
+            "repo": "flathub/test-app",
+            "ref": "refs/pull/7/head",
+            "sha": "a" * 40,
+            "pr_number": "7",
+        },
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="t",
+    )
+    response = MagicMock()
+    response.json.return_value = payload
+    client = MagicMock()
+    client.request = AsyncMock(return_value=response)
+
+    with patch("app.pipelines.build.get_github_client", return_value=client):
+        assert await build_pipeline._pr_accepts_retry(pipeline) is expected
+
+
+@pytest.mark.asyncio
+async def test_pr_accepts_retry_rejects_fetch_failure(build_pipeline):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=PipelineStatus.CANCELLED,
+        params={
+            "repo": "flathub/test-app",
+            "ref": "refs/pull/7/head",
+            "sha": "a" * 40,
+            "pr_number": "7",
+        },
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="t",
+    )
+    client = MagicMock()
+    client.request = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with patch("app.pipelines.build.get_github_client", return_value=client):
+        assert await build_pipeline._pr_accepts_retry(pipeline) is False
+
+
+@pytest.mark.asyncio
+async def test_retry_on_demand_queues_at_capacity(build_pipeline):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=PipelineStatus.CANCELLED,
+        params={
+            "repo": "flathub/test-app",
+            "ref": "refs/pull/7/head",
+            "sha": "a" * 40,
+            "pr_number": "7",
+            "infra_cancelled": True,
+        },
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="t",
+        actor="contributor",
+    )
+    retry_pipeline = _retry_pipeline(
+        params={"sha": "a" * 40, "repo": "flathub/test-app", "auto_retried": True}
+    )
+    enqueued = AsyncMock()
+
+    with (
+        patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create,
+        patch.object(
+            build_pipeline, "prepare_pipeline_for_start", new_callable=AsyncMock
+        ) as mock_prepare,
+        patch.object(
+            build_pipeline,
+            "supersede_conflicting_test_pipelines",
+            new_callable=AsyncMock,
+        ),
+        patch.object(
+            build_pipeline, "should_queue_test_build", new_callable=AsyncMock
+        ) as mock_queue,
+        patch.object(
+            build_pipeline, "start_pipeline", new_callable=AsyncMock
+        ) as mock_start,
+        patch.object(build_pipeline, "_set_retry_enqueued_status", new=enqueued),
+    ):
+        mock_create.return_value = retry_pipeline
+        mock_prepare.return_value = retry_pipeline
+        mock_queue.return_value = True
+
+        outcome = await build_pipeline._retry_on_demand(pipeline)
+
+    assert outcome == "queued"
+    assert "infra_cancelled" not in mock_create.call_args.kwargs["params"]
+    mock_start.assert_not_awaited()
+    enqueued.assert_awaited_once_with(retry_pipeline)
+
+
+@pytest.mark.asyncio
+async def test_retry_on_demand_cancels_retry_when_start_fails(build_pipeline):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=PipelineStatus.CANCELLED,
+        params={"repo": "flathub/test-app", "ref": "refs/pull/7/head", "sha": "a" * 40},
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="t",
+    )
+    retry_pipeline = _retry_pipeline()
+    cancel = AsyncMock(return_value=PipelineStatus.PENDING)
+
+    with (
+        patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create,
+        patch.object(
+            build_pipeline, "prepare_pipeline_for_start", new_callable=AsyncMock
+        ) as mock_prepare,
+        patch.object(
+            build_pipeline,
+            "supersede_conflicting_test_pipelines",
+            new_callable=AsyncMock,
+        ),
+        patch.object(
+            build_pipeline, "should_queue_test_build", new_callable=AsyncMock
+        ) as mock_queue,
+        patch.object(
+            build_pipeline, "start_pipeline", new_callable=AsyncMock
+        ) as mock_start,
+        patch.object(build_pipeline, "_cancel_retry", new=cancel),
+    ):
+        mock_create.return_value = retry_pipeline
+        mock_prepare.return_value = retry_pipeline
+        mock_queue.return_value = False
+        mock_start.side_effect = RuntimeError("dispatch failed")
+
+        outcome = await build_pipeline._retry_on_demand(pipeline)
+
+    assert outcome == "failed"
+    cancel.assert_awaited_once_with(retry_pipeline.id)
+
+
+@pytest.mark.asyncio
+async def test_retry_on_demand_keeps_retry_started_elsewhere(
+    db_session_maker, build_pipeline
+):
+    @asynccontextmanager
+    async def get_test_db(*, use_replica: bool = False):
+        async with db_session_maker() as db:
+            yield db
+            await db.commit()
+
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=PipelineStatus.CANCELLED,
+        params={"repo": "flathub/test-app", "ref": "refs/pull/7/head", "sha": "a" * 40},
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="t",
+    )
+    retry_pipeline = _retry_pipeline(status=PipelineStatus.RUNNING)
+    async with db_session_maker() as db:
+        db.add(retry_pipeline)
+        await db.commit()
+
+    with (
+        patch("app.pipelines.build.get_db", get_test_db),
+        patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create,
+        patch.object(
+            build_pipeline, "prepare_pipeline_for_start", new_callable=AsyncMock
+        ) as mock_prepare,
+        patch.object(
+            build_pipeline,
+            "supersede_conflicting_test_pipelines",
+            new_callable=AsyncMock,
+        ),
+        patch.object(
+            build_pipeline, "should_queue_test_build", new_callable=AsyncMock
+        ) as mock_queue,
+        patch.object(
+            build_pipeline, "start_pipeline", new_callable=AsyncMock
+        ) as mock_start,
+    ):
+        mock_create.return_value = retry_pipeline
+        mock_prepare.return_value = _retry_pipeline()
+        mock_prepare.return_value.id = retry_pipeline.id
+        mock_queue.return_value = False
+        mock_start.side_effect = ValueError("not in PENDING state")
+
+        outcome = await build_pipeline._retry_on_demand(pipeline)
+
+    assert outcome == "started"
+    async with db_session_maker() as db:
+        stored = await db.get(Pipeline, retry_pipeline.id)
+    assert stored.status == PipelineStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_retry_on_demand_reports_superseded(build_pipeline):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=PipelineStatus.CANCELLED,
+        params={"repo": "flathub/test-app", "ref": "refs/pull/7/head", "sha": "a" * 40},
+        created_at=datetime.now(UTC),
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="t",
+    )
+    pending = _retry_pipeline()
+    superseded = _retry_pipeline(status=PipelineStatus.SUPERSEDED)
+
+    with (
+        patch.object(
+            build_pipeline, "create_pipeline", new_callable=AsyncMock
+        ) as mock_create,
+        patch.object(
+            build_pipeline, "prepare_pipeline_for_start", new_callable=AsyncMock
+        ) as mock_prepare,
+        patch.object(
+            build_pipeline,
+            "supersede_conflicting_test_pipelines",
+            new_callable=AsyncMock,
+        ),
+        patch.object(
+            build_pipeline, "should_queue_test_build", new_callable=AsyncMock
+        ) as mock_queue,
+        patch.object(
+            build_pipeline, "start_pipeline", new_callable=AsyncMock
+        ) as mock_start,
+    ):
+        mock_create.return_value = pending
+        mock_prepare.side_effect = [pending, superseded]
+        mock_queue.return_value = False
+
+        outcome = await build_pipeline._retry_on_demand(pipeline)
+
+    assert outcome == "superseded"
+    mock_start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_has_active_or_newer_pipeline(db_session_maker, build_pipeline):
+    @asynccontextmanager
+    async def get_test_db(*, use_replica: bool = False):
+        async with db_session_maker() as db:
+            yield db
+            await db.commit()
+
+    created = datetime(2026, 11, 19, 12, 0, tzinfo=UTC)
+    subject = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=PipelineStatus.CANCELLED,
+        params={"repo": "flathub/test-app", "ref": "refs/pull/7/head"},
+        created_at=created,
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="t",
+    )
+
+    def row(created_at, status, ref="refs/pull/7/head"):
+        return Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.flathub.Test",
+            status=status,
+            params={"repo": "flathub/test-app", "ref": ref},
+            created_at=created_at,
+            triggered_by=PipelineTrigger.WEBHOOK,
+            provider_data={},
+            callback_token="t",
+        )
+
+    async def add(*rows):
+        async with db_session_maker() as db:
+            for item in rows:
+                db.add(item)
+            await db.commit()
+
+    with patch("app.pipelines.build.get_db", get_test_db):
+        await add(row(created - timedelta(minutes=5), PipelineStatus.COMMITTED))
+        assert await build_pipeline._has_active_or_newer_pipeline(subject) is False
+
+        await add(
+            row(
+                created + timedelta(minutes=1),
+                PipelineStatus.COMMITTED,
+                ref="refs/pull/8/head",
+            )
+        )
+        assert await build_pipeline._has_active_or_newer_pipeline(subject) is False
+
+        newer = row(created + timedelta(minutes=2), PipelineStatus.COMMITTED)
+        await add(newer)
+        assert await build_pipeline._has_active_or_newer_pipeline(subject) is True
+
+
+@pytest.mark.asyncio
+async def test_has_active_or_newer_pipeline_detects_running(
+    db_session_maker, build_pipeline
+):
+    @asynccontextmanager
+    async def get_test_db(*, use_replica: bool = False):
+        async with db_session_maker() as db:
+            yield db
+            await db.commit()
+
+    created = datetime(2026, 11, 19, 12, 0, tzinfo=UTC)
+    subject = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=PipelineStatus.CANCELLED,
+        params={"repo": "flathub/test-app", "ref": "refs/pull/7/head"},
+        created_at=created,
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="t",
+    )
+    running = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.flathub.Test",
+        status=PipelineStatus.RUNNING,
+        params={"repo": "flathub/test-app", "ref": "refs/pull/7/head"},
+        created_at=created - timedelta(minutes=3),
+        triggered_by=PipelineTrigger.WEBHOOK,
+        provider_data={},
+        callback_token="t",
+    )
+
+    async with db_session_maker() as db:
+        db.add(running)
+        await db.commit()
+
+    with patch("app.pipelines.build.get_db", get_test_db):
+        assert await build_pipeline._has_active_or_newer_pipeline(subject) is True
 
 
 @pytest.mark.asyncio
@@ -1023,6 +1612,7 @@ async def test_handle_status_callback_test_infrastructure_cancellation(
         sample_pipeline,
         "cancelled",
         flat_manager_client=None,
+        auto_retry=None,
     )
 
 
@@ -1058,7 +1648,7 @@ async def test_handle_status_callback_test_cancelled_does_not_retry(
     mock_check_cancelled.assert_awaited_once_with(sample_pipeline.provider_data)
     mock_create.assert_not_awaited()
     notifier.handle_build_completion.assert_awaited_once_with(
-        sample_pipeline, "cancelled", flat_manager_client=None
+        sample_pipeline, "cancelled", flat_manager_client=None, auto_retry=None
     )
 
 
@@ -1091,7 +1681,7 @@ async def test_handle_status_callback_test_cancellation_check_error_does_not_ret
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_not_awaited()
     notifier.handle_build_completion.assert_awaited_once_with(
-        sample_pipeline, "cancelled", flat_manager_client=None
+        sample_pipeline, "cancelled", flat_manager_client=None, auto_retry=None
     )
 
 

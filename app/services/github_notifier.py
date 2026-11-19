@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -20,6 +20,9 @@ from app.utils.github import (
     get_linter_warning_messages,
     update_commit_status,
 )
+
+if TYPE_CHECKING:
+    from app.pipelines.build import AutoRetryOutcome
 
 logger = structlog.get_logger(__name__)
 
@@ -124,6 +127,9 @@ class GitHubNotifier:
         pipeline: Pipeline,
         log_url: str,
     ) -> None:
+        if pipeline.params.get("auto_retried"):
+            return
+
         pr_number_str = pipeline.params.get("pr_number")
         git_repo = pipeline.params.get("repo")
 
@@ -161,6 +167,7 @@ class GitHubNotifier:
         self,
         pipeline: Pipeline,
         status: str,
+        auto_retry: "AutoRetryOutcome | None" = None,
     ) -> None:
         pr_number_str = pipeline.params.get("pr_number")
         git_repo = pipeline.params.get("repo")
@@ -257,7 +264,18 @@ class GitHubNotifier:
                     if until is not None:
                         comment += f"\n\n{format_penalty_notice(until)}"
             elif status == "cancelled":
-                comment = f"❌ [Test build]({log_url}) was cancelled.\n\n{footnote}"
+                if auto_retry in ("started", "queued"):
+                    restart = "Restarting the build automatically."
+                    if auto_retry == "queued":
+                        restart = (
+                            "Restarting the build automatically when capacity is free."
+                        )
+                    comment = (
+                        f"❌ [Test build]({log_url}) was interrupted by an "
+                        f"infrastructure problem. {restart}\n\n{footnote}"
+                    )
+                else:
+                    comment = f"❌ [Test build]({log_url}) was cancelled.\n\n{footnote}"
             elif status == "commit_failure":
                 status = "failure"
                 comment = (
@@ -470,19 +488,20 @@ class GitHubNotifier:
         pipeline: Pipeline,
         status: str,
         flat_manager_client: FlatManagerClient | None = None,
+        auto_retry: "AutoRetryOutcome | None" = None,
     ) -> None:
         if flat_manager_client:
             self.flat_manager = flat_manager_client
 
         if status == "success" and pipeline.params.get("pr_number"):
             await self.notify_build_status(pipeline, "committing")
-        else:
+        elif auto_retry not in ("started", "queued"):
             await self.notify_build_status(pipeline, status)
 
         await BuildFailureIssueService().handle_result(pipeline, status)
 
         if pipeline.params.get("pr_number") and status != "success":
-            await self.notify_pr_build_complete(pipeline, status)
+            await self.notify_pr_build_complete(pipeline, status, auto_retry=auto_retry)
 
     async def handle_build_started(
         self,
