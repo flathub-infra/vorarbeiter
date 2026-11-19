@@ -360,7 +360,7 @@ jobs:
     permissions:
       packages: write
     steps:
-      - uses: runs-on/action@v2.7.0
+      - uses: runs-on/action@v2.7.1
         if: ${{ inputs.build_type != 'default' }}
         with:
           show_costs: summary
