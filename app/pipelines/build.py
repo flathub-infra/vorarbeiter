@@ -1007,7 +1007,6 @@ class BuildPipeline:
                         return pipeline, updates
                 elif (
                     pipeline.flat_manager_repo == "test"
-                    and settings.ff_auto_retry_cancelled_test_builds
                     and await self._should_auto_retry(pipeline)
                 ):
                     auto_retry = await self._retry_on_demand(pipeline)

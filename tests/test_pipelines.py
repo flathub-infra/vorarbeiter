@@ -1052,7 +1052,6 @@ async def test_handle_status_callback_auto_retry_test_cancelled(
 
     with (
         patch("app.pipelines.build.get_db", mock_get_db),
-        patch.object(settings, "ff_auto_retry_cancelled_test_builds", True),
         patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
         patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
@@ -1127,7 +1126,6 @@ async def test_handle_status_callback_auto_retry_chain_is_capped(
 
     with (
         patch("app.pipelines.build.get_db", mock_get_db),
-        patch.object(settings, "ff_auto_retry_cancelled_test_builds", True),
         patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
         patch(
             "app.services.github_actions.GitHubActionsService.check_run_was_cancelled"
