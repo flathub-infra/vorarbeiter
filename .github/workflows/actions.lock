@@ -6,7 +6,7 @@ workflows:
     '.github/workflows/build.yml':
         - 'actions/checkout@v7.0.1'
         - 'oras-project/setup-oras@v2.0.3'
-        - 'runs-on/action@v2.7.0'
+        - 'runs-on/action@v2.7.1'
     '.github/workflows/ci.yml':
         - 'actions/checkout@v7.0.1'
         - 'astral-sh/setup-uv@v10.3.3'
@@ -48,8 +48,8 @@ dependencies:
         commit: 'sha1-5e2f2482b30b0cb3e14e67f89a80c88c659a7c63'
         owner_id: 81890686
         repo_id: 590286646
-    'runs-on/action@v2.7.0':
-        ref: 'v2.7.0'
-        commit: 'sha1-13fbb6a39310a0dac9ab4716da2c4e74a3326dfc'
+    'runs-on/action@v2.7.1':
+        ref: 'v2.7.1'
+        commit: 'sha1-4a3bfc79f21a9b97e972e2ba75a2b0b1e9688670'
         owner_id: 150241074
         repo_id: 905733180
