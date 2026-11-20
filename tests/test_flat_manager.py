@@ -378,6 +378,18 @@ class TestMiscellaneous:
         ]
 
     @pytest.mark.asyncio
+    async def test_create_token_subset_bundled_extension(
+        self, flat_manager_client, mock_httpx
+    ):
+        mock_httpx.set_response("request", json_data={"token": "new_token_12345"})
+        await flat_manager_client.create_token_subset("12345", "org.stochas.Stochas")
+
+        assert mock_httpx.request.call_args.kwargs["json"]["prefixes"] == [
+            "org.stochas.Stochas",
+            "org.freedesktop.LinuxAudio.Plugins.Stochas",
+        ]
+
+    @pytest.mark.asyncio
     async def test_get_build_info_success(self, flat_manager_client, mock_httpx):
         mock_httpx.set_response(
             "request",

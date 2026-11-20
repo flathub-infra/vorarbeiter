@@ -8,6 +8,15 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+bundled_extension_prefixes = {
+    "com.chowdsp.BYOD": ["org.freedesktop.LinuxAudio.Plugins.BYOD"],
+    "com.thewavewarden.Odin2": ["org.freedesktop.LinuxAudio.Plugins.Odin2"],
+    "net.sonobus.SonoBus": ["org.freedesktop.LinuxAudio.Plugins.SonoBus"],
+    "org.guitarix.Guitarix": ["org.freedesktop.LinuxAudio.Plugins.Guitarix"],
+    "org.stochas.Stochas": ["org.freedesktop.LinuxAudio.Plugins.Stochas"],
+    "org.surge_synth_team.surge-xt": ["org.freedesktop.LinuxAudio.Plugins.Surge-XT"],
+}
+
 
 def get_flat_manager_repo(ref: str | None) -> str:
     if ref == "refs/heads/master":
@@ -162,7 +171,15 @@ class FlatManagerClient:
                 "name": "upload",
                 "sub": f"build/{build_id}",
                 "scope": ["upload"],
-                "prefixes": list(dict.fromkeys([app_id, app_id.replace("-", "_")])),
+                "prefixes": list(
+                    dict.fromkeys(
+                        [
+                            app_id,
+                            app_id.replace("-", "_"),
+                            *bundled_extension_prefixes.get(app_id, []),
+                        ]
+                    )
+                ),
                 "duration": 24 * 60 * 60,
             },
         )
