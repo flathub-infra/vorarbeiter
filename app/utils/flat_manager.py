@@ -129,8 +129,10 @@ class FlatManagerClient:
     async def close(self) -> None:
         await self.client.aclose()
 
-    async def create_build(self, repo: str, build_log_url: str) -> BuildResponse:
-        logger.debug("Creating build in flat-manager", repo=repo)
+    async def create_build(
+        self, repo: str, build_log_url: str, app_id: str | None = None
+    ) -> BuildResponse:
+        logger.debug("Creating build in flat-manager", repo=repo, app_id=app_id)
         try:
             response = await self._request(
                 "POST",
@@ -138,6 +140,7 @@ class FlatManagerClient:
                 json={
                     "repo": repo,
                     "build-log-url": build_log_url,
+                    **({"app-id": app_id, "public-download": True} if app_id else {}),
                 },
             )
             data: BuildResponse = response.json()

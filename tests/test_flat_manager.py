@@ -85,6 +85,20 @@ class TestCreateBuild:
         )
 
     @pytest.mark.asyncio
+    async def test_create_build_with_app_id(self, flat_manager_client, mock_httpx):
+        mock_httpx.set_response("request", json_data={"id": 12345})
+        await flat_manager_client.create_build(
+            "stable", "https://build.log/url", app_id="org.test.App"
+        )
+
+        assert mock_httpx.request.call_args.kwargs["json"] == {
+            "repo": "stable",
+            "build-log-url": "https://build.log/url",
+            "app-id": "org.test.App",
+            "public-download": True,
+        }
+
+    @pytest.mark.asyncio
     async def test_create_build_http_error(self, flat_manager_client, mock_httpx):
         error_response = MagicMock()
         error_response.status_code = 403

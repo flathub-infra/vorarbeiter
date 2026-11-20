@@ -536,7 +536,11 @@ class BuildPipeline:
             if requires_flat_manager:
                 try:
                     build_data = await self.flat_manager.create_build(
-                        repo=flat_manager_repo, build_log_url=build_log_url
+                        repo=flat_manager_repo,
+                        build_log_url=build_log_url,
+                        app_id=None
+                        if pipeline.app_id == "flathub"
+                        else pipeline.app_id,
                     )
 
                     build_id = build_data.get("id")
