@@ -22,6 +22,7 @@ class FakeGitHubClient:
         self.comments: list[str] = []
         self.posts: list[str] = []
         self.post_retries: list[int | None] = []
+        self.closed: list[tuple[str, dict]] = []
         self.lookups = 0
         self.lookup_failures = 0
         self.lose_post_response = False
@@ -30,6 +31,9 @@ class FakeGitHubClient:
         self.delay = 0.01
 
     async def request(self, method, url, **kwargs):
+        if method == "patch":
+            self.closed.append((url, kwargs["json"]))
+            return MagicMock()
         assert method == "get"
         self.lookups += 1
         await asyncio.sleep(self.delay)
@@ -274,11 +278,13 @@ async def test_webhook_posts_label_response_for_flathub_submission():
         patch(
             "app.routes.webhooks.respond_to_label", AsyncMock(return_value=True)
         ) as respond,
+        patch("app.routes.webhooks.close_github_issue", AsyncMock()) as close,
     ):
         response = await deliver(labeled_payload())
 
     assert response.status_code == 202
     respond.assert_awaited_once_with("flathub/flathub", 123, "too-new")
+    close.assert_awaited_once_with("flathub/flathub", 123)
 
 
 @pytest.mark.asyncio
@@ -296,6 +302,9 @@ async def test_redelivered_webhook_posts_once():
 
     assert (first.status_code, second.status_code) == (202, 202)
     assert len(client.posts) == 1
+    assert [url for url, _ in client.closed] == [
+        "https://api.github.com/repos/flathub/flathub/issues/123"
+    ] * 2
 
 
 @pytest.mark.asyncio

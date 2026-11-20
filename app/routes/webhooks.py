@@ -1399,6 +1399,8 @@ async def receive_github_webhook(
             and label in LABEL_RESPONSES
         ):
             posted = await respond_to_label(repo_name, pr_number, label)
+            if posted:
+                await close_github_issue(repo_name, pr_number)
             return {
                 "message": "Label response posted."
                 if posted
