@@ -144,15 +144,19 @@ async def test_repeated_callback_defers_none(db_session_maker, connector):
 
 
 @pytest.mark.asyncio
-async def test_submission_pull_request_defers_none(db_session_maker, connector):
+async def test_submission_pull_request_defers_one_job(db_session_maker, connector):
     pipeline_id = await failure_callback(
         db_session_maker,
         params={"repo": "flathub/flathub", "pr_number": "42"},
     )
 
-    assert connector.jobs == {}
+    jobs = list(connector.jobs.values())
+    assert [(j["task_name"], j["queue_name"]) for j in jobs] == [
+        ("app.tasks.diagnose_build", "build-diagnosis")
+    ]
+    assert jobs[0]["args"] == {"pipeline_id": str(pipeline_id)}
     async with db_session_maker() as db:
-        assert await db.get(BuildDiagnosis, pipeline_id) is None
+        assert await db.get(BuildDiagnosis, pipeline_id) is not None
         pipeline = await db.get(Pipeline, pipeline_id)
     assert pipeline is not None
     assert pipeline.status == PipelineStatus.FAILED

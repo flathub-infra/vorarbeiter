@@ -578,13 +578,6 @@ def github_repo_name(url: Any) -> str | None:
 
 
 async def enqueue_diagnosis(db: AsyncSession, pipeline: Pipeline) -> None:
-    params = pipeline.params or {}
-    if params.get("repo") == "flathub/flathub" and params.get("pr_number") is not None:
-        logger.info(
-            "Skipping build diagnosis for submission pull request",
-            pipeline_id=str(pipeline.id),
-        )
-        return
     try:
         async with db.begin_nested():
             db.add(BuildDiagnosis(pipeline_id=pipeline.id))
