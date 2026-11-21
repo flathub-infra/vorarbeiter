@@ -148,8 +148,9 @@ CATEGORY_QUESTION = ChoiceQuestion(
         "source-download": "A source could not be downloaded because the source host "
         "timed out or dropped the connection.",
         "missing-dependency": "Something the build needs is not available: a library, "
-        "a tool or toolchain version, an SDK extension, an included manifest, or a "
-        "package missing from vendored or generated offline sources.",
+        "a tool or toolchain version, an SDK extension, an included manifest, a git "
+        "tag, branch, or commit that the manifest names but the source repository "
+        "lacks, or a package missing from vendored or generated offline sources.",
         "compile-error": "The compiler or a build tool rejected the code, or a patch "
         "did not apply.",
         "linter": "The Flathub linter, AppStream validation, desktop-file validation, "
@@ -157,7 +158,8 @@ CATEGORY_QUESTION = ChoiceQuestion(
         "test-failure": "The project's own tests failed.",
         "out-of-resources": "Out of memory, disk space, or time.",
         "infrastructure": "The runner, the network, or a remote host failed, and the "
-        "app is not at fault: a connection timeout, a missing pull request ref.",
+        "app is not at fault: a connection timeout, a missing pull request ref. A "
+        "revision named in the manifest is never infrastructure.",
         "unknown": "None of the above fit, or the evidence does not show the cause.",
     },
 )
