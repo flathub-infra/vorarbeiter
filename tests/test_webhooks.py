@@ -5258,7 +5258,9 @@ async def test_penalty_rejected_bot_build_creates_no_explicit_pipeline(
 
 @pytest.mark.parametrize("repos, expected", [(["stable"], 1), ([], 0)])
 @pytest.mark.asyncio
-async def test_edited_base_posts_pending_status(db_session_maker, repos, expected):
+async def test_edited_base_enqueues_permission_review(
+    db_session_maker, repos, expected, deferred
+):
     from starlette.requests import Request
 
     from app.routes.webhooks import receive_github_webhook
@@ -5284,20 +5286,18 @@ async def test_edited_base_posts_pending_status(db_session_maker, repos, expecte
             patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
             patch("app.routes.webhooks.settings.github_webhook_secret", ""),
             patch.object(settings, "permission_status_repos", repos),
-            patch(
-                "app.services.permission_assessment.update_commit_status", AsyncMock()
-            ) as status,
         ):
             request = Request({"type": "http", "headers": []}, receive)
             await receive_github_webhook(
                 request, x_github_delivery=str(uuid.uuid4()), x_hub_signature_256=None
             )
 
-    assert status.await_count == expected
+    assert deferred.await_count == expected
     if expected:
-        assert status.await_args is not None
-        assert status.await_args.args[:3] == (
-            "c" * 40,
-            "pending",
-            "test-owner/test-repo",
-        )
+        assert deferred.await_args is not None
+        assert deferred.await_args.args[1] == "app.tasks.refresh_permission_review"
+        assert deferred.await_args.kwargs == {
+            "lock": "permission-review:test-owner/test-repo:42",
+            "source_repository": "test-owner/test-repo",
+            "pull_request_number": 42,
+        }

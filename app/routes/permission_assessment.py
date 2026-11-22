@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import settings
-from app.services.permission_assessment import refresh_permission_review
+from app.services.permission_assessment import enqueue_permission_review
 
 logger = structlog.get_logger(__name__)
 
@@ -68,7 +68,7 @@ async def permission_decision(
     notification: PermissionDecisionNotification,
 ) -> Response:
     try:
-        await refresh_permission_review(
+        await enqueue_permission_review(
             notification.source_repository, notification.pull_request_number
         )
     except Exception as exc:

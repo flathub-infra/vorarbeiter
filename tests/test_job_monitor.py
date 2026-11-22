@@ -383,7 +383,7 @@ async def test_check_and_update_pipeline_jobs_keeps_running_when_github_jobs_una
 
 @pytest.mark.asyncio
 async def test_monitor_drains_due_pending_builds_when_no_active_pipelines(
-    db_session_maker,
+    db_session_maker, deferred
 ):
     now = datetime.now(UTC).timestamp()
     due = Pipeline(
@@ -411,16 +411,19 @@ async def test_monitor_drains_due_pending_builds_when_no_active_pipelines(
 
     from app.pipelines.build import BuildPipeline
 
+    with patch.object(BuildPipeline, "start_pipeline", side_effect=start_pending):
+        async with db_session_maker() as db:
+            result = await JobMonitor(db=db).check_all_active_pipelines(db)
+
+    assert result == {"checked_pipelines": 0, "updated_pipelines": 0}
+    assert deferred.await_args.args[1] == "app.tasks.start_pending_builds"
     with (
         patch("app.pipelines.build.settings.max_concurrent_builds", 0),
         patch.object(
             BuildPipeline, "start_pipeline", side_effect=start_pending
         ) as start,
     ):
-        async with db_session_maker() as db:
-            result = await JobMonitor(db=db).check_all_active_pipelines(db)
-
-    assert result == {"checked_pipelines": 0, "updated_pipelines": 0}
+        await BuildPipeline().start_pending_builds()
     start.assert_awaited_once_with(due.id)
     async with db_session_maker() as db:
         assert (await db.get(Pipeline, due.id)).status == PipelineStatus.RUNNING
@@ -429,7 +432,7 @@ async def test_monitor_drains_due_pending_builds_when_no_active_pipelines(
 
 @pytest.mark.asyncio
 async def test_check_jobs_cancels_timed_out_running_builds(
-    db_session_maker, run_check_all_active_pipelines
+    db_session_maker, run_check_all_active_pipelines, deferred
 ):
     session_maker = db_session_maker
     now = datetime.now(tz=UTC)
@@ -489,25 +492,23 @@ async def test_check_jobs_cancels_timed_out_running_builds(
         }
         return [github_build_job(started_at_by_run_id[run_id])]
 
-    async def assert_expired_spot_build_committed():
+    async def assert_expired_spot_build_committed(*args, **kwargs):
         async with session_maker() as session:
             refreshed = await session.get(Pipeline, extended_expired.id)
             assert refreshed.status == PipelineStatus.CANCELLED
-        return []
+        return True
 
-    with (
-        patch(
-            "app.services.github_actions.GitHubActionsService.get_workflow_run_jobs",
-            side_effect=get_workflow_run_jobs,
-        ),
-        patch("app.pipelines.build.BuildPipeline.start_pending_builds") as mock_start,
+    deferred.side_effect = assert_expired_spot_build_committed
+    with patch(
+        "app.services.github_actions.GitHubActionsService.get_workflow_run_jobs",
+        side_effect=get_workflow_run_jobs,
     ):
-        mock_start.side_effect = assert_expired_spot_build_committed
         result = await run_check_all_active_pipelines(session_maker)
 
     assert result["checked_pipelines"] == 4
     assert result["updated_pipelines"] == 3
-    mock_start.assert_awaited_once()
+    deferred.assert_awaited_once()
+    assert deferred.await_args.args[1] == "app.tasks.start_pending_builds"
 
     async with session_maker() as session:
         refreshed_default = await session.get(Pipeline, default_expired.id)

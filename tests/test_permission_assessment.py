@@ -147,6 +147,18 @@ def configured():
         yield
 
 
+@pytest.fixture(autouse=True)
+def run_queued_refresh(deferred):
+    async def run(db, task, **kwargs):
+        if task == permission_assessment.REFRESH_PERMISSION_REVIEW_TASK:
+            await permission_assessment.refresh_permission_review(
+                kwargs["source_repository"], kwargs["pull_request_number"]
+            )
+        return True
+
+    deferred.side_effect = run
+
+
 def build_info(refs=("app/org.test.App/x86_64/stable",), published_state=0):
     return {
         "build": {"published_state": published_state},
@@ -1247,25 +1259,62 @@ async def test_late_rationale_updates_existing_report(
 
 
 @pytest.mark.asyncio
-async def test_github_failure_returns_503_and_keeps_refreshed_state(
-    configured, local_db, db_session_maker, gh, api
+async def test_github_failure_keeps_refreshed_state_and_fails_the_task(
+    configured, local_db, db_session_maker, gh
 ):
     pipeline = submitted()
     await add(db_session_maker, pipeline, make_pipeline(params={"pr_number": "7"}))
     gh.status.return_value = False
+    repository = "flathub/org.test.App"
 
     with mock_http(Backend(outcome="rejected", decision_id=3)):
-        assert (await notify(api)).status_code == 503
+        with pytest.raises(RuntimeError, match="Failed to report"):
+            await permission_assessment.refresh_permission_review(repository, 42)
         state = (await load(db_session_maker, pipeline.id)).provider_data[
             PROVIDER_DATA_KEY
         ]
         assert (state["outcome"], state["decision_id"]) == ("rejected", 3)
         assert "reported" not in state
         gh.status.return_value = True
-        assert (await notify(api)).status_code == 204
-        assert (await notify(api, pull_request_number=7)).status_code == 204
+        await permission_assessment.refresh_permission_review(repository, 42)
+        await permission_assessment.refresh_permission_review(repository, 7)
 
     assert gh.status.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_notification_only_queues_the_refresh(
+    configured, local_db, db_session_maker, gh, api, deferred
+):
+    await add(db_session_maker, submitted())
+    deferred.side_effect = None
+
+    assert (await notify(api)).status_code == 204
+
+    deferred.assert_awaited_once()
+    assert deferred.await_args.args[1] == "app.tasks.refresh_permission_review"
+    assert deferred.await_args.kwargs == {
+        "lock": "permission-review:flathub/org.test.App:42",
+        "source_repository": "flathub/org.test.App",
+        "pull_request_number": 42,
+    }
+    gh.status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_assessment_task_retries_only_failed_submissions(configured):
+    from app import tasks
+
+    pipeline_id = uuid.uuid4()
+    with patch.object(
+        permission_assessment,
+        "submit_pipeline_assessment",
+        AsyncMock(side_effect=["failed", "submitted", None, "skipped"]),
+    ):
+        with pytest.raises(permission_assessment.PermissionAssessmentPending):
+            await tasks.submit_pipeline_assessment(str(pipeline_id))
+        for _ in range(3):
+            await tasks.submit_pipeline_assessment(str(pipeline_id))
 
 
 @pytest.mark.parametrize(
@@ -1306,8 +1355,8 @@ async def test_notification_without_configuration_is_unavailable(api):
 
 
 @pytest.mark.asyncio
-async def test_commit_submits_assessment_immediately(
-    configured, local_db, db_session_maker, gh
+async def test_commit_queues_assessment_after_the_commit(
+    configured, local_db, db_session_maker, gh, deferred
 ):
     committed = make_pipeline(status=PipelineStatus.SUCCEEDED)
     running = make_pipeline(status=PipelineStatus.SUCCEEDED, commit_job_id=1)
@@ -1347,6 +1396,16 @@ async def test_commit_submits_assessment_immediately(
         for _ in range(2):
             async with db_session_maker() as db:
                 await JobMonitor(db=db).check_all_active_pipelines(db)
+        queued = [
+            call
+            for call in deferred.await_args_list
+            if call.args[1] == "app.tasks.submit_pipeline_assessment"
+        ]
+        assert [call.kwargs for call in queued] == [
+            {"lock": f"assessment:{committed.id}", "pipeline_id": str(committed.id)}
+        ]
+        assert statuses == []
+        await submit_pipeline_assessment(committed.id)
 
     assert statuses == [PipelineStatus.COMMITTED]
     state = (await load(db_session_maker, committed.id)).provider_data[

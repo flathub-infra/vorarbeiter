@@ -316,6 +316,8 @@ async def test_status_callback_drains_due_persisted_pipelines_in_queue_order(
     ):
         await build.handle_status_callback(completed.id, {"status": "success"})
         await finish_deferred_build(build, deferred)
+        assert deferred.await_args.args[1] == "app.tasks.start_pending_builds"
+        await build.start_pending_builds()
 
     assert started_ids == sorted(row.id for row in pending)
     async with db_session_maker() as db:
@@ -342,7 +344,8 @@ async def test_handle_status_callback_success(
 
     assert pipeline.status == PipelineStatus.SUCCEEDED
     assert pipeline.finished_at is not None
-    build_pipeline.start_pending_builds.assert_awaited_once()
+    assert deferred.await_args.args[1] == "app.tasks.start_pending_builds"
+    assert deferred.await_args.kwargs == {"lock": "start-pending"}
 
 
 @pytest.mark.asyncio

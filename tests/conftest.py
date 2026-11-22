@@ -46,7 +46,12 @@ def deferred(request):
     if "connector" in request.fixturenames:
         yield None
         return
-    with patch("app.pipelines.build.defer", AsyncMock(return_value=True)) as stub:
+    stub = AsyncMock(return_value=True)
+    with (
+        patch("app.pipelines.build.defer", stub),
+        patch("app.services.job_monitor.defer", stub),
+        patch("app.services.permission_assessment.defer", stub),
+    ):
         yield stub
 
 

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
 from app.services.github_actions import GitHubActionsService
+from app.services.task_queue import defer
 from app.utils.flat_manager import (
     JobKind,
     JobResponse,
@@ -179,20 +180,18 @@ class JobMonitor:
         ):
             await db.commit()
 
-        from app.pipelines.build import BuildPipeline
-        from app.services.permission_assessment import submit_pipeline_assessment
+        from app.pipelines.build import defer_start_pending
+        from app.services.permission_assessment import SUBMIT_ASSESSMENT_TASK
 
-        try:
-            await BuildPipeline().start_pending_builds()
-        finally:
-            for pipeline_id in committed:
-                try:
-                    await submit_pipeline_assessment(pipeline_id)
-                except Exception:
-                    logger.exception(
-                        "Failed to submit permission assessment after commit",
-                        pipeline_id=str(pipeline_id),
-                    )
+        await defer_start_pending(db)
+        for pipeline_id in committed:
+            await defer(
+                db,
+                SUBMIT_ASSESSMENT_TASK,
+                lock=f"assessment:{pipeline_id}",
+                pipeline_id=str(pipeline_id),
+            )
+        await db.commit()
 
         return {
             "checked_pipelines": len(pipelines),

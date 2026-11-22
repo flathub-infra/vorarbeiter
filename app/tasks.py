@@ -4,7 +4,7 @@ from procrastinate import JobContext, RetryStrategy, builtin_tasks
 
 from app.pipelines import BuildPipeline
 from app.queue import app
-from app.services import build_diagnosis, run_reconciler
+from app.services import build_diagnosis, permission_assessment, run_reconciler
 
 
 @app.task(
@@ -39,6 +39,40 @@ async def build_finished(
 @app.task(queue="builds")
 async def retry_reprocheck(pipeline_id: str, callback_data: dict) -> None:
     await BuildPipeline().retry_reprocheck(uuid.UUID(pipeline_id), callback_data)
+
+
+@app.task(queue="builds")
+async def start_pending_builds() -> None:
+    await BuildPipeline().start_pending_builds()
+
+
+@app.task(queue="builds")
+async def start_debounced_build(pipeline_id: str) -> None:
+    await BuildPipeline().start_debounced_build(uuid.UUID(pipeline_id))
+
+
+@app.task(
+    queue="permission",
+    retry=RetryStrategy(
+        wait=300,
+        retry_exceptions={permission_assessment.PermissionAssessmentPending},
+    ),
+)
+async def submit_pipeline_assessment(pipeline_id: str) -> None:
+    status = await permission_assessment.submit_pipeline_assessment(
+        uuid.UUID(pipeline_id)
+    )
+    if status == "failed":
+        raise permission_assessment.PermissionAssessmentPending(pipeline_id)
+
+
+@app.task(queue="permission", retry=RetryStrategy(max_attempts=5, wait=60))
+async def refresh_permission_review(
+    source_repository: str, pull_request_number: int
+) -> None:
+    await permission_assessment.refresh_permission_review(
+        source_repository, pull_request_number
+    )
 
 
 @app.task(queue="maintenance")

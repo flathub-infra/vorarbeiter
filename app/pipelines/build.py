@@ -76,6 +76,8 @@ PR_BUILD_DEBOUNCE_SECONDS = 300
 AutoRetryOutcome = Literal["started", "queued", "failed", "superseded"]
 BUILD_FINISHED_TASK = "app.tasks.build_finished"
 REPROCHECK_RETRY_TASK = "app.tasks.retry_reprocheck"
+START_PENDING_TASK = "app.tasks.start_pending_builds"
+START_DEBOUNCED_TASK = "app.tasks.start_debounced_build"
 BUILD_FINISHED_NOTIFIED_KEY = "build_finished_notified"
 
 
@@ -117,6 +119,14 @@ async def determine_build_type(db: AsyncSession, app_id: str) -> str:
         return "default"
 
     return "medium"
+
+
+async def defer_start_pending(db: AsyncSession | None = None) -> None:
+    if db is None:
+        async with get_db() as own:
+            await defer_start_pending(own)
+        return
+    await defer(db, START_PENDING_TASK, lock="start-pending")
 
 
 def _is_already_committed(response: httpx.Response) -> bool:
@@ -287,6 +297,15 @@ class BuildPipeline:
             )
             db.add(pipeline)
             await db.flush()
+            start_after = validated_params.get("start_after")
+            if start_after is not None and start_after > datetime.now(UTC).timestamp():
+                await defer(
+                    db,
+                    START_DEBOUNCED_TASK,
+                    lock=f"debounce:{pipeline.id}",
+                    schedule_at=datetime.fromtimestamp(start_after, UTC),
+                    pipeline_id=str(pipeline.id),
+                )
             await db.commit()
             return pipeline
 
@@ -634,7 +653,9 @@ class BuildPipeline:
             await db.commit()
             return pipeline
 
-    async def start_pending_builds(self) -> list[uuid.UUID]:
+    async def start_pending_builds(
+        self, pipeline_id: uuid.UUID | None = None
+    ) -> list[uuid.UUID]:
         now = datetime.now(UTC).timestamp()
         query = (
             select(Pipeline.id, Pipeline.params["build_type"].as_string())
@@ -652,6 +673,8 @@ class BuildPipeline:
             )
             .order_by(Pipeline.created_at, Pipeline.id)
         )
+        if pipeline_id is not None:
+            query = query.where(Pipeline.id == pipeline_id)
         async with get_db() as db:
             remaining_capacity = None
             if settings.max_concurrent_builds > 0:
@@ -685,6 +708,23 @@ class BuildPipeline:
                 )
 
         return started_pipeline_ids
+
+    async def start_debounced_build(self, pipeline_id: uuid.UUID) -> None:
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id, with_for_update=True)
+            if pipeline is None or pipeline.status != PipelineStatus.PENDING:
+                return
+            start_after = (pipeline.params or {}).get("start_after")
+            if start_after is not None and start_after > datetime.now(UTC).timestamp():
+                await defer(
+                    db,
+                    START_DEBOUNCED_TASK,
+                    lock=f"debounce:{pipeline_id}",
+                    schedule_at=datetime.fromtimestamp(start_after, UTC),
+                    pipeline_id=str(pipeline_id),
+                )
+                return
+        await self.start_pending_builds(pipeline_id)
 
     async def handle_metadata_callback(
         self,
@@ -1044,7 +1084,7 @@ class BuildPipeline:
             if infrastructure_cancellation and not pipeline.params.get("auto_retried"):
                 if pipeline.flat_manager_repo in ["stable", "beta"]:
                     if await self._retry_on_demand(pipeline) in ("started", "queued"):
-                        await self.start_pending_builds()
+                        await defer_start_pending()
                         return
                 elif (
                     pipeline.flat_manager_repo == "test"
@@ -1123,7 +1163,7 @@ class BuildPipeline:
                     auto_retry=auto_retry,
                 )
 
-            await self.start_pending_builds()
+            await defer_start_pending()
 
     @staticmethod
     async def _notify_build_completion(
@@ -1342,8 +1382,8 @@ class BuildPipeline:
                     )
 
             updates["pipeline_status"] = status_value
+            await defer_start_pending(db)
             await db.commit()
-            await self.start_pending_builds()
             return pipeline, updates
 
     async def retry_reprocheck(
@@ -1355,7 +1395,7 @@ class BuildPipeline:
                 raise ValueError(f"Pipeline {pipeline_id} not found")
             await db.commit()
         if await self._retry_on_demand(pipeline) in ("started", "queued"):
-            await self.start_pending_builds()
+            await defer_start_pending()
             return
         await self.handle_reprocheck_callback(
             pipeline_id, callback_data, retry_failed=True

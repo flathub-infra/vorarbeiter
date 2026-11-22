@@ -13,6 +13,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Pipeline, PipelineStatus
 from app.services.job_monitor import JobMonitor
+from app.services.task_queue import defer
 from app.utils.flat_manager import PublishedState, get_flat_manager_client
 from app.utils.github import (
     get_build_job_arches,
@@ -24,6 +25,14 @@ from app.utils.github import (
 )
 
 logger = structlog.get_logger(__name__)
+
+REFRESH_PERMISSION_REVIEW_TASK = "app.tasks.refresh_permission_review"
+SUBMIT_ASSESSMENT_TASK = "app.tasks.submit_pipeline_assessment"
+
+
+class PermissionAssessmentPending(Exception):
+    pass
+
 
 PROVIDER_DATA_KEY = "permission_assessment"
 MAX_ATTEMPTS = 3
@@ -371,10 +380,21 @@ async def notify_target_changed(payload: dict[str, Any]) -> None:
     pr = payload["pull_request"]
     old = payload["changes"]["base"].get("ref", {}).get("from")
     if _enabled(old) or _enabled(pr["base"]["ref"]):
-        state, description = STATUSES["target_changed"]
-        repo = payload["repository"]["full_name"]
-        await update_commit_status(
-            pr["head"]["sha"], state, repo, None, description, STATUS_CONTEXT
+        await enqueue_permission_review(
+            payload["repository"]["full_name"], pr["number"]
+        )
+
+
+async def enqueue_permission_review(
+    source_repository: str, pull_request_number: int
+) -> None:
+    async with get_db() as db:
+        await defer(
+            db,
+            REFRESH_PERMISSION_REVIEW_TASK,
+            lock=f"permission-review:{source_repository}:{pull_request_number}",
+            source_repository=source_repository,
+            pull_request_number=pull_request_number,
         )
 
 
@@ -649,17 +669,17 @@ async def _submit(
     return state["status"]
 
 
-async def submit_pipeline_assessment(pipeline_id: UUID) -> None:
+async def submit_pipeline_assessment(pipeline_id: UUID) -> str | None:
     if not _configured():
-        return
+        return None
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         async with get_db() as db:
             pipeline = await db.get(Pipeline, pipeline_id)
             if pipeline is None:
-                return
+                return None
             status = await _submit(db, pipeline, client)
         if status != "submitted":
-            return
+            return status
         try:
             async with get_db() as db:
                 pipeline = await db.get(Pipeline, pipeline_id)
@@ -670,6 +690,7 @@ async def submit_pipeline_assessment(pipeline_id: UUID) -> None:
                 "Failed to refresh permission assessment",
                 pipeline_id=str(pipeline_id),
             )
+    return status
 
 
 async def submit_pending_assessments() -> dict[str, Any]:

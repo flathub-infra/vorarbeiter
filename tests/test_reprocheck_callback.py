@@ -368,8 +368,8 @@ async def test_reprocheck_callback_handles_partial_json_output(
         ("cancelled", PipelineStatus.CANCELLED),
     ],
 )
-async def test_reprocheck_callback_commits_before_starting_pending_builds(
-    db_session_maker, callback_status, pipeline_status
+async def test_reprocheck_callback_commits_state_with_pending_start(
+    db_session_maker, callback_status, pipeline_status, deferred
 ):
     session_maker = db_session_maker
     original_pipeline = Pipeline(
@@ -413,41 +413,31 @@ async def test_reprocheck_callback_commits_before_starting_pending_builds(
         session.add_all([original_pipeline, reprocheck_pipeline, active_pipeline])
         await session.commit()
 
-    queue_started = False
+    pipeline, updates = await BuildPipeline().handle_reprocheck_callback(
+        reprocheck_pipeline.id,
+        {
+            "status": callback_status,
+            "status_code": "0",
+        },
+    )
 
-    async def observe_committed_state(_pipeline):
-        nonlocal queue_started
-        async with session_maker() as session:
-            terminal = await session.get(Pipeline, reprocheck_pipeline.id)
-            running_count = await session.scalar(
-                select(func.count())
-                .select_from(Pipeline)
-                .where(
-                    Pipeline.status == PipelineStatus.RUNNING,
-                    Pipeline.params["build_type"].as_string() == "medium",
-                )
+    deferred.assert_awaited_once()
+    assert deferred.await_args.args[1] == "app.tasks.start_pending_builds"
+    assert deferred.await_args.kwargs == {"lock": "start-pending"}
+    async with session_maker() as session:
+        terminal = await session.get(Pipeline, reprocheck_pipeline.id)
+        running_count = await session.scalar(
+            select(func.count())
+            .select_from(Pipeline)
+            .where(
+                Pipeline.status == PipelineStatus.RUNNING,
+                Pipeline.params["build_type"].as_string() == "medium",
             )
-            assert terminal.status == pipeline_status
-            assert terminal.finished_at is not None
-            assert terminal.params["reprocheck_result"]["status_code"] == "0"
-            assert running_count == 1
-        queue_started = True
-        return []
-
-    with patch.object(
-        BuildPipeline,
-        "start_pending_builds",
-        new=observe_committed_state,
-    ):
-        pipeline, updates = await BuildPipeline().handle_reprocheck_callback(
-            reprocheck_pipeline.id,
-            {
-                "status": callback_status,
-                "status_code": "0",
-            },
         )
-
-    assert queue_started
+    assert terminal.status == pipeline_status
+    assert terminal.finished_at is not None
+    assert terminal.params["reprocheck_result"]["status_code"] == "0"
+    assert running_count == 1
     assert pipeline.status == pipeline_status
     assert updates["pipeline_status"] == callback_status
 
@@ -525,7 +515,10 @@ async def test_reprocheck_infrastructure_cancellation_retries_on_demand_once(
                 uuid.UUID(kwargs["pipeline_id"]), kwargs["callback_data"]
             )
         else:
-            deferred.assert_not_awaited()
+            assert all(
+                call.args[1] != "app.tasks.retry_reprocheck"
+                for call in deferred.await_args_list
+            )
 
     assert pipeline.status == PipelineStatus.CANCELLED
     assert updates["pipeline_status"] == "cancelled"
