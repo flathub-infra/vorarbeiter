@@ -9,6 +9,7 @@ import httpx2 as httpx
 import pytest
 from fastapi.testclient import TestClient
 from procrastinate.testing import InMemoryConnector
+from sqlalchemy import select
 
 from app.config import settings
 from app.models import Pipeline, PipelineStatus
@@ -361,38 +362,103 @@ def test_workflow_run_event_header_routes_to_reconciliation(client: TestClient):
     enqueue.assert_awaited_once_with(payload)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("repo", ["stable", "test"])
-async def test_replayed_build_finished_creates_one_auto_retry(
-    db_session_maker, connector, flat_manager, notifier, repo
-):
+class WorkerDied(BaseException):
+    pass
+
+
+async def cancelled_pipeline(db_session_maker, repo) -> uuid.UUID:
     pipeline_id = await add_pipeline(db_session_maker, status=PipelineStatus.CANCELLED)
     async with db_session_maker() as db:
         row = await db.get(Pipeline, pipeline_id)
         row.flat_manager_repo = repo
         row.params = {"repo": "flathub/org.test.App", "pr_number": "7"}
         await db.commit()
+    return pipeline_id
+
+
+def retrying_build(db_session_maker, start_pipeline):
+    async def create(app_id, params, actor=None):
+        async with db_session_maker() as db:
+            row = Pipeline(
+                app_id=app_id,
+                params=params,
+                actor=actor,
+                provider_data={},
+                status=PipelineStatus.PENDING,
+            )
+            db.add(row)
+            await db.commit()
+            return row
+
+    async def prepare(pipeline_id):
+        async with db_session_maker() as db:
+            return await db.get(Pipeline, pipeline_id)
+
     build = BuildPipeline()
     build.start_pending_builds = AsyncMock(return_value=[])
     build._should_auto_retry = AsyncMock(return_value=True)
+    build.create_pipeline = AsyncMock(side_effect=create)
+    build.prepare_pipeline_for_start = AsyncMock(side_effect=prepare)
+    build.supersede_conflicting_test_pipelines = AsyncMock()
+    build.should_queue_test_build = AsyncMock(return_value=False)
+    build.start_pipeline = AsyncMock(side_effect=start_pipeline)
+    return build
 
-    retry = Pipeline(
-        id=uuid.uuid4(),
-        app_id="org.test.App",
-        status=PipelineStatus.PENDING,
-        params={},
-    )
-    with (
-        patch.object(build, "create_pipeline", AsyncMock(return_value=retry)) as create,
-        patch.object(
-            build, "prepare_pipeline_for_start", AsyncMock(return_value=retry)
-        ),
-        patch.object(build, "supersede_conflicting_test_pipelines", AsyncMock()),
-        patch.object(build, "should_queue_test_build", AsyncMock(return_value=False)),
-        patch.object(build, "start_pipeline", AsyncMock(return_value=retry)),
-    ):
-        await build.finish_build(pipeline_id, "cancelled", True)
-        await build.finish_build(pipeline_id, "cancelled", True)
 
-    create.assert_awaited_once()
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repo", ["stable", "test"])
+async def test_replayed_build_finished_creates_one_auto_retry(
+    db_session_maker, connector, flat_manager, notifier, repo
+):
+    pipeline_id = await cancelled_pipeline(db_session_maker, repo)
+
+    async def start(pipeline_id):
+        async with db_session_maker() as db:
+            row = await db.get(Pipeline, pipeline_id)
+            row.status = PipelineStatus.RUNNING
+            await db.commit()
+
+    build = retrying_build(db_session_maker, start)
+
+    await build.finish_build(pipeline_id, "cancelled", True)
+    await build.finish_build(pipeline_id, "cancelled", True)
+
+    build.create_pipeline.assert_awaited_once()
+    build.start_pipeline.assert_awaited_once()
     assert notifier.handle_build_completion.await_count == (repo == "test")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repo", ["stable", "test"])
+async def test_replay_after_worker_death_still_retries(
+    db_session_maker, connector, flat_manager, notifier, repo
+):
+    original_id = await cancelled_pipeline(db_session_maker, repo)
+    outcomes = [WorkerDied(), None]
+
+    async def start(pipeline_id):
+        outcome = outcomes.pop(0)
+        if outcome is not None:
+            raise outcome
+        async with db_session_maker() as db:
+            row = await db.get(Pipeline, pipeline_id)
+            row.status = PipelineStatus.RUNNING
+            await db.commit()
+
+    build = retrying_build(db_session_maker, start)
+
+    with pytest.raises(WorkerDied):
+        await build.finish_build(original_id, "cancelled", True)
+    await build.finish_build(original_id, "cancelled", True)
+
+    build.create_pipeline.assert_awaited_once()
+    assert build.start_pipeline.await_count == 2
+    async with db_session_maker() as db:
+        retries = list(
+            await db.scalars(
+                select(Pipeline).where(
+                    Pipeline.params["auto_retry_of"].as_string() == str(original_id)
+                )
+            )
+        )
+    assert [r.status for r in retries] == [PipelineStatus.RUNNING]

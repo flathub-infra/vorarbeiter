@@ -540,6 +540,7 @@ async def test_reprocheck_infrastructure_cancellation_retries_on_demand_once(
             **params,
             "auto_retried": True,
             "use_spot": False,
+            "auto_retry_of": str(reprocheck_pipeline.id),
         }
         start_pipeline.assert_awaited_once_with(pipeline_id=retries[0].id)
         supersede.assert_not_awaited()

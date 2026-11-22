@@ -74,7 +74,6 @@ FAST_BUILD_LOOKBACK_DAYS = 90
 SPOT_BUILD_TYPES = ("medium", "large")
 PR_BUILD_DEBOUNCE_SECONDS = 300
 AutoRetryOutcome = Literal["started", "queued", "failed", "superseded", "duplicate"]
-AUTO_RETRY_CLAIMED_KEY = "auto_retry_claimed"
 BUILD_FINISHED_TASK = "app.tasks.build_finished"
 REPROCHECK_RETRY_TASK = "app.tasks.retry_reprocheck"
 START_PENDING_TASK = "app.tasks.start_pending_builds"
@@ -923,39 +922,51 @@ class BuildPipeline:
         return newer is not None
 
     @staticmethod
-    async def _claim_auto_retry(pipeline_id: uuid.UUID) -> bool:
+    async def _find_auto_retry(pipeline_id: uuid.UUID) -> Pipeline | None:
         async with get_db() as db:
-            pipeline = await db.get(Pipeline, pipeline_id, with_for_update=True)
-            if pipeline is None or (pipeline.provider_data or {}).get(
-                AUTO_RETRY_CLAIMED_KEY
-            ):
-                return False
-            pipeline.provider_data = {
-                **(pipeline.provider_data or {}),
-                AUTO_RETRY_CLAIMED_KEY: True,
-            }
-            return True
+            return await db.scalar(
+                select(Pipeline)
+                .where(Pipeline.params["auto_retry_of"].as_string() == str(pipeline_id))
+                .order_by(Pipeline.created_at.desc())
+                .limit(1)
+            )
 
     async def _retry_on_demand(self, pipeline: Pipeline) -> AutoRetryOutcome:
-        if not await self._claim_auto_retry(pipeline.id):
+        existing = await self._find_auto_retry(pipeline.id)
+        if existing is not None and existing.status != PipelineStatus.PENDING:
             return "duplicate"
         params = {
             key: value
             for key, value in (pipeline.params or {}).items()
-            if key not in ("infra_cancelled", "verified_sha", "reprocheck_result")
+            if key
+            not in (
+                "infra_cancelled",
+                "verified_sha",
+                "reprocheck_result",
+                "auto_retry_of",
+            )
         }
-        params.update({"auto_retried": True, "use_spot": False})
-        try:
-            retry_pipeline = await self.create_pipeline(
-                app_id=pipeline.app_id, params=params, actor=pipeline.actor
-            )
-        except Exception as e:
-            logger.exception(
-                "Failed to create auto-retry pipeline",
-                pipeline_id=str(pipeline.id),
-                error=str(e),
-            )
-            return "failed"
+        params.update(
+            {
+                "auto_retried": True,
+                "use_spot": False,
+                "auto_retry_of": str(pipeline.id),
+            }
+        )
+        if existing is not None:
+            retry_pipeline = existing
+        else:
+            try:
+                retry_pipeline = await self.create_pipeline(
+                    app_id=pipeline.app_id, params=params, actor=pipeline.actor
+                )
+            except Exception as e:
+                logger.exception(
+                    "Failed to create auto-retry pipeline",
+                    pipeline_id=str(pipeline.id),
+                    error=str(e),
+                )
+                return "failed"
         outcome: AutoRetryOutcome = "started"
         try:
             if params.get("workflow_id", "build.yml") == "build.yml":

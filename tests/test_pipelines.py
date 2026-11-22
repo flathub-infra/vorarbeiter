@@ -26,7 +26,7 @@ def build_pipeline(mock_provider):
     with patch("app.services.github_actions_service", mock_provider):
         pipeline = BuildPipeline()
         pipeline.start_pending_builds = AsyncMock(return_value=[])
-        pipeline._claim_auto_retry = AsyncMock(return_value=True)
+        pipeline._find_auto_retry = AsyncMock(return_value=None)
         return pipeline
 
 
@@ -949,6 +949,7 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
         **original_params,
         "auto_retried": True,
         "use_spot": False,
+        "auto_retry_of": str(sample_pipeline.id),
     }
     assert call_args.kwargs["actor"] == "contributor"
     assert sample_pipeline.params == original_params
@@ -1027,6 +1028,7 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
         **original_params,
         "auto_retried": True,
         "use_spot": False,
+        "auto_retry_of": str(sample_pipeline.id),
     }
     assert call_args.kwargs["actor"] == sample_pipeline.actor
     assert sample_pipeline.params == original_params
