@@ -203,16 +203,97 @@ async def test_workflow_run_for_running_pipeline_synthesizes_status(
     assert job["queue_name"] == "maintenance"
     assert job["lock"] == f"reconcile-run:{pipeline_id}"
 
-    with patch(
-        "app.services.github_actions.GitHubActionsService.check_run_was_cancelled",
-        AsyncMock(return_value=False),
+
+def run_jobs(**conclusions):
+    return [{"name": name, "conclusion": value} for name, value in conclusions.items()]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("jobs_payload", "status", "pipeline_status"),
+    [
+        (
+            run_jobs(**{"build-x86_64": "success", "callback": "failure"}),
+            "success",
+            PipelineStatus.SUCCEEDED,
+        ),
+        (
+            run_jobs(**{"build-x86_64": "failure", "callback": "failure"}),
+            "failure",
+            PipelineStatus.FAILED,
+        ),
+        (
+            run_jobs(**{"validate-manifest": "failure", "build-x86_64": "skipped"}),
+            "failure",
+            PipelineStatus.FAILED,
+        ),
+        (
+            run_jobs(**{"build-x86_64": "cancelled", "callback": "failure"}),
+            "cancelled",
+            PipelineStatus.CANCELLED,
+        ),
+    ],
+)
+async def test_reconcile_run_ignores_the_callback_job_when_deriving_status(
+    db_session_maker,
+    connector,
+    flat_manager,
+    notifier,
+    jobs_payload,
+    status,
+    pipeline_status,
+):
+    pipeline_id = await add_pipeline(db_session_maker)
+    async with db_session_maker() as db:
+        (await db.get(Pipeline, pipeline_id)).provider_data = {
+            "owner": "flathub-infra",
+            "repo": "vorarbeiter",
+            "run_id": "777",
+        }
+        await db.commit()
+
+    with (
+        patch(
+            "app.services.github_actions.GitHubActionsService.get_workflow_run_jobs",
+            AsyncMock(return_value=jobs_payload),
+        ),
+        patch(
+            "app.services.github_actions.GitHubActionsService.check_run_was_cancelled",
+            AsyncMock(return_value=False),
+        ),
     ):
         await run_reconciler.reconcile_run(pipeline_id, "failure")
 
     async with db_session_maker() as db:
-        assert (await db.get(Pipeline, pipeline_id)).status == PipelineStatus.FAILED
+        assert (await db.get(Pipeline, pipeline_id)).status == pipeline_status
     (finished,) = jobs(connector, "app.tasks.build_finished")
-    assert finished["args"]["status_value"] == "failure"
+    assert finished["args"]["status_value"] == status
+
+
+@pytest.mark.asyncio
+async def test_reconcile_run_without_job_list_fails_instead_of_guessing(
+    db_session_maker, connector, flat_manager, notifier
+):
+    pipeline_id = await add_pipeline(db_session_maker)
+    async with db_session_maker() as db:
+        (await db.get(Pipeline, pipeline_id)).provider_data = {
+            "owner": "flathub-infra",
+            "repo": "vorarbeiter",
+            "run_id": "777",
+        }
+        await db.commit()
+
+    with (
+        patch(
+            "app.services.github_actions.GitHubActionsService.get_workflow_run_jobs",
+            AsyncMock(return_value=None),
+        ),
+        pytest.raises(run_reconciler.RunJobsUnavailable),
+    ):
+        await run_reconciler.reconcile_run(pipeline_id, "failure")
+
+    async with db_session_maker() as db:
+        assert (await db.get(Pipeline, pipeline_id)).status == PipelineStatus.RUNNING
 
 
 @pytest.mark.asyncio

@@ -94,7 +94,12 @@ async def notify_committed(pipeline_id: str) -> None:
     await github_notifier.notify_committed(uuid.UUID(pipeline_id))
 
 
-@app.task(queue="maintenance")
+@app.task(
+    queue="maintenance",
+    retry=QueueRetryStrategy(
+        max_attempts=5, wait=60, retry_exceptions={run_reconciler.RunJobsUnavailable}
+    ),
+)
 async def reconcile_run(pipeline_id: str, conclusion: str | None) -> None:
     await run_reconciler.reconcile_run(uuid.UUID(pipeline_id), conclusion)
 
