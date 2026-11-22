@@ -32,6 +32,7 @@ from app.services.permission_assessment import (
     STATUS_CONTEXT as PERMISSION_STATUS_CONTEXT,
 )
 from app.services.permission_assessment import notify_target_changed
+from app.services.run_reconciler import enqueue_run_reconciliation
 from app.services.test_build_penalty import (
     BUILDING_LOCALLY_URL,
     format_penalty_notice,
@@ -1227,6 +1228,7 @@ async def receive_github_webhook(
     x_hub_signature_256: str | None = Header(
         None, description="GitHub webhook signature"
     ),
+    x_github_event: str | None = Header(None, description="GitHub event name"),
 ):
     if not x_github_delivery:
         raise HTTPException(
@@ -1275,6 +1277,13 @@ async def receive_github_webhook(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Missing expected key in GitHub payload: {e}",
         )
+
+    if x_github_event == "workflow_run":
+        pipeline_id = await enqueue_run_reconciliation(payload)
+        return {
+            "message": "Webhook received",
+            "pipeline_id": str(pipeline_id) if pipeline_id else None,
+        }
 
     ignored_repos = [
         "flathub/flathub",

@@ -12,7 +12,7 @@ from app.main import app
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.pipelines.build import BuildPipeline
 from app.services import GitHubActionsService
-from tests.conftest import create_mock_get_db
+from tests.conftest import create_mock_get_db, finish_deferred_build
 
 
 @pytest.fixture
@@ -265,6 +265,7 @@ async def test_start_pipeline_branch_mapping(
 @pytest.mark.asyncio
 async def test_status_callback_drains_due_persisted_pipelines_in_queue_order(
     db_session_maker,
+    deferred,
 ):
     completed = Pipeline(
         app_id="org.flathub.Completed",
@@ -314,6 +315,7 @@ async def test_status_callback_drains_due_persisted_pipelines_in_queue_order(
         patch("app.pipelines.build.GitHubNotifier", return_value=notifier),
     ):
         await build.handle_status_callback(completed.id, {"status": "success"})
+        await finish_deferred_build(build, deferred)
 
     assert started_ids == sorted(row.id for row in pending)
     async with db_session_maker() as db:
@@ -325,7 +327,9 @@ async def test_status_callback_drains_due_persisted_pipelines_in_queue_order(
 
 
 @pytest.mark.asyncio
-async def test_handle_status_callback_success(build_pipeline, mock_db, sample_pipeline):
+async def test_handle_status_callback_success(
+    build_pipeline, mock_db, sample_pipeline, deferred
+):
     mock_db.get.return_value = sample_pipeline
 
     mock_get_db = create_mock_get_db(mock_db)
@@ -334,6 +338,7 @@ async def test_handle_status_callback_success(build_pipeline, mock_db, sample_pi
         pipeline, _updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "success"}
         )
+        await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.SUCCEEDED
     assert pipeline.finished_at is not None
@@ -341,7 +346,9 @@ async def test_handle_status_callback_success(build_pipeline, mock_db, sample_pi
 
 
 @pytest.mark.asyncio
-async def test_handle_status_callback_failure(build_pipeline, mock_db, sample_pipeline):
+async def test_handle_status_callback_failure(
+    build_pipeline, mock_db, sample_pipeline, deferred
+):
     mock_db.get.return_value = sample_pipeline
 
     mock_get_db = create_mock_get_db(mock_db)
@@ -356,6 +363,7 @@ async def test_handle_status_callback_failure(build_pipeline, mock_db, sample_pi
         pipeline, _updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "failure"}
         )
+        await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at is not None
@@ -363,7 +371,7 @@ async def test_handle_status_callback_failure(build_pipeline, mock_db, sample_pi
 
 @pytest.mark.asyncio
 async def test_handle_status_callback_failure_reclassified_as_cancelled(
-    build_pipeline, mock_db, sample_pipeline
+    build_pipeline, mock_db, sample_pipeline, deferred
 ):
     """Test that a 'failure' callback gets reclassified as 'cancelled' when spot instance termination is detected."""
     mock_db.get.return_value = sample_pipeline
@@ -380,6 +388,7 @@ async def test_handle_status_callback_failure_reclassified_as_cancelled(
         pipeline, updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "failure"}
         )
+        await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.CANCELLED
     assert pipeline.finished_at is not None
@@ -388,7 +397,7 @@ async def test_handle_status_callback_failure_reclassified_as_cancelled(
 
 @pytest.mark.asyncio
 async def test_handle_status_callback_failure_cancellation_check_error(
-    build_pipeline, mock_db, sample_pipeline
+    build_pipeline, mock_db, sample_pipeline, deferred
 ):
     """Test that if cancellation check fails, the build is still marked as failed."""
     mock_db.get.return_value = sample_pipeline
@@ -405,6 +414,7 @@ async def test_handle_status_callback_failure_cancellation_check_error(
         pipeline, updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "failure"}
         )
+        await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.FAILED
     assert pipeline.finished_at is not None
@@ -863,7 +873,7 @@ async def test_start_pipeline_p90_routing(
 
 @pytest.mark.asyncio
 async def test_handle_status_callback_auto_retry_stable_cancelled(
-    build_pipeline, mock_db, sample_pipeline
+    build_pipeline, mock_db, sample_pipeline, deferred
 ):
     """Test that a cancelled stable build is automatically retried once."""
     sample_pipeline.flat_manager_repo = "stable"
@@ -925,6 +935,7 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
             pipeline, _updates = await build_pipeline.handle_status_callback(
                 sample_pipeline.id, {"status": "failure"}
             )
+            await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_called_once()
@@ -941,7 +952,7 @@ async def test_handle_status_callback_auto_retry_stable_cancelled(
 
 @pytest.mark.asyncio
 async def test_handle_status_callback_auto_retry_beta_cancelled(
-    build_pipeline, mock_db, sample_pipeline
+    build_pipeline, mock_db, sample_pipeline, deferred
 ):
     """Test that a cancelled beta build is automatically retried once."""
     sample_pipeline.flat_manager_repo = "beta"
@@ -1002,6 +1013,7 @@ async def test_handle_status_callback_auto_retry_beta_cancelled(
             pipeline, _updates = await build_pipeline.handle_status_callback(
                 sample_pipeline.id, {"status": "failure"}
             )
+            await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_called_once()
@@ -1031,7 +1043,7 @@ def _retry_pipeline(status=PipelineStatus.PENDING, params=None):
 
 @pytest.mark.asyncio
 async def test_handle_status_callback_auto_retry_test_cancelled(
-    build_pipeline, mock_db, sample_pipeline
+    build_pipeline, mock_db, sample_pipeline, deferred
 ):
     sample_pipeline.flat_manager_repo = "test"
     sample_pipeline.actor = "contributor"
@@ -1091,6 +1103,7 @@ async def test_handle_status_callback_auto_retry_test_cancelled(
         pipeline, _updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "failure"}
         )
+        await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.CANCELLED
     retry_params = mock_create.call_args.kwargs["params"]
@@ -1109,7 +1122,7 @@ async def test_handle_status_callback_auto_retry_test_cancelled(
 
 @pytest.mark.asyncio
 async def test_handle_status_callback_auto_retry_chain_is_capped(
-    build_pipeline, mock_db, sample_pipeline
+    build_pipeline, mock_db, sample_pipeline, deferred
 ):
     sample_pipeline.flat_manager_repo = "test"
     sample_pipeline.params = {
@@ -1142,6 +1155,7 @@ async def test_handle_status_callback_auto_retry_chain_is_capped(
         pipeline, _updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "failure"}
         )
+        await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_should.assert_not_awaited()
@@ -1578,7 +1592,7 @@ async def test_has_active_or_newer_pipeline_detects_running(
 
 @pytest.mark.asyncio
 async def test_handle_status_callback_test_infrastructure_cancellation(
-    build_pipeline, mock_db, sample_pipeline
+    build_pipeline, mock_db, sample_pipeline, deferred
 ):
     sample_pipeline.flat_manager_repo = "test"
     mock_db.get.return_value = sample_pipeline
@@ -1601,10 +1615,11 @@ async def test_handle_status_callback_test_infrastructure_cancellation(
         pipeline, updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "failure"}
         )
+        await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.CANCELLED
     assert updates["pipeline_status"] == "cancelled"
-    mock_check_cancelled.assert_awaited_once_with(sample_pipeline.provider_data)
+    mock_check_cancelled.assert_awaited_once_with({})
     mock_create.assert_not_awaited()
     notifier.handle_build_completion.assert_awaited_once_with(
         sample_pipeline,
@@ -1617,7 +1632,7 @@ async def test_handle_status_callback_test_infrastructure_cancellation(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("classifier_result", [True, False])
 async def test_handle_status_callback_test_cancelled_does_not_retry(
-    build_pipeline, mock_db, sample_pipeline, classifier_result
+    build_pipeline, mock_db, sample_pipeline, classifier_result, deferred
 ):
     sample_pipeline.flat_manager_repo = "test"
     mock_db.get.return_value = sample_pipeline
@@ -1640,10 +1655,11 @@ async def test_handle_status_callback_test_cancelled_does_not_retry(
         pipeline, _updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "cancelled"}
         )
+        await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.CANCELLED
     assert pipeline.params.get("infra_cancelled", False) is classifier_result
-    mock_check_cancelled.assert_awaited_once_with(sample_pipeline.provider_data)
+    mock_check_cancelled.assert_awaited_once_with({})
     mock_create.assert_not_awaited()
     notifier.handle_build_completion.assert_awaited_once_with(
         sample_pipeline, "cancelled", flat_manager_client=None, auto_retry=None
@@ -1652,7 +1668,7 @@ async def test_handle_status_callback_test_cancelled_does_not_retry(
 
 @pytest.mark.asyncio
 async def test_handle_status_callback_test_cancellation_check_error_does_not_retry(
-    build_pipeline, mock_db, sample_pipeline
+    build_pipeline, mock_db, sample_pipeline, deferred
 ):
     sample_pipeline.flat_manager_repo = "test"
     mock_db.get.return_value = sample_pipeline
@@ -1675,6 +1691,7 @@ async def test_handle_status_callback_test_cancellation_check_error_does_not_ret
         pipeline, _updates = await build_pipeline.handle_status_callback(
             sample_pipeline.id, {"status": "cancelled"}
         )
+        await finish_deferred_build(build_pipeline, deferred)
 
     assert pipeline.status == PipelineStatus.CANCELLED
     mock_create.assert_not_awaited()

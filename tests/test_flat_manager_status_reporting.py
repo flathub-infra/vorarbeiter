@@ -7,6 +7,7 @@ from app.models import Pipeline, PipelineStatus
 from app.services.github_notifier import GitHubNotifier
 from app.services.job_monitor import JobMonitor
 from app.utils.flat_manager import JobStatus
+from tests.conftest import finish_deferred_build
 
 
 @pytest.fixture
@@ -153,7 +154,7 @@ async def test_job_monitor_update_repo_job_success(mock_pipeline):
 
 
 @pytest.mark.asyncio
-async def test_build_pipeline_sets_initial_commit_status():
+async def test_build_pipeline_sets_initial_commit_status(deferred):
     from app.pipelines.build import BuildPipeline
 
     pipeline_id = uuid.uuid4()
@@ -166,6 +167,7 @@ async def test_build_pipeline_sets_initial_commit_status():
     mock_pipeline.end_of_life = None
     mock_pipeline.end_of_life_rebase = None
     mock_pipeline.flat_manager_repo = "stable"
+    mock_pipeline.provider_data = {}
 
     mock_fm_instance = AsyncMock()
     mock_fm_instance.commit = AsyncMock(return_value=None)
@@ -192,6 +194,7 @@ async def test_build_pipeline_sets_initial_commit_status():
                 await build_pipeline.handle_status_callback(
                     pipeline_id, {"status": "success"}
                 )
+                await finish_deferred_build(build_pipeline, deferred)
 
                 mock_notifier.notify_flat_manager_job_status.assert_called_once_with(
                     mock_pipeline, "commit", 12345, "pending", "Committing build..."

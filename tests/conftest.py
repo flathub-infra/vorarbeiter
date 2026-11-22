@@ -1,4 +1,5 @@
 import os
+import uuid
 from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,6 +39,24 @@ def reset_github_clients():
     github_module._github_client = None
     github_module._github_actions_client = None
     flat_manager_module._client = None
+
+
+@pytest.fixture(autouse=True)
+def deferred(request):
+    if "connector" in request.fixturenames:
+        yield None
+        return
+    with patch("app.pipelines.build.defer", AsyncMock(return_value=True)) as stub:
+        yield stub
+
+
+async def finish_deferred_build(build, deferred):
+    kwargs = deferred.await_args.kwargs
+    await build.finish_build(
+        uuid.UUID(kwargs["pipeline_id"]),
+        kwargs["status_value"],
+        kwargs["infrastructure_cancellation"],
+    )
 
 
 @pytest.fixture

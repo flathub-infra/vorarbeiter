@@ -2,8 +2,9 @@ import uuid
 
 from procrastinate import JobContext, RetryStrategy, builtin_tasks
 
+from app.pipelines import BuildPipeline
 from app.queue import app
-from app.services import build_diagnosis
+from app.services import build_diagnosis, run_reconciler
 
 
 @app.task(
@@ -24,6 +25,25 @@ async def diagnose_build(
     await build_diagnosis.diagnose(
         uuid.UUID(pipeline_id), context.job.attempts, rate_limit_retries
     )
+
+
+@app.task(queue="builds")
+async def build_finished(
+    pipeline_id: str, status_value: str, infrastructure_cancellation: bool
+) -> None:
+    await BuildPipeline().finish_build(
+        uuid.UUID(pipeline_id), status_value, infrastructure_cancellation
+    )
+
+
+@app.task(queue="builds")
+async def retry_reprocheck(pipeline_id: str, callback_data: dict) -> None:
+    await BuildPipeline().retry_reprocheck(uuid.UUID(pipeline_id), callback_data)
+
+
+@app.task(queue="maintenance")
+async def reconcile_run(pipeline_id: str, conclusion: str | None) -> None:
+    await run_reconciler.reconcile_run(uuid.UUID(pipeline_id), conclusion)
 
 
 @app.periodic(cron="*/10 * * * *")  # pyrefly: ignore[bad-argument-type]

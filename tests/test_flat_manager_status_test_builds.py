@@ -6,6 +6,7 @@ import pytest
 from app.models import Pipeline, PipelineStatus
 from app.services.job_monitor import JobMonitor
 from app.utils.flat_manager import JobStatus
+from tests.conftest import finish_deferred_build
 
 
 @pytest.fixture
@@ -70,7 +71,7 @@ async def test_notify_methods_skip_for_test_builds(mock_test_pipeline):
 
 
 @pytest.mark.asyncio
-async def test_build_pipeline_skips_notification_for_test_builds():
+async def test_build_pipeline_skips_notification_for_test_builds(deferred):
     """Test that BuildPipeline skips flat-manager notifications for test builds"""
     from app.pipelines.build import BuildPipeline
 
@@ -84,6 +85,7 @@ async def test_build_pipeline_skips_notification_for_test_builds():
     mock_pipeline.end_of_life = None
     mock_pipeline.end_of_life_rebase = None
     mock_pipeline.flat_manager_repo = "test"  # Test repo
+    mock_pipeline.provider_data = {}
 
     build_pipeline = BuildPipeline()
     build_pipeline.start_pending_builds = AsyncMock(return_value=[])
@@ -109,6 +111,7 @@ async def test_build_pipeline_skips_notification_for_test_builds():
                 await build_pipeline.handle_status_callback(
                     pipeline_id, {"status": "success"}
                 )
+                await finish_deferred_build(build_pipeline, deferred)
 
                 # Should not be called for test builds
                 mock_notifier.notify_flat_manager_job_status.assert_not_called()

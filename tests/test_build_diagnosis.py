@@ -100,6 +100,14 @@ async def failure_callback(
     return pipeline_id
 
 
+def diagnosis_jobs(connector):
+    return [
+        job
+        for job in connector.jobs.values()
+        if job["task_name"] == "app.tasks.diagnose_build"
+    ]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("infrastructure_cancellation", "status"),
@@ -110,10 +118,23 @@ async def test_failure_defers_one_job(
 ):
     pipeline_id = await failure_callback(db_session_maker, infrastructure_cancellation)
 
-    jobs = list(connector.jobs.values())
+    jobs = diagnosis_jobs(connector)
     assert [(j["task_name"], j["queue_name"]) for j in jobs] == [
         ("app.tasks.diagnose_build", "build-diagnosis")
     ]
+    (finished,) = (
+        j
+        for j in connector.jobs.values()
+        if j["task_name"] == "app.tasks.build_finished"
+    )
+    assert finished["queue_name"] == "builds"
+    assert finished["lock"] == f"build-finished:{pipeline_id}"
+    assert finished["queueing_lock"] == f"build-finished:{pipeline_id}"
+    assert finished["args"] == {
+        "pipeline_id": str(pipeline_id),
+        "status_value": "cancelled" if infrastructure_cancellation else "failure",
+        "infrastructure_cancellation": infrastructure_cancellation,
+    }
     assert jobs[0]["args"] == {"pipeline_id": str(pipeline_id)}
     async with db_session_maker() as db:
         assert await db.get(BuildDiagnosis, pipeline_id) is not None
@@ -134,7 +155,7 @@ async def test_repeated_callback_defers_none(db_session_maker, connector):
     ):
         await build.handle_status_callback(pipeline_id, {"status": "failure"})
 
-    assert len(connector.jobs) == 1
+    assert len(diagnosis_jobs(connector)) == 1
     async with db_session_maker() as db:
         rows = (await db.execute(select(BuildDiagnosis))).scalars().all()
         pipeline = await db.get(Pipeline, pipeline_id)
@@ -150,7 +171,7 @@ async def test_submission_pull_request_defers_one_job(db_session_maker, connecto
         params={"repo": "flathub/flathub", "pr_number": "42"},
     )
 
-    jobs = list(connector.jobs.values())
+    jobs = diagnosis_jobs(connector)
     assert [(j["task_name"], j["queue_name"]) for j in jobs] == [
         ("app.tasks.diagnose_build", "build-diagnosis")
     ]

@@ -463,7 +463,7 @@ async def test_reprocheck_callback_commits_before_starting_pending_builds(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("auto_retried", [False, True])
 async def test_reprocheck_infrastructure_cancellation_retries_on_demand_once(
-    db_session_maker, auto_retried
+    db_session_maker, auto_retried, deferred
 ):
     original_pipeline = Pipeline(
         id=uuid.uuid4(),
@@ -519,6 +519,13 @@ async def test_reprocheck_infrastructure_cancellation_retries_on_demand_once(
             reprocheck_pipeline.id,
             {"status": "failure", "build_pipeline_id": str(original_pipeline.id)},
         )
+        if not auto_retried:
+            kwargs = deferred.await_args.kwargs
+            await BuildPipeline().retry_reprocheck(
+                uuid.UUID(kwargs["pipeline_id"]), kwargs["callback_data"]
+            )
+        else:
+            deferred.assert_not_awaited()
 
     assert pipeline.status == PipelineStatus.CANCELLED
     assert updates["pipeline_status"] == "cancelled"

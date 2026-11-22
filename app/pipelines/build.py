@@ -17,6 +17,7 @@ from app.services import github_actions_service
 from app.services.build_diagnosis import enqueue_diagnosis
 from app.services.github_actions import GitHubActionsService
 from app.services.github_notifier import GitHubNotifier
+from app.services.task_queue import defer
 from app.utils.flat_manager import (
     FlatManagerClient,
     get_flat_manager_client,
@@ -73,6 +74,9 @@ FAST_BUILD_LOOKBACK_DAYS = 90
 SPOT_BUILD_TYPES = ("medium", "large")
 PR_BUILD_DEBOUNCE_SECONDS = 300
 AutoRetryOutcome = Literal["started", "queued", "failed", "superseded"]
+BUILD_FINISHED_TASK = "app.tasks.build_finished"
+REPROCHECK_RETRY_TASK = "app.tasks.retry_reprocheck"
+BUILD_FINISHED_NOTIFIED_KEY = "build_finished_notified"
 
 
 async def get_app_p90_build_time(db: AsyncSession, app_id: str) -> float | None:
@@ -113,6 +117,20 @@ async def determine_build_type(db: AsyncSession, app_id: str) -> str:
         return "default"
 
     return "medium"
+
+
+def _is_already_committed(response: httpx.Response) -> bool:
+    if response.status_code != 400:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return (
+        isinstance(body, dict)
+        and body.get("error-type") == "wrong-repo-state"
+        and body.get("current-state") in ("committing", "ready")
+    )
 
 
 async def _validate_and_prepare_callback(
@@ -968,8 +986,6 @@ class BuildPipeline:
                 StatusCallbackValidator, callback_data, pipeline_id, db
             )
 
-            updates: dict[str, Any] = {}
-
             infrastructure_cancellation = (
                 await self._detect_infrastructure_cancellation(pipeline, status_value)
             )
@@ -1001,6 +1017,27 @@ class BuildPipeline:
             if infrastructure_cancellation and pipeline.flat_manager_repo == "test":
                 pipeline.params = {**pipeline.params, "infra_cancelled": True}
 
+            await defer(
+                db,
+                BUILD_FINISHED_TASK,
+                lock=f"build-finished:{pipeline_id}",
+                pipeline_id=str(pipeline_id),
+                status_value=status_value,
+                infrastructure_cancellation=infrastructure_cancellation,
+            )
+            await db.commit()
+            return pipeline, {"pipeline_status": status_value}
+
+    async def finish_build(
+        self,
+        pipeline_id: uuid.UUID,
+        status_value: str,
+        infrastructure_cancellation: bool,
+    ) -> None:
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
             await db.commit()
 
             auto_retry: AutoRetryOutcome | None = None
@@ -1008,7 +1045,7 @@ class BuildPipeline:
                 if pipeline.flat_manager_repo in ["stable", "beta"]:
                     if await self._retry_on_demand(pipeline) in ("started", "queued"):
                         await self.start_pending_builds()
-                        return pipeline, updates
+                        return
                 elif (
                     pipeline.flat_manager_repo == "test"
                     and await self._should_auto_retry(pipeline)
@@ -1022,23 +1059,36 @@ class BuildPipeline:
                 if pipeline.params.get("pr_number"):
                     flat_manager = get_flat_manager_client()
                 github_notifier = GitHubNotifier(flat_manager_client=flat_manager)
-                await github_notifier.handle_build_completion(
-                    pipeline, status_value, flat_manager_client=flat_manager
+                await self._notify_build_completion(
+                    db,
+                    pipeline,
+                    github_notifier,
+                    status_value,
+                    flat_manager_client=flat_manager,
                 )
                 if pipeline.build_id:
                     try:
                         if not flat_manager:
                             flat_manager = get_flat_manager_client()
-                        await flat_manager.commit(
-                            pipeline.build_id,
-                            end_of_life=pipeline.end_of_life,
-                            end_of_life_rebase=pipeline.end_of_life_rebase,
-                        )
-                        logger.info(
-                            "Committed build",
-                            build_id=pipeline.build_id,
-                            pipeline_id=str(pipeline_id),
-                        )
+                        try:
+                            await flat_manager.commit(
+                                pipeline.build_id,
+                                end_of_life=pipeline.end_of_life,
+                                end_of_life_rebase=pipeline.end_of_life_rebase,
+                            )
+                            logger.info(
+                                "Committed build",
+                                build_id=pipeline.build_id,
+                                pipeline_id=str(pipeline_id),
+                            )
+                        except httpx.HTTPStatusError as e:
+                            if not _is_already_committed(e.response):
+                                raise
+                            logger.info(
+                                "Build was already committed",
+                                build_id=pipeline.build_id,
+                                pipeline_id=str(pipeline_id),
+                            )
 
                         await BuildPipeline.fetch_and_store_job_id(
                             pipeline, flat_manager, "commit", github_notifier, db
@@ -1064,38 +1114,76 @@ class BuildPipeline:
                         pipeline_id=str(pipeline_id),
                     )
             elif pipeline.params.get("workflow_id", "build.yml") == "build.yml":
-                github_notifier = GitHubNotifier()
-                await github_notifier.handle_build_completion(
+                await self._notify_build_completion(
+                    db,
                     pipeline,
+                    GitHubNotifier(),
                     status_value,
                     flat_manager_client=None,
                     auto_retry=auto_retry,
                 )
 
-            updates["pipeline_status"] = status_value
             await self.start_pending_builds()
-            return pipeline, updates
+
+    @staticmethod
+    async def _notify_build_completion(
+        db: AsyncSession,
+        pipeline: Pipeline,
+        github_notifier: GitHubNotifier,
+        status_value: str,
+        **kwargs: Any,
+    ) -> None:
+        if (pipeline.provider_data or {}).get(BUILD_FINISHED_NOTIFIED_KEY):
+            return
+        await github_notifier.handle_build_completion(pipeline, status_value, **kwargs)
+        await db.refresh(pipeline, ["provider_data"], with_for_update=True)
+        pipeline.provider_data = {
+            **(pipeline.provider_data or {}),
+            BUILD_FINISHED_NOTIFIED_KEY: True,
+        }
+        await db.commit()
 
     async def handle_reprocheck_callback(
         self,
         pipeline_id: uuid.UUID,
         callback_data: dict[str, Any],
+        retry_failed: bool = False,
     ) -> tuple[Pipeline, dict[str, Any]]:
         from app.services.callback import ReprocheckCallbackValidator
 
         async with get_db() as db:
-            pipeline, parsed_data, status_value = await _validate_and_prepare_callback(
-                ReprocheckCallbackValidator, callback_data, pipeline_id, db
-            )
-
-            if await self._detect_infrastructure_cancellation(pipeline, status_value):
+            if retry_failed:
+                pipeline = await db.get(Pipeline, pipeline_id)
+                if not pipeline:
+                    raise ValueError(f"Pipeline {pipeline_id} not found")
+                parsed_data = ReprocheckCallbackValidator().validate_and_parse(
+                    callback_data
+                )
                 status_value = "cancelled"
-                if not pipeline.params.get("auto_retried"):
-                    pipeline.status = PipelineStatus.CANCELLED
-                    pipeline.finished_at = datetime.now(tz=UTC)
-                    await db.commit()
-                    if await self._retry_on_demand(pipeline) in ("started", "queued"):
-                        await self.start_pending_builds()
+            else:
+                (
+                    pipeline,
+                    parsed_data,
+                    status_value,
+                ) = await _validate_and_prepare_callback(
+                    ReprocheckCallbackValidator, callback_data, pipeline_id, db
+                )
+
+                if await self._detect_infrastructure_cancellation(
+                    pipeline, status_value
+                ):
+                    status_value = "cancelled"
+                    if not pipeline.params.get("auto_retried"):
+                        pipeline.status = PipelineStatus.CANCELLED
+                        pipeline.finished_at = datetime.now(tz=UTC)
+                        await defer(
+                            db,
+                            REPROCHECK_RETRY_TASK,
+                            lock=f"build-finished:{pipeline_id}",
+                            pipeline_id=str(pipeline_id),
+                            callback_data=callback_data,
+                        )
+                        await db.commit()
                         return pipeline, {"pipeline_status": status_value}
 
             reprocheck_result = {}
@@ -1257,6 +1345,21 @@ class BuildPipeline:
             await db.commit()
             await self.start_pending_builds()
             return pipeline, updates
+
+    async def retry_reprocheck(
+        self, pipeline_id: uuid.UUID, callback_data: dict[str, Any]
+    ) -> None:
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+            await db.commit()
+        if await self._retry_on_demand(pipeline) in ("started", "queued"):
+            await self.start_pending_builds()
+            return
+        await self.handle_reprocheck_callback(
+            pipeline_id, callback_data, retry_failed=True
+        )
 
     async def handle_cost_callback(
         self,
