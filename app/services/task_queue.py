@@ -43,11 +43,7 @@ async def defer(
     schedule_at: datetime | None = None,
     **kwargs: Any,
 ) -> bool:
-    options: dict[str, Any] = {
-        "connection": (
-            await (await db.connection()).get_raw_connection()
-        ).driver_connection
-    }
+    options: dict[str, Any] = {}
     if lock is not None:
         options["lock"] = lock
         options["queueing_lock"] = lock
@@ -55,6 +51,9 @@ async def defer(
         options["schedule_at"] = schedule_at
     try:
         async with db.begin_nested():
+            options["connection"] = (
+                await (await db.connection()).get_raw_connection()
+            ).driver_connection
             await app.configure_task(task, **options).defer_async(**kwargs)
     except AlreadyEnqueued:
         return False
