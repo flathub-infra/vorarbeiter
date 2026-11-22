@@ -327,7 +327,7 @@ async def test_notify_pr_build_complete_committed_with_download(
             "app.services.github_notifier.get_build_job_arches",
             return_value=["x86_64", "aarch64"],
         ),
-        patch("app.services.github_notifier.upsert_pr_comment") as mock_comment,
+        patch("app.services.github_notifier.ensure_pr_comment") as mock_comment,
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
 
@@ -359,7 +359,7 @@ async def test_notify_pr_build_complete_committed_no_build_id(
             "app.services.github_notifier.get_build_job_arches",
             return_value=["x86_64"],
         ),
-        patch("app.services.github_notifier.upsert_pr_comment") as mock_comment,
+        patch("app.services.github_notifier.ensure_pr_comment") as mock_comment,
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
 
@@ -409,7 +409,7 @@ async def test_submission_preview_link(
         ),
         patch("app.services.github_notifier.get_build_job_arches", return_value=[]),
         patch("app.services.github_notifier.create_pr_comment") as post,
-        patch("app.services.github_notifier.upsert_pr_comment") as upsert,
+        patch("app.services.github_notifier.ensure_pr_comment") as upsert,
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, status)
     body = (
@@ -1128,7 +1128,7 @@ async def test_handle_build_committed_raises_after_attempting_every_call(
     with (
         patch("app.services.github_notifier.update_commit_status", return_value=False),
         patch(
-            "app.services.github_notifier.upsert_pr_comment", return_value=True
+            "app.services.github_notifier.ensure_pr_comment", return_value=True
         ) as comment,
         patch("app.services.github_notifier.get_linter_warning_messages"),
         patch("app.services.github_notifier.get_build_job_arches"),

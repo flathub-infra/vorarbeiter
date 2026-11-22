@@ -19,11 +19,11 @@ from app.utils.github import (
     GitHubUnavailable,
     create_github_issue,
     create_pr_comment,
+    ensure_pr_comment,
     get_build_job_arches,
     get_linter_warning_messages,
     retry_after_hint,
     update_commit_status,
-    upsert_pr_comment,
 )
 
 if TYPE_CHECKING:
@@ -295,7 +295,7 @@ class GitHubNotifier:
 
             if comment and status == "committed":
                 marker = BUILD_COMPLETE_MARKER.format(pipeline_id=pipeline.id)
-                return await upsert_pr_comment(
+                return await ensure_pr_comment(
                     git_repo, pr_number, marker, f"{comment}\n\n{marker}"
                 )
             if comment:

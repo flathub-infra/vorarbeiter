@@ -16,7 +16,6 @@ from app.utils.github import (
     post_pr_comment,
     set_pr_labels,
     update_commit_status,
-    upsert_pr_comment,
     validate_pipeline_commit_params,
 )
 
@@ -744,44 +743,6 @@ async def test_post_pr_comment_does_not_post_after_unavailable_page(bad_page):
             True,
             deduplicate=True,
         )
-    client.request.assert_awaited_once()
-
-
-@pytest.mark.parametrize(
-    "existing, methods",
-    [
-        ([], ["get", "post"]),
-        ([{"id": 9, "body": "old\n\n<!-- m -->"}], ["get", "patch"]),
-        ([{"id": 9, "body": "new\n\n<!-- m -->"}], ["get"]),
-    ],
-)
-@pytest.mark.asyncio
-async def test_upsert_pr_comment_updates_marked_comment(existing, methods):
-    client = MagicMock()
-    response = MagicMock()
-    response.json.return_value = existing
-    client.request = AsyncMock(return_value=response)
-    with patch("app.utils.github.get_github_client", return_value=client):
-        assert await upsert_pr_comment(
-            "flathub/test", 3, "<!-- m -->", "new\n\n<!-- m -->"
-        )
-    assert [call.args[0] for call in client.request.await_args_list] == methods
-    if methods[-1] == "patch":
-        assert client.request.await_args is not None
-        assert client.request.await_args.args[1] == (
-            "https://api.github.com/repos/flathub/test/issues/comments/9"
-        )
-
-
-@pytest.mark.parametrize("bad_page", [None, {"message": "error"}])
-@pytest.mark.asyncio
-async def test_upsert_pr_comment_does_not_post_after_unavailable_page(bad_page):
-    client = MagicMock()
-    response = MagicMock()
-    response.json.return_value = bad_page
-    client.request = AsyncMock(return_value=response if bad_page is not None else None)
-    with patch("app.utils.github.get_github_client", return_value=client):
-        assert not await upsert_pr_comment("flathub/test", 3, "<!-- m -->", "new")
     client.request.assert_awaited_once()
 
 
