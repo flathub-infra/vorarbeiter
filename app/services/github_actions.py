@@ -50,6 +50,7 @@ class GitHubActionsService:
         payload = {
             "ref": ref,
             "inputs": workflow_inputs,
+            "return_run_details": True,
         }
 
         client = get_github_actions_client()
@@ -65,7 +66,7 @@ class GitHubActionsService:
         if response is None:
             raise RuntimeError("GitHub workflow dispatch returned no response")
 
-        return {
+        result = {
             "status": "dispatched",
             "job_id": job_id,
             "pipeline_id": pipeline_id,
@@ -74,6 +75,9 @@ class GitHubActionsService:
             "workflow_id": workflow_id,
             "ref": ref,
         }
+        if response.status_code == 200:
+            result["run_id"] = str(response.json()["workflow_run_id"])
+        return result
 
     async def cancel(self, job_id: str, provider_data: dict[str, Any]) -> bool:
         run_id = provider_data.get("run_id")

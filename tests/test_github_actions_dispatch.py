@@ -107,7 +107,25 @@ async def test_dispatch_accepts_empty_204_response():
     assert json.loads(send.call_args.kwargs["content"]) == {
         "ref": "main",
         "inputs": {**JOB_DATA["params"]["inputs"], "app_id": "org.example.App"},
+        "return_run_details": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_dispatch_stores_run_id_from_200_response():
+    response = httpx.Response(
+        200,
+        json={
+            "workflow_run_id": 123,
+            "run_url": "https://api.github.com/repos/flathub-infra/vorarbeiter/actions/runs/123",
+            "html_url": "https://github.com/flathub-infra/vorarbeiter/actions/runs/123",
+        },
+        request=httpx.Request("POST", "https://api.github.com/dispatches"),
+    )
+    with patch("httpx2.AsyncClient.request", new=AsyncMock(return_value=response)):
+        result = await GitHubActionsService().dispatch("job", "pipeline", JOB_DATA)
+
+    assert result["run_id"] == "123"
 
 
 @pytest.mark.asyncio
