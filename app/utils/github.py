@@ -3,6 +3,7 @@ import json
 import re
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +37,17 @@ GQL_EXCEPTIONS = (
 
 
 logger = structlog.get_logger(__name__)
+
+
+retry_after_hint: ContextVar[float | None] = ContextVar(
+    "retry_after_hint", default=None
+)
+
+
+class GitHubUnavailable(Exception):
+    def __init__(self, retry_after: float | None = None):
+        super().__init__("GitHub call failed")
+        self.retry_after = retry_after
 
 
 @dataclass
@@ -184,6 +196,7 @@ class GitHubAPIClient:
                             retry_after=wait_time,
                             **context,
                         )
+                        retry_after_hint.set(wait_time)
                         return GitHubAPIResult(
                             response=None,
                             should_queue=True,
@@ -654,6 +667,48 @@ async def _find_marker_comment(
         if len(comments) < 100:
             return False
         page += 1
+
+
+async def upsert_pr_comment(
+    git_repo: str, pr_number: int, marker: str, body: str
+) -> bool:
+    client = get_github_client()
+    url = f"https://api.github.com/repos/{git_repo}/issues/{pr_number}/comments"
+    context = {"git_repo": git_repo, "pr_number": pr_number}
+
+    page = 1
+    existing = None
+    while existing is None:
+        response = await client.request(
+            "get", url, params={"per_page": 100, "page": page}, context=context
+        )
+        if response is None:
+            return False
+        comments = response.json()
+        if not isinstance(comments, list):
+            return False
+        existing = next(
+            (c for c in comments if marker in (c.get("body") or "")),
+            None,
+        )
+        if len(comments) < 100:
+            break
+        page += 1
+
+    if existing is None:
+        return (
+            await client.request("post", url, json={"body": body}, context=context)
+            is not None
+        )
+    if existing.get("body") == body:
+        return True
+    edit_url = (
+        f"https://api.github.com/repos/{git_repo}/issues/comments/{existing['id']}"
+    )
+    return (
+        await client.request("patch", edit_url, json={"body": body}, context=context)
+        is not None
+    )
 
 
 async def ensure_pr_comment(

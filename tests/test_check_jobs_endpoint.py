@@ -68,7 +68,6 @@ async def test_check_jobs_success(db_session_maker, run_check_all_active_pipelin
             "app.services.job_monitor.get_flat_manager_client",
             return_value=mock_fm_instance,
         ),
-        patch("app.services.job_monitor.JobMonitor._notify_committed"),
         patch("app.services.job_monitor.JobMonitor._notify_flat_manager_job_completed"),
         patch("app.services.job_monitor.JobMonitor._notify_flat_manager_job_started"),
     ):

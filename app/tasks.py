@@ -4,7 +4,14 @@ from procrastinate import JobContext, RetryStrategy, builtin_tasks
 
 from app.pipelines import BuildPipeline
 from app.queue import app
-from app.services import build_diagnosis, permission_assessment, run_reconciler
+from app.services import (
+    build_diagnosis,
+    github_notifier,
+    permission_assessment,
+    run_reconciler,
+)
+from app.services.task_queue import QueueRetryStrategy
+from app.utils.github import GitHubUnavailable, retry_after_hint
 
 
 @app.task(
@@ -53,7 +60,7 @@ async def start_debounced_build(pipeline_id: str) -> None:
 
 @app.task(
     queue="permission",
-    retry=RetryStrategy(
+    retry=QueueRetryStrategy(
         wait=300,
         retry_exceptions={permission_assessment.PermissionAssessmentPending},
     ),
@@ -66,13 +73,24 @@ async def submit_pipeline_assessment(pipeline_id: str) -> None:
         raise permission_assessment.PermissionAssessmentPending(pipeline_id)
 
 
-@app.task(queue="permission", retry=RetryStrategy(max_attempts=5, wait=60))
+@app.task(queue="permission", retry=QueueRetryStrategy(max_attempts=5, wait=60))
 async def refresh_permission_review(
     source_repository: str, pull_request_number: int
 ) -> None:
     await permission_assessment.refresh_permission_review(
         source_repository, pull_request_number
     )
+
+
+@app.task(
+    queue="github",
+    retry=QueueRetryStrategy(
+        max_attempts=8, exponential_wait=2, retry_exceptions={GitHubUnavailable}
+    ),
+)
+async def notify_committed(pipeline_id: str) -> None:
+    retry_after_hint.set(None)
+    await github_notifier.notify_committed(uuid.UUID(pipeline_id))
 
 
 @app.task(queue="maintenance")

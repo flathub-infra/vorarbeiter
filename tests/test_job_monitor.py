@@ -57,13 +57,15 @@ async def test_check_and_update_pipeline_jobs_succeeded_to_committed(
 
 
 @pytest.mark.asyncio
-async def test_process_succeeded_pipeline_sends_pr_comment(job_monitor, mock_pipeline):
+async def test_process_succeeded_pipeline_leaves_notification_to_the_task(
+    job_monitor, mock_pipeline
+):
     with (
         patch.object(job_monitor.flat_manager, "get_job") as mock_get_job,
         patch.object(
             job_monitor, "_notify_flat_manager_job_completed"
         ) as mock_notify_job,
-        patch.object(job_monitor, "_notify_committed") as mock_notify_committed,
+        patch("app.services.github_notifier.GitHubNotifier") as mock_notify_committed,
     ):
         mock_get_job.return_value = {"status": JobStatus.ENDED}
 
@@ -74,7 +76,7 @@ async def test_process_succeeded_pipeline_sends_pr_comment(job_monitor, mock_pip
         mock_notify_job.assert_called_once_with(
             mock_pipeline, "commit", 12345, success=True
         )
-        mock_notify_committed.assert_called_once_with(mock_pipeline)
+        mock_notify_committed.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -754,45 +756,6 @@ async def test_check_commit_job_status_exception(job_monitor):
         result = await job_monitor.check_commit_job_status(12345)
 
         assert result is None
-
-
-@pytest.mark.asyncio
-async def test_notify_committed_with_pr(job_monitor, mock_pipeline):
-    with patch("app.services.github_notifier.GitHubNotifier") as mock_notifier_class:
-        mock_notifier_instance = MagicMock()
-        mock_notifier_class.return_value = mock_notifier_instance
-
-        await job_monitor._notify_committed(mock_pipeline)
-
-        mock_notifier_class.assert_called_once()
-        mock_notifier_instance.handle_build_committed.assert_called_once_with(
-            mock_pipeline,
-            flat_manager_client=mock_notifier_class.call_args[1]["flat_manager_client"],
-        )
-
-
-@pytest.mark.asyncio
-async def test_notify_committed_without_pr(job_monitor, mock_pipeline):
-    mock_pipeline.params = {}
-
-    with patch("app.services.github_notifier.GitHubNotifier") as mock_notifier_class:
-        mock_notifier_instance = MagicMock()
-        mock_notifier_class.return_value = mock_notifier_instance
-
-        await job_monitor._notify_committed(mock_pipeline)
-
-        mock_notifier_class.assert_called_once_with(flat_manager_client=None)
-        mock_notifier_instance.handle_build_committed.assert_called_once_with(
-            mock_pipeline, flat_manager_client=None
-        )
-
-
-@pytest.mark.asyncio
-async def test_notify_committed_exception(job_monitor, mock_pipeline):
-    with patch("app.services.github_notifier.GitHubNotifier") as mock_notifier_class:
-        mock_notifier_class.side_effect = Exception("Notification error")
-
-        await job_monitor._notify_committed(mock_pipeline)
 
 
 @pytest.mark.asyncio
@@ -1562,3 +1525,53 @@ async def test_update_repo_recovery_skipped_no_db():
 
     assert result is False
     assert pipeline.status == PipelineStatus.PUBLISHING
+
+
+@pytest.mark.asyncio
+async def test_commit_defers_one_notification_after_the_commit(
+    db_session_maker, run_check_all_active_pipelines, deferred
+):
+    pipeline = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.SUCCEEDED,
+        commit_job_id=1,
+        build_id=5,
+        flat_manager_repo="test",
+        params={"pr_number": "1"},
+        created_at=datetime.now(UTC),
+    )
+    async with db_session_maker() as db:
+        db.add(pipeline)
+        await db.commit()
+    seen = []
+
+    async def observe(db, task, **kwargs):
+        if task == "app.tasks.notify_committed":
+            async with db_session_maker() as other:
+                status = (await other.get(Pipeline, pipeline.id)).status
+            seen.append((kwargs, status))
+        return True
+
+    deferred.side_effect = observe
+    flat_manager = AsyncMock()
+    flat_manager.get_job.return_value = {"status": JobStatus.ENDED}
+    with (
+        patch(
+            "app.services.job_monitor.get_flat_manager_client",
+            return_value=flat_manager,
+        ),
+        patch.object(JobMonitor, "_notify_flat_manager_job_completed"),
+    ):
+        await run_check_all_active_pipelines(db_session_maker)
+        await run_check_all_active_pipelines(db_session_maker)
+
+    assert seen == [
+        (
+            {
+                "lock": f"notify-committed:{pipeline.id}",
+                "pipeline_id": str(pipeline.id),
+            },
+            PipelineStatus.COMMITTED,
+        )
+    ]

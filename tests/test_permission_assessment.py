@@ -1387,7 +1387,6 @@ async def test_commit_queues_assessment_after_the_commit(
             "app.services.job_monitor.get_flat_manager_client",
             return_value=flat_manager,
         ),
-        patch.object(JobMonitor, "_notify_committed"),
         patch.object(JobMonitor, "_notify_flat_manager_job_completed"),
         patch.object(JobMonitor, "_create_job_failure_issue"),
         patch("app.services.github_notifier.GitHubNotifier"),

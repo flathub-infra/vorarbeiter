@@ -1,9 +1,11 @@
 import asyncio
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from app.config import settings
+from app.database import get_db
 from app.models import Pipeline
 from app.services.build_failure_issue import BuildFailureIssueService
 from app.services.test_build_penalty import (
@@ -11,20 +13,26 @@ from app.services.test_build_penalty import (
     get_penalty_until,
     is_penalty_exempt,
 )
-from app.utils.flat_manager import FlatManagerClient
+from app.utils.flat_manager import FlatManagerClient, get_flat_manager_client
 from app.utils.github import (
     REVIEWERS_MENTION,
+    GitHubUnavailable,
     create_github_issue,
     create_pr_comment,
     get_build_job_arches,
     get_linter_warning_messages,
+    retry_after_hint,
     update_commit_status,
+    upsert_pr_comment,
 )
 
 if TYPE_CHECKING:
     from app.pipelines.build import AutoRetryOutcome
 
 logger = structlog.get_logger(__name__)
+
+NOTIFY_COMMITTED_TASK = "app.tasks.notify_committed"
+BUILD_COMPLETE_MARKER = "<!-- vorarbeiter:build-complete:{pipeline_id} -->"
 
 
 class GitHubNotifier:
@@ -36,7 +44,7 @@ class GitHubNotifier:
         pipeline: Pipeline,
         status: str,
         log_url: str | None = None,
-    ) -> None:
+    ) -> bool:
         app_id = pipeline.app_id
         sha = pipeline.params.get("sha")
         git_repo = pipeline.params.get("repo")
@@ -53,7 +61,7 @@ class GitHubNotifier:
                 has_sha=bool(sha),
                 has_git_repo=bool(git_repo),
             )
-            return
+            return True
 
         match status:
             case "success":
@@ -85,7 +93,7 @@ class GitHubNotifier:
                 pipeline_id=str(pipeline.id),
             )
 
-        await update_commit_status(
+        return await update_commit_status(
             sha=sha,
             state=github_state,
             git_repo=git_repo,
@@ -168,7 +176,7 @@ class GitHubNotifier:
         pipeline: Pipeline,
         status: str,
         auto_retry: "AutoRetryOutcome | None" = None,
-    ) -> None:
+    ) -> bool:
         pr_number_str = pipeline.params.get("pr_number")
         git_repo = pipeline.params.get("repo")
 
@@ -179,7 +187,7 @@ class GitHubNotifier:
                 has_pr_number=bool(pr_number_str),
                 has_git_repo=bool(git_repo),
             )
-            return
+            return True
 
         try:
             pr_number = int(pr_number_str)
@@ -285,6 +293,11 @@ class GitHubNotifier:
                     "cc @barthalion"
                 )
 
+            if comment and status == "committed":
+                marker = BUILD_COMPLETE_MARKER.format(pipeline_id=pipeline.id)
+                return await upsert_pr_comment(
+                    git_repo, pr_number, marker, f"{comment}\n\n{marker}"
+                )
             if comment:
                 await create_pr_comment(
                     git_repo=git_repo,
@@ -303,6 +316,8 @@ class GitHubNotifier:
                 pipeline_id=str(pipeline.id),
                 error=str(e),
             )
+            return False
+        return True
 
     async def _create_tracking_issue(
         self,
@@ -538,10 +553,13 @@ class GitHubNotifier:
         if flat_manager_client:
             self.flat_manager = flat_manager_client
 
-        await self.notify_build_status(pipeline, "committed")
+        ok = await self.notify_build_status(pipeline, "committed")
 
         if pipeline.params.get("pr_number"):
-            await self.notify_pr_build_complete(pipeline, "committed")
+            ok = await self.notify_pr_build_complete(pipeline, "committed") and ok
+
+        if not ok:
+            raise GitHubUnavailable(retry_after_hint.get())
 
     async def notify_flat_manager_job_status(
         self,
@@ -578,3 +596,17 @@ class GitHubNotifier:
             target_url=target_url,
             context=context,
         )
+
+
+async def notify_committed(pipeline_id: uuid.UUID) -> None:
+    async with get_db() as db:
+        pipeline = await db.get(Pipeline, pipeline_id)
+    if pipeline is None:
+        return
+
+    flat_manager = None
+    if pipeline.params.get("pr_number"):
+        flat_manager = get_flat_manager_client()
+    await GitHubNotifier(flat_manager_client=flat_manager).handle_build_committed(
+        pipeline, flat_manager_client=flat_manager
+    )

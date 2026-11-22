@@ -181,6 +181,7 @@ class JobMonitor:
             await db.commit()
 
         from app.pipelines.build import defer_start_pending
+        from app.services.github_notifier import NOTIFY_COMMITTED_TASK
         from app.services.permission_assessment import SUBMIT_ASSESSMENT_TASK
 
         await defer_start_pending(db)
@@ -189,6 +190,12 @@ class JobMonitor:
                 db,
                 SUBMIT_ASSESSMENT_TASK,
                 lock=f"assessment:{pipeline_id}",
+                pipeline_id=str(pipeline_id),
+            )
+            await defer(
+                db,
+                NOTIFY_COMMITTED_TASK,
+                lock=f"notify-committed:{pipeline_id}",
                 pipeline_id=str(pipeline_id),
             )
         await db.commit()
@@ -453,7 +460,6 @@ class JobMonitor:
                 await self._notify_flat_manager_job_completed(
                     pipeline, "commit", pipeline.commit_job_id, success=True
                 )
-                await self._notify_committed(pipeline)
                 return True
             elif job_status == JobStatus.BROKEN:
                 pipeline.status = PipelineStatus.FAILED
@@ -793,25 +799,6 @@ class JobMonitor:
                 error=str(e),
             )
             return False
-
-    async def _notify_committed(self, pipeline: Pipeline) -> None:
-        try:
-            from app.services.github_notifier import GitHubNotifier
-
-            flat_manager = None
-            if pipeline.params.get("pr_number"):
-                flat_manager = get_flat_manager_client()
-
-            github_notifier = GitHubNotifier(flat_manager_client=flat_manager)
-            await github_notifier.handle_build_committed(
-                pipeline, flat_manager_client=flat_manager
-            )
-        except Exception as e:
-            logger.exception(
-                "Failed to send committed notification",
-                pipeline_id=str(pipeline.id),
-                error=str(e),
-            )
 
     async def _notify_flat_manager_job(
         self,

@@ -1,14 +1,18 @@
 import re
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from procrastinate.jobs import Job
 
 from app.config import settings
 from app.models import Pipeline, PipelineStatus, PipelineTrigger
-from app.services.github_notifier import GitHubNotifier
+from app.services.github_notifier import GitHubNotifier, notify_committed
+from app.services.task_queue import QueueRetryStrategy
 from app.utils.flat_manager import FlatManagerClient
+from app.utils.github import GitHubUnavailable, retry_after_hint
 
 
 @pytest.fixture
@@ -323,7 +327,7 @@ async def test_notify_pr_build_complete_committed_with_download(
             "app.services.github_notifier.get_build_job_arches",
             return_value=["x86_64", "aarch64"],
         ),
-        patch("app.services.github_notifier.create_pr_comment") as mock_comment,
+        patch("app.services.github_notifier.upsert_pr_comment") as mock_comment,
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
 
@@ -338,8 +342,9 @@ async def test_notify_pr_build_complete_committed_with_download(
             "- A fake warning found in linter repo check\n"
             "- A fake warning found in linter manifest check"
         )
+        marker = f"<!-- vorarbeiter:build-complete:{mock_pipeline.id} -->"
         mock_comment.assert_called_once_with(
-            git_repo="flathub/org.test.App", pr_number=42, comment=expected_comment
+            "flathub/org.test.App", 42, marker, f"{expected_comment}\n\n{marker}"
         )
 
 
@@ -354,14 +359,17 @@ async def test_notify_pr_build_complete_committed_no_build_id(
             "app.services.github_notifier.get_build_job_arches",
             return_value=["x86_64"],
         ),
-        patch("app.services.github_notifier.create_pr_comment") as mock_comment,
+        patch("app.services.github_notifier.upsert_pr_comment") as mock_comment,
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, "committed")
 
+        marker = f"<!-- vorarbeiter:build-complete:{mock_pipeline.id} -->"
         mock_comment.assert_called_once_with(
-            git_repo="flathub/org.test.App",
-            pr_number=42,
-            comment="✅ [Test build succeeded](https://example.com/logs/123).\n\n*Built for x86_64 architecture.*",
+            "flathub/org.test.App",
+            42,
+            marker,
+            "✅ [Test build succeeded](https://example.com/logs/123).\n\n*Built for x86_64 architecture.*"
+            f"\n\n{marker}",
         )
 
 
@@ -401,9 +409,14 @@ async def test_submission_preview_link(
         ),
         patch("app.services.github_notifier.get_build_job_arches", return_value=[]),
         patch("app.services.github_notifier.create_pr_comment") as post,
+        patch("app.services.github_notifier.upsert_pr_comment") as upsert,
     ):
         await github_notifier.notify_pr_build_complete(mock_pipeline, status)
-    body = post.call_args.kwargs["comment"]
+    body = (
+        upsert.call_args.args[3]
+        if status == "committed"
+        else post.call_args.kwargs["comment"]
+    )
     links = re.findall(r"\[[^\]\n]+\]\(([^)\s]+)\)", body)
     preview_url = f"{settings.base_url}/appstream/{mock_pipeline.id}"
     assert links.count(preview_url) == int(has_preview)
@@ -1105,3 +1118,89 @@ async def test_failure_comment_penalty_notice(
     assert text.startswith("❌ [Test build]")
     assert ("The last 3 test builds failed" in text) is paused
     assert (BUILDING_LOCALLY_URL in text) is paused
+
+
+@pytest.mark.asyncio
+async def test_handle_build_committed_raises_after_attempting_every_call(
+    github_notifier, mock_pipeline
+):
+    retry_after_hint.set(90.0)
+    with (
+        patch("app.services.github_notifier.update_commit_status", return_value=False),
+        patch(
+            "app.services.github_notifier.upsert_pr_comment", return_value=True
+        ) as comment,
+        patch("app.services.github_notifier.get_linter_warning_messages"),
+        patch("app.services.github_notifier.get_build_job_arches"),
+        pytest.raises(GitHubUnavailable) as raised,
+    ):
+        await github_notifier.handle_build_committed(mock_pipeline)
+
+    assert raised.value.retry_after == 90.0
+    comment.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pr_number", ["42", None])
+async def test_notify_committed_loads_pipeline_and_notifies(
+    db_session_maker, mock_pipeline, pr_number
+):
+    mock_pipeline.params = {**mock_pipeline.params, "pr_number": pr_number}
+    async with db_session_maker() as db:
+        db.add(mock_pipeline)
+        await db.commit()
+
+    @asynccontextmanager
+    async def get_test_db(*, use_replica: bool = False):
+        async with db_session_maker() as db:
+            yield db
+
+    flat_manager = MagicMock(spec=FlatManagerClient)
+    with (
+        patch("app.services.github_notifier.get_db", get_test_db),
+        patch(
+            "app.services.github_notifier.get_flat_manager_client",
+            return_value=flat_manager,
+        ),
+        patch("app.services.github_notifier.GitHubNotifier") as notifier_class,
+    ):
+        notifier_class.return_value.handle_build_committed = AsyncMock()
+        await notify_committed(mock_pipeline.id)
+        await notify_committed(uuid.uuid4())
+
+    expected = flat_manager if pr_number else None
+    notifier_class.assert_called_once_with(flat_manager_client=expected)
+    handle = notifier_class.return_value.handle_build_committed
+    handle.assert_awaited_once()
+    assert handle.await_args is not None
+    assert handle.await_args.kwargs == {"flat_manager_client": expected}
+
+
+def test_retry_after_overrides_the_backoff():
+    strategy = QueueRetryStrategy(
+        max_attempts=3, exponential_wait=2, retry_exceptions={GitHubUnavailable}
+    )
+
+    def job(attempts):
+        return Job(
+            id=1,
+            queue="github",
+            lock=None,
+            queueing_lock=None,
+            task_name="app.tasks.x",
+            task_kwargs={},
+            attempts=attempts,
+        )
+
+    rate_limited = strategy.get_retry_decision(
+        exception=GitHubUnavailable(120.0), job=job(1)
+    )
+    unavailable = strategy.get_retry_decision(exception=GitHubUnavailable(), job=job(1))
+    other = strategy.get_retry_decision(exception=ValueError(), job=job(1))
+    exhausted = strategy.get_retry_decision(exception=GitHubUnavailable(), job=job(3))
+
+    assert rate_limited is not None and rate_limited.retry_at is not None
+    assert unavailable is not None and unavailable.retry_at is not None
+    assert rate_limited.retry_at > unavailable.retry_at + timedelta(seconds=100)
+    assert other is None
+    assert exhausted is None
