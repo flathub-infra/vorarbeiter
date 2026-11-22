@@ -42,6 +42,7 @@ logger = structlog.get_logger(__name__)
 retry_after_hint: ContextVar[float | None] = ContextVar(
     "retry_after_hint", default=None
 )
+transient_failure: ContextVar[bool] = ContextVar("transient_failure", default=False)
 
 
 class GitHubUnavailable(Exception):
@@ -164,6 +165,29 @@ class GitHubAPIClient:
         return result.response
 
     async def request_with_result(
+        self,
+        method: str,
+        url: str,
+        context: dict | None = None,
+        max_retries: int | None = None,
+        raise_for_status: bool = True,
+        raise_on_error: bool = False,
+        **kwargs,
+    ) -> GitHubAPIResult:
+        result = await self._request_with_result(
+            method,
+            url,
+            context,
+            max_retries,
+            raise_for_status,
+            raise_on_error,
+            **kwargs,
+        )
+        if result.should_queue:
+            transient_failure.set(True)
+        return result
+
+    async def _request_with_result(
         self,
         method: str,
         url: str,

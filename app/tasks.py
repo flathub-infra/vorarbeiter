@@ -11,7 +11,7 @@ from app.services import (
     run_reconciler,
 )
 from app.services.task_queue import QueueRetryStrategy
-from app.utils.github import GitHubUnavailable, retry_after_hint
+from app.utils.github import GitHubUnavailable, retry_after_hint, transient_failure
 
 
 @app.task(
@@ -90,6 +90,7 @@ async def refresh_permission_review(
 )
 async def notify_committed(pipeline_id: str) -> None:
     retry_after_hint.set(None)
+    transient_failure.set(False)
     await github_notifier.notify_committed(uuid.UUID(pipeline_id))
 
 

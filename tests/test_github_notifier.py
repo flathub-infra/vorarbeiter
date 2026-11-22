@@ -12,7 +12,7 @@ from app.models import Pipeline, PipelineStatus, PipelineTrigger
 from app.services.github_notifier import GitHubNotifier, notify_committed
 from app.services.task_queue import QueueRetryStrategy
 from app.utils.flat_manager import FlatManagerClient
-from app.utils.github import GitHubUnavailable, retry_after_hint
+from app.utils.github import GitHubUnavailable, retry_after_hint, transient_failure
 
 
 @pytest.fixture
@@ -1125,6 +1125,7 @@ async def test_handle_build_committed_raises_after_attempting_every_call(
     github_notifier, mock_pipeline
 ):
     retry_after_hint.set(90.0)
+    transient_failure.set(True)
     with (
         patch("app.services.github_notifier.update_commit_status", return_value=False),
         patch(
@@ -1138,6 +1139,20 @@ async def test_handle_build_committed_raises_after_attempting_every_call(
 
     assert raised.value.retry_after == 90.0
     comment.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_build_committed_does_not_retry_permanent_failures(
+    github_notifier, mock_pipeline
+):
+    transient_failure.set(False)
+    with (
+        patch("app.services.github_notifier.update_commit_status", return_value=False),
+        patch("app.services.github_notifier.ensure_pr_comment", return_value=True),
+        patch("app.services.github_notifier.get_linter_warning_messages"),
+        patch("app.services.github_notifier.get_build_job_arches"),
+    ):
+        await github_notifier.handle_build_committed(mock_pipeline)
 
 
 @pytest.mark.asyncio

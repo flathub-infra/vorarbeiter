@@ -23,6 +23,7 @@ from app.utils.github import (
     get_build_job_arches,
     get_linter_warning_messages,
     retry_after_hint,
+    transient_failure,
     update_commit_status,
 )
 
@@ -558,8 +559,13 @@ class GitHubNotifier:
         if pipeline.params.get("pr_number"):
             ok = await self.notify_pr_build_complete(pipeline, "committed") and ok
 
-        if not ok:
+        if not ok and transient_failure.get():
             raise GitHubUnavailable(retry_after_hint.get())
+        if not ok:
+            logger.error(
+                "Committed notification failed permanently",
+                pipeline_id=str(pipeline.id),
+            )
 
     async def notify_flat_manager_job_status(
         self,
