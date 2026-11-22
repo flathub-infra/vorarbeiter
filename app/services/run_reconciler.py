@@ -75,6 +75,13 @@ async def reconcile_run(pipeline_id: uuid.UUID, conclusion: str | None) -> None:
         return
 
     status = CALLBACK_STATUSES.get(conclusion or "")
+    if status is None and pipeline.params.get("workflow_id") == "reprocheck.yml":
+        logger.warning(
+            "Leaving reprocheck pipeline running: its result is only in the lost callback",
+            pipeline_id=str(pipeline_id),
+            conclusion=conclusion,
+        )
+        return
     if status is None:
         status = await job_status(pipeline)
     logger.warning(
@@ -96,8 +103,6 @@ async def reconcile_run(pipeline_id: uuid.UUID, conclusion: str | None) -> None:
 
 
 async def job_status(pipeline: Pipeline) -> str:
-    if pipeline.params.get("workflow_id") == "reprocheck.yml":
-        return "failure"
     run_info = JobMonitor._get_github_run_info(pipeline)
     jobs = (
         await GitHubActionsService().get_workflow_run_jobs(*run_info)

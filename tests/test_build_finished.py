@@ -462,3 +462,24 @@ async def test_replay_after_worker_death_still_retries(
             )
         )
     assert [r.status for r in retries] == [PipelineStatus.RUNNING]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_run_does_not_guess_a_reprocheck_result(
+    db_session_maker, connector, flat_manager, notifier
+):
+    pipeline_id = await add_pipeline(db_session_maker)
+    async with db_session_maker() as db:
+        row = await db.get(Pipeline, pipeline_id)
+        row.params = {"workflow_id": "reprocheck.yml"}
+        await db.commit()
+
+    with patch(
+        "app.services.github_actions.GitHubActionsService.get_workflow_run_jobs",
+        AsyncMock(),
+    ) as get_jobs:
+        await run_reconciler.reconcile_run(pipeline_id, "failure")
+
+    get_jobs.assert_not_awaited()
+    async with db_session_maker() as db:
+        assert (await db.get(Pipeline, pipeline_id)).status == PipelineStatus.RUNNING
