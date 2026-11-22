@@ -380,9 +380,12 @@ async def notify_target_changed(payload: dict[str, Any]) -> None:
     pr = payload["pull_request"]
     old = payload["changes"]["base"].get("ref", {}).get("from")
     if _enabled(old) or _enabled(pr["base"]["ref"]):
-        await enqueue_permission_review(
-            payload["repository"]["full_name"], pr["number"]
+        state, description = STATUSES["target_changed"]
+        repo = payload["repository"]["full_name"]
+        await update_commit_status(
+            pr["head"]["sha"], state, repo, None, description, STATUS_CONTEXT
         )
+        await enqueue_permission_review(repo, pr["number"])
 
 
 async def enqueue_permission_review(

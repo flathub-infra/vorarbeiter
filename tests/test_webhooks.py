@@ -5258,7 +5258,7 @@ async def test_penalty_rejected_bot_build_creates_no_explicit_pipeline(
 
 @pytest.mark.parametrize("repos, expected", [(["stable"], 1), ([], 0)])
 @pytest.mark.asyncio
-async def test_edited_base_enqueues_permission_review(
+async def test_edited_base_sets_status_and_enqueues_review(
     db_session_maker, repos, expected, deferred
 ):
     from starlette.requests import Request
@@ -5286,6 +5286,9 @@ async def test_edited_base_enqueues_permission_review(
             patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
             patch("app.routes.webhooks.settings.github_webhook_secret", ""),
             patch.object(settings, "permission_status_repos", repos),
+            patch(
+                "app.services.permission_assessment.update_commit_status", AsyncMock()
+            ) as status,
         ):
             request = Request({"type": "http", "headers": []}, receive)
             await receive_github_webhook(
@@ -5301,3 +5304,11 @@ async def test_edited_base_enqueues_permission_review(
             "source_repository": "test-owner/test-repo",
             "pull_request_number": 42,
         }
+    assert status.await_count == expected
+    if expected:
+        assert status.await_args is not None
+        assert status.await_args.args[:3] == (
+            "c" * 40,
+            "pending",
+            "test-owner/test-repo",
+        )
