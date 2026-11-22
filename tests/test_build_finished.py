@@ -359,3 +359,40 @@ def test_workflow_run_event_header_routes_to_reconciliation(client: TestClient):
     assert response.status_code == 202
     assert response.json()["pipeline_id"] == str(pipeline_id)
     enqueue.assert_awaited_once_with(payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repo", ["stable", "test"])
+async def test_replayed_build_finished_creates_one_auto_retry(
+    db_session_maker, connector, flat_manager, notifier, repo
+):
+    pipeline_id = await add_pipeline(db_session_maker, status=PipelineStatus.CANCELLED)
+    async with db_session_maker() as db:
+        row = await db.get(Pipeline, pipeline_id)
+        row.flat_manager_repo = repo
+        row.params = {"repo": "flathub/org.test.App", "pr_number": "7"}
+        await db.commit()
+    build = BuildPipeline()
+    build.start_pending_builds = AsyncMock(return_value=[])
+    build._should_auto_retry = AsyncMock(return_value=True)
+
+    retry = Pipeline(
+        id=uuid.uuid4(),
+        app_id="org.test.App",
+        status=PipelineStatus.PENDING,
+        params={},
+    )
+    with (
+        patch.object(build, "create_pipeline", AsyncMock(return_value=retry)) as create,
+        patch.object(
+            build, "prepare_pipeline_for_start", AsyncMock(return_value=retry)
+        ),
+        patch.object(build, "supersede_conflicting_test_pipelines", AsyncMock()),
+        patch.object(build, "should_queue_test_build", AsyncMock(return_value=False)),
+        patch.object(build, "start_pipeline", AsyncMock(return_value=retry)),
+    ):
+        await build.finish_build(pipeline_id, "cancelled", True)
+        await build.finish_build(pipeline_id, "cancelled", True)
+
+    create.assert_awaited_once()
+    assert notifier.handle_build_completion.await_count == (repo == "test")

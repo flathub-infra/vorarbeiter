@@ -73,7 +73,8 @@ FAST_BUILD_MIN_BUILDS = 3
 FAST_BUILD_LOOKBACK_DAYS = 90
 SPOT_BUILD_TYPES = ("medium", "large")
 PR_BUILD_DEBOUNCE_SECONDS = 300
-AutoRetryOutcome = Literal["started", "queued", "failed", "superseded"]
+AutoRetryOutcome = Literal["started", "queued", "failed", "superseded", "duplicate"]
+AUTO_RETRY_CLAIMED_KEY = "auto_retry_claimed"
 BUILD_FINISHED_TASK = "app.tasks.build_finished"
 REPROCHECK_RETRY_TASK = "app.tasks.retry_reprocheck"
 START_PENDING_TASK = "app.tasks.start_pending_builds"
@@ -921,7 +922,23 @@ class BuildPipeline:
             )
         return newer is not None
 
+    @staticmethod
+    async def _claim_auto_retry(pipeline_id: uuid.UUID) -> bool:
+        async with get_db() as db:
+            pipeline = await db.get(Pipeline, pipeline_id, with_for_update=True)
+            if pipeline is None or (pipeline.provider_data or {}).get(
+                AUTO_RETRY_CLAIMED_KEY
+            ):
+                return False
+            pipeline.provider_data = {
+                **(pipeline.provider_data or {}),
+                AUTO_RETRY_CLAIMED_KEY: True,
+            }
+            return True
+
     async def _retry_on_demand(self, pipeline: Pipeline) -> AutoRetryOutcome:
+        if not await self._claim_auto_retry(pipeline.id):
+            return "duplicate"
         params = {
             key: value
             for key, value in (pipeline.params or {}).items()
@@ -1083,7 +1100,8 @@ class BuildPipeline:
             auto_retry: AutoRetryOutcome | None = None
             if infrastructure_cancellation and not pipeline.params.get("auto_retried"):
                 if pipeline.flat_manager_repo in ["stable", "beta"]:
-                    if await self._retry_on_demand(pipeline) in ("started", "queued"):
+                    outcome = await self._retry_on_demand(pipeline)
+                    if outcome in ("started", "queued", "duplicate"):
                         await defer_start_pending()
                         return
                 elif (
@@ -1091,6 +1109,9 @@ class BuildPipeline:
                     and await self._should_auto_retry(pipeline)
                 ):
                     auto_retry = await self._retry_on_demand(pipeline)
+                    if auto_retry == "duplicate":
+                        await defer_start_pending()
+                        return
             if (
                 status_value == "success"
                 and pipeline.params.get("workflow_id", "build.yml") == "build.yml"
@@ -1394,7 +1415,7 @@ class BuildPipeline:
             if not pipeline:
                 raise ValueError(f"Pipeline {pipeline_id} not found")
             await db.commit()
-        if await self._retry_on_demand(pipeline) in ("started", "queued"):
+        if await self._retry_on_demand(pipeline) in ("started", "queued", "duplicate"):
             await defer_start_pending()
             return
         await self.handle_reprocheck_callback(

@@ -26,6 +26,7 @@ def build_pipeline(mock_provider):
     with patch("app.services.github_actions_service", mock_provider):
         pipeline = BuildPipeline()
         pipeline.start_pending_builds = AsyncMock(return_value=[])
+        pipeline._claim_auto_retry = AsyncMock(return_value=True)
         return pipeline
 
 
