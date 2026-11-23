@@ -11,9 +11,11 @@ from app.services import (
     permission_assessment,
     publishing,
     publishing_service,
+    recovery,
     run_reconciler,
 )
 from app.services.task_queue import QueueRetryStrategy
+from app.utils import github
 from app.utils.github import GitHubUnavailable, retry_after_hint, transient_failure
 
 
@@ -98,6 +100,22 @@ async def notify_committed(pipeline_id: str) -> None:
 
 
 @app.task(
+    name=github.COMMENT_REACTION_TASK,
+    queue="github",
+    retry=QueueRetryStrategy(
+        max_attempts=8, exponential_wait=2, retry_exceptions={GitHubUnavailable}
+    ),
+)
+async def add_comment_reaction(git_repo: str, comment_id: int) -> None:
+    retry_after_hint.set(None)
+    transient_failure.set(False)
+    if not await github.add_comment_reaction(git_repo, comment_id) and (
+        transient_failure.get()
+    ):
+        raise GitHubUnavailable(retry_after_hint.get())
+
+
+@app.task(
     queue="maintenance",
     retry=QueueRetryStrategy(
         max_attempts=5, wait=60, retry_exceptions={run_reconciler.RunJobsUnavailable}
@@ -128,6 +146,17 @@ async def flat_manager_event(delivery_id: int) -> None:
 )
 async def publish_pipeline(app_id: str, flat_manager_repo: str) -> None:
     await publishing_service.publish_pipeline(app_id, flat_manager_repo)
+
+
+@app.task(name=recovery.RECOVER_PIPELINE_TASK, queue="maintenance")
+async def recover_pipeline(pipeline_id: str) -> None:
+    await recovery.recover_pipeline(uuid.UUID(pipeline_id))
+
+
+@app.periodic(cron="7 * * * *")  # pyrefly: ignore[bad-argument-type]
+@app.task(queue="maintenance", queueing_lock="recover_stale", pass_context=True)
+async def recover_stale(context: JobContext, timestamp: int) -> None:
+    await recovery.recover_stale()
 
 
 @app.periodic(cron="*/10 * * * *")  # pyrefly: ignore[bad-argument-type]

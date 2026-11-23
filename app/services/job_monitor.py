@@ -1,18 +1,15 @@
 import asyncio
 import json
-import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlparse
 
 import structlog
-from sqlalchemy import or_, select, update
-from sqlalchemy.engine import CursorResult
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Pipeline, PipelineStatus
 from app.services.github_actions import GitHubActionsService
-from app.services.task_queue import defer
 from app.utils.flat_manager import (
     JobKind,
     JobResponse,
@@ -62,139 +59,6 @@ class JobMonitor:
         self.github_actions = GitHubActionsService()
         self.db = db
         self._db_lock = asyncio.Lock()
-
-    async def check_all_active_pipelines(self, db: AsyncSession) -> dict[str, int]:
-        now = datetime.now(tz=UTC)
-        cutoff_date = now - timedelta(hours=24)
-        running_build_cutoff = now - DEFAULT_BUILD_TIMEOUT - BUILD_TIMEOUT_SAFETY_MARGIN
-        reprocheck_running_cutoff = (
-            now - REPROCHECK_TIMEOUT - BUILD_TIMEOUT_SAFETY_MARGIN
-        )
-
-        workflow_id = Pipeline.params["workflow_id"].as_string()
-        expired = cast(
-            CursorResult[Any],
-            await db.execute(
-                update(Pipeline)
-                .where(
-                    Pipeline.created_at < now - STALE_PIPELINE_TIMEOUT,
-                    or_(
-                        Pipeline.status == PipelineStatus.PENDING,
-                        (Pipeline.status == PipelineStatus.SUCCEEDED)
-                        & or_(
-                            workflow_id.is_(None),
-                            workflow_id != "reprocheck.yml",
-                        ),
-                        (Pipeline.status == PipelineStatus.PUBLISHING)
-                        & Pipeline.update_repo_job_id.isnot(None),
-                    ),
-                )
-                .values(status=PipelineStatus.EXPIRED)
-            ),
-        )
-        if expired.rowcount:
-            logger.warning("Expired stale pipelines", count=expired.rowcount)
-
-        query = select(Pipeline).where(
-            or_(
-                (Pipeline.created_at > cutoff_date)
-                & or_(
-                    (Pipeline.status == PipelineStatus.SUCCEEDED)
-                    & Pipeline.build_id.isnot(None)
-                    & Pipeline.commit_job_id.is_(None),
-                    (Pipeline.status == PipelineStatus.COMMITTED)
-                    & Pipeline.build_id.isnot(None)
-                    & Pipeline.publish_job_id.is_(None),
-                ),
-                (Pipeline.status == PipelineStatus.PUBLISHING)
-                & Pipeline.update_repo_job_id.is_(None)
-                & Pipeline.flat_manager_repo.in_(["stable", "beta"]),
-                (Pipeline.status == PipelineStatus.RUNNING)
-                & (
-                    (
-                        Pipeline.started_at.isnot(None)
-                        & (Pipeline.started_at < running_build_cutoff)
-                    )
-                    | (
-                        Pipeline.started_at.is_(None)
-                        & (Pipeline.created_at < running_build_cutoff)
-                    )
-                ),
-                (Pipeline.status == PipelineStatus.RUNNING)
-                & (Pipeline.params["workflow_id"].as_string() == "reprocheck.yml")
-                & (
-                    (
-                        Pipeline.started_at.isnot(None)
-                        & (Pipeline.started_at < reprocheck_running_cutoff)
-                    )
-                    | (
-                        Pipeline.started_at.is_(None)
-                        & (Pipeline.created_at < reprocheck_running_cutoff)
-                    )
-                ),
-            )
-        )
-        result = await db.execute(query)
-        pipelines = list(result.scalars().all())
-
-        # Benchmarks show the heavy /extended endpoint knees around C=5.
-        sem = asyncio.Semaphore(5)
-
-        async def _process(pipeline: Pipeline) -> bool:
-            async with sem:
-                initial_status = pipeline.status
-                try:
-                    return await self.check_and_update_pipeline_jobs(pipeline)
-                except Exception as e:
-                    logger.exception(
-                        "Error processing pipeline in check-jobs",
-                        pipeline_id=str(pipeline.id),
-                        error=str(e),
-                    )
-                    return False
-                finally:
-                    if (
-                        initial_status == PipelineStatus.SUCCEEDED
-                        and pipeline.status == PipelineStatus.COMMITTED
-                    ):
-                        committed.append(pipeline.id)
-
-        committed: list[uuid.UUID] = []
-        results = await asyncio.gather(*(_process(pipeline) for pipeline in pipelines))
-        updated_count = sum(1 for result in results if result)
-
-        if committed or any(
-            result
-            and pipeline.status not in (PipelineStatus.PENDING, PipelineStatus.RUNNING)
-            and self._is_spot_build_type((pipeline.params or {}).get("build_type"))
-            for pipeline, result in zip(pipelines, results, strict=True)
-        ):
-            await db.commit()
-
-        from app.pipelines.build import defer_start_pending
-        from app.services.github_notifier import NOTIFY_COMMITTED_TASK
-        from app.services.permission_assessment import SUBMIT_ASSESSMENT_TASK
-
-        await defer_start_pending(db)
-        for pipeline_id in committed:
-            await defer(
-                db,
-                SUBMIT_ASSESSMENT_TASK,
-                lock=f"assessment:{pipeline_id}",
-                pipeline_id=str(pipeline_id),
-            )
-            await defer(
-                db,
-                NOTIFY_COMMITTED_TASK,
-                lock=f"notify-committed:{pipeline_id}",
-                pipeline_id=str(pipeline_id),
-            )
-        await db.commit()
-
-        return {
-            "checked_pipelines": len(pipelines),
-            "updated_pipelines": updated_count,
-        }
 
     async def check_and_update_pipeline_jobs(
         self, pipeline: Pipeline, event: "JobFinished | None" = None

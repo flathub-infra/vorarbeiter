@@ -725,11 +725,13 @@ async def ensure_pr_comment(
     return await _find_marker_comment(client, url, marker, context) is True
 
 
+COMMENT_REACTION_TASK = "app.tasks.add_comment_reaction"
+
+
 async def add_comment_reaction(
     git_repo: str,
     comment_id: int,
     content: str = "+1",
-    db: "AsyncSession | None" = None,
 ) -> bool:
     if not git_repo:
         logger.error("Missing git_repo for GitHub reaction. Skipping reaction.")
@@ -754,19 +756,6 @@ async def add_comment_reaction(
             content=content,
         )
         return True
-
-    if result.should_queue and db:
-        from app.services.github_task import GitHubTaskService
-
-        await GitHubTaskService().queue_task(
-            db,
-            task_type="comment_reaction",
-            method="post",
-            url=url,
-            payload=payload,
-            context=ctx,
-            retry_after=result.retry_after,
-        )
 
     return False
 

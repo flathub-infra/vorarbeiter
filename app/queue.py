@@ -13,4 +13,5 @@ conninfo = (
 app = procrastinate.App(
     connector=PsycopgConnector(conninfo=conninfo),
     import_paths=["app.tasks"],
+    periodic_defaults={"max_delay": 3600},
 )

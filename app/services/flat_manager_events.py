@@ -77,7 +77,7 @@ def webhook_key() -> bytes | None:
     return _read_key(path) if path else None
 
 
-async def record_event(event: FlatManagerEvent) -> bool:
+async def record_event(event: FlatManagerEvent) -> None:
     async with get_db() as db:
         try:
             async with db.begin_nested():
@@ -91,9 +91,11 @@ async def record_event(event: FlatManagerEvent) -> bool:
                 )
         except IntegrityError:
             logger.info("Duplicate flat-manager delivery", delivery_id=event.id)
-            return False
+            return
         await defer(db, TASK_NAME, delivery_id=event.id)
-    return True
+    logger.info(
+        "Flat-manager delivery recorded", delivery_id=event.id, event_type=event.type
+    )
 
 
 async def defer_transition_effects(

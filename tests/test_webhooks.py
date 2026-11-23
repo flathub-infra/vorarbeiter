@@ -348,15 +348,16 @@ def test_receive_github_webhook_reacts_to_bot_command(client: TestClient, mock_d
             AsyncMock(return_value=(False, None)),
         ),
         patch("app.routes.webhooks.create_pipeline", AsyncMock(return_value=None)),
-        patch("app.routes.webhooks.add_comment_reaction", mock_reaction),
+        patch("app.routes.webhooks.defer", mock_reaction),
     ):
         response = client.post("/api/webhooks/github", json=payload, headers=headers)
 
     assert response.status_code == 202
     mock_reaction.assert_awaited_once()
-    args, _kwargs = mock_reaction.call_args
-    assert args[0] == "flathub/test-app"
-    assert args[1] == 123456789
+    args, kwargs = mock_reaction.call_args
+    assert args[1] == "app.tasks.add_comment_reaction"
+    assert kwargs["git_repo"] == "flathub/test-app"
+    assert kwargs["comment_id"] == 123456789
 
 
 def test_receive_github_webhook_missing_header(client: TestClient):

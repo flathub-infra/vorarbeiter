@@ -17,7 +17,7 @@ from app.config import settings
 from app.database import engine as app_engine
 from app.main import app
 from app.models import Base
-from app.services.job_monitor import JobMonitor
+from app.services import recovery
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -49,7 +49,8 @@ def deferred(request):
     stub = AsyncMock(return_value=True)
     with (
         patch("app.pipelines.build.defer", stub),
-        patch("app.services.job_monitor.defer", stub),
+        patch("app.services.recovery.defer", stub),
+        patch("app.routes.webhooks.defer", stub),
         patch("app.services.permission_assessment.defer", stub),
         patch("app.services.flat_manager_events.defer", stub),
         patch("app.services.publishing.defer", stub),
@@ -104,12 +105,28 @@ def auth_headers():
 
 
 @pytest.fixture
-def run_check_all_active_pipelines():
+def run_recovery(deferred):
     async def run(session_maker):
-        async with session_maker() as session:
-            result = await JobMonitor(db=session).check_all_active_pipelines(session)
-            await session.commit()
-            return result
+        @asynccontextmanager
+        async def get_test_db(*, use_replica: bool = False):
+            async with session_maker() as session:
+                yield session
+                await session.commit()
+
+        with patch("app.services.recovery.get_db", get_test_db):
+            await recovery.recover_stale()
+            recover_calls = [
+                call
+                for call in deferred.await_args_list
+                if call.args[1] == recovery.RECOVER_PIPELINE_TASK
+            ]
+            updated = 0
+            for call in recover_calls:
+                if await recovery.recover_pipeline(
+                    uuid.UUID(call.kwargs["pipeline_id"])
+                ):
+                    updated += 1
+        return {"checked_pipelines": len(recover_calls), "updated_pipelines": updated}
 
     return run
 

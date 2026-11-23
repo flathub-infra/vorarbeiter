@@ -904,39 +904,6 @@ async def test_add_comment_reaction_missing_comment_id(mock_settings, mock_httpx
 
 
 @pytest.mark.asyncio
-async def test_add_comment_reaction_queues_on_rate_limit(
-    mock_settings, mock_httpx, db_session_maker
-):
-    from sqlalchemy import select
-
-    from app.models.github_task import GitHubTask
-
-    rate_limit_response = mock_httpx.set_response(
-        "request",
-        status_code=403,
-        json_data={"message": "API rate limit exceeded"},
-    )
-    rate_limit_response.headers = {"Retry-After": "60"}
-
-    with mock_httpx.patch():
-        async with db_session_maker() as db:
-            result = await add_comment_reaction(
-                git_repo="flathub/test-app", comment_id=98765, db=db
-            )
-            await db.commit()
-
-        async with db_session_maker() as db:
-            tasks = (await db.execute(select(GitHubTask))).scalars().all()
-
-    assert result is False
-    assert len(tasks) == 1
-    assert tasks[0].task_type == "comment_reaction"
-    assert tasks[0].method == "post"
-    assert tasks[0].payload == {"content": "+1"}
-    assert "issues/comments/98765/reactions" in tasks[0].url
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "replace, expected_method",
     [

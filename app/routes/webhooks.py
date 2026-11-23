@@ -33,6 +33,7 @@ from app.services.permission_assessment import (
 )
 from app.services.permission_assessment import notify_target_changed
 from app.services.run_reconciler import enqueue_run_reconciliation
+from app.services.task_queue import defer
 from app.services.test_build_penalty import (
     BUILDING_LOCALLY_URL,
     format_penalty_notice,
@@ -41,8 +42,8 @@ from app.services.test_build_penalty import (
 )
 from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_repo
 from app.utils.github import (
+    COMMENT_REACTION_TASK,
     REVIEWERS_MENTION,
-    add_comment_reaction,
     add_issue_comment,
     close_github_issue,
     create_pr_comment,
@@ -1517,7 +1518,13 @@ async def receive_github_webhook(
                 comment_id = payload.get("comment", {}).get("id")
                 if comment_id:
                     async with get_db() as db:
-                        await add_comment_reaction(repo_name, comment_id, db=db)
+                        await defer(
+                            db,
+                            COMMENT_REACTION_TASK,
+                            lock=f"reaction:{repo_name}:{comment_id}",
+                            git_repo=repo_name,
+                            comment_id=comment_id,
+                        )
                         await db.commit()
 
             if is_eol_only:

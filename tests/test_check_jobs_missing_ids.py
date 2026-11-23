@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -8,9 +9,7 @@ from app.models import Pipeline, PipelineStatus
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_fetches_missing_ids(
-    db_session_maker, run_check_all_active_pipelines
-):
+async def test_check_jobs_fetches_missing_ids(db_session_maker, run_recovery):
     session_maker = db_session_maker
 
     pipeline1 = Pipeline(
@@ -21,6 +20,7 @@ async def test_check_jobs_fetches_missing_ids(
         publish_job_id=None,
         build_id=123,
         flat_manager_repo="stable",
+        created_at=datetime.now(tz=UTC) - timedelta(minutes=11),
         params={},
     )
 
@@ -32,6 +32,7 @@ async def test_check_jobs_fetches_missing_ids(
         publish_job_id=None,
         build_id=124,
         flat_manager_repo="stable",
+        created_at=datetime.now(tz=UTC) - timedelta(minutes=11),
         params={},
     )
 
@@ -53,7 +54,7 @@ async def test_check_jobs_fetches_missing_ids(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        result = await run_check_all_active_pipelines(session_maker)
+        result = await run_recovery(session_maker)
 
         assert result["checked_pipelines"] == 2
         assert result["updated_pipelines"] == 2
@@ -73,9 +74,7 @@ async def test_check_jobs_fetches_missing_ids(
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_handles_partial_missing_ids(
-    db_session_maker, run_check_all_active_pipelines
-):
+async def test_check_jobs_handles_partial_missing_ids(db_session_maker, run_recovery):
     session_maker = db_session_maker
 
     pipeline = Pipeline(
@@ -86,6 +85,7 @@ async def test_check_jobs_handles_partial_missing_ids(
         publish_job_id=999,
         build_id=125,
         flat_manager_repo="stable",
+        created_at=datetime.now(tz=UTC) - timedelta(minutes=11),
         params={},
     )
 
@@ -102,7 +102,7 @@ async def test_check_jobs_handles_partial_missing_ids(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        result = await run_check_all_active_pipelines(session_maker)
+        result = await run_recovery(session_maker)
 
         assert result["checked_pipelines"] == 1
         assert result["updated_pipelines"] == 1
@@ -116,9 +116,7 @@ async def test_check_jobs_handles_partial_missing_ids(
 
 
 @pytest.mark.asyncio
-async def test_check_jobs_handles_fetch_error(
-    db_session_maker, run_check_all_active_pipelines
-):
+async def test_check_jobs_handles_fetch_error(db_session_maker, run_recovery):
     session_maker = db_session_maker
 
     pipeline = Pipeline(
@@ -128,6 +126,7 @@ async def test_check_jobs_handles_fetch_error(
         commit_job_id=None,
         build_id=126,
         flat_manager_repo="stable",
+        created_at=datetime.now(tz=UTC) - timedelta(minutes=11),
         params={},
     )
 
@@ -142,7 +141,7 @@ async def test_check_jobs_handles_fetch_error(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        result = await run_check_all_active_pipelines(session_maker)
+        result = await run_recovery(session_maker)
 
         assert result["checked_pipelines"] == 1
         assert result["updated_pipelines"] == 0

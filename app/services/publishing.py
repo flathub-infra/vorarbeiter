@@ -70,31 +70,6 @@ class PublishingService:
                 error=str(e),
             )
 
-    async def publish_pipelines(self, db: AsyncSession) -> PublishResult:
-        logger.info("Starting pipeline publishing process")
-
-        result = PublishResult()
-        now = datetime.now(tz=UTC)
-
-        pipelines = await self._get_publishable_pipelines(db)
-        pipeline_groups = self._group_pipelines_for_publishing(pipelines)
-
-        for (app_id, flat_manager_repo), group in pipeline_groups.items():
-            await self._process_pipeline_group(
-                db, app_id, flat_manager_repo, group, result, now
-            )
-
-        await db.commit()
-
-        logger.info(
-            "Pipeline publishing completed",
-            published_count=len(result.published),
-            superseded_count=len(result.superseded),
-            error_count=len(result.errors),
-        )
-
-        return result
-
     async def publish_pipeline(self, app_id: str, flat_manager_repo: str) -> None:
         async with get_db() as db:
             query = (
@@ -121,34 +96,6 @@ class PublishingService:
             ]
         if waiting:
             raise PublishNotReady(waiting)
-
-    async def _get_publishable_pipelines(self, db: AsyncSession) -> list[Pipeline]:
-        query = select(Pipeline).where(
-            Pipeline.status == PipelineStatus.COMMITTED,
-            Pipeline.flat_manager_repo.in_(["stable", "beta"]),
-        )
-        result = await db.execute(query)
-        return list(result.scalars().all())
-
-    def _group_pipelines_for_publishing(
-        self, pipelines: list[Pipeline]
-    ) -> dict[tuple[str, str], list[Pipeline]]:
-        pipeline_groups: dict[tuple[str, str], list[Pipeline]] = {}
-
-        for pipeline in pipelines:
-            if pipeline.flat_manager_repo is None:
-                logger.warning(
-                    "Pipeline has null flat_manager_repo, skipping",
-                    pipeline_id=str(pipeline.id),
-                )
-                continue
-
-            key = (pipeline.app_id, pipeline.flat_manager_repo)
-            if key not in pipeline_groups:
-                pipeline_groups[key] = []
-            pipeline_groups[key].append(pipeline)
-
-        return pipeline_groups
 
     async def _process_pipeline_group(
         self,

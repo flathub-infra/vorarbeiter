@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -9,7 +10,7 @@ from app.models import Pipeline, PipelineStatus
 
 @pytest.mark.asyncio
 async def test_fetch_missing_ids_skips_publish_for_test_pipelines(
-    db_session_maker, run_check_all_active_pipelines
+    db_session_maker, run_recovery
 ):
     session_maker = db_session_maker
 
@@ -21,6 +22,7 @@ async def test_fetch_missing_ids_skips_publish_for_test_pipelines(
         publish_job_id=None,
         build_id=123,
         flat_manager_repo="test",
+        created_at=datetime.now(tz=UTC) - timedelta(minutes=11),
         params={},
     )
 
@@ -38,7 +40,7 @@ async def test_fetch_missing_ids_skips_publish_for_test_pipelines(
         "app.services.job_monitor.get_flat_manager_client",
         return_value=mock_fm_instance,
     ):
-        result = await run_check_all_active_pipelines(session_maker)
+        result = await run_recovery(session_maker)
 
         assert result["checked_pipelines"] == 1
         assert result["updated_pipelines"] == 1

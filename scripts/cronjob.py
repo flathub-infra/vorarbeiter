@@ -17,9 +17,6 @@ from app.config import settings
 from app.logger import setup_logging
 
 COMMANDS = (
-    "publish",
-    "check-jobs",
-    "github-tasks-process",
     "github-tasks-cleanup",
     "inactive-repos-refresh",
     "prune-beta",
@@ -41,46 +38,6 @@ def setup_observability() -> None:
             enable_tracing=True,
         )
         logger.info("Sentry integration initialized", dsn=settings.sentry_dsn)
-
-
-async def publish_pipelines() -> dict[str, Any]:
-    from app.database import get_db
-    from app.services import publishing_service
-
-    async with get_db() as db:
-        result = await publishing_service.publish_pipelines(db)
-
-    return {
-        "published": result.published,
-        "superseded": result.superseded,
-        "errors": result.errors,
-    }
-
-
-async def check_jobs() -> dict[str, Any]:
-    from app.database import get_db
-    from app.services.job_monitor import JobMonitor
-
-    async with get_db() as db:
-        result = await JobMonitor(db=db).check_all_active_pipelines(db)
-
-    return {
-        "status": "completed",
-        **result,
-    }
-
-
-async def process_github_tasks() -> dict[str, Any]:
-    from app.database import get_db
-    from app.services import github_task_service
-
-    async with get_db() as db:
-        processed = await github_task_service.process_pending_tasks(db)
-
-    return {
-        "status": "completed",
-        "processed_tasks": processed,
-    }
 
 
 async def cleanup_github_tasks() -> dict[str, Any]:
@@ -175,12 +132,6 @@ async def close_flat_manager_client() -> None:
 
 async def dispatch(command: str) -> dict[str, Any]:
     match command:
-        case "publish":
-            return await publish_pipelines()
-        case "check-jobs":
-            return await check_jobs()
-        case "github-tasks-process":
-            return await process_github_tasks()
         case "github-tasks-cleanup":
             return await cleanup_github_tasks()
         case "inactive-repos-refresh":
