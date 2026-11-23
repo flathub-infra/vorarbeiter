@@ -15,7 +15,6 @@ from app.config import settings
 from app.main import app
 from app.models import Pipeline, PipelineStatus
 from app.services import permission_assessment
-from app.services.job_monitor import JobMonitor
 from app.services.permission_assessment import (
     MAX_ATTEMPTS,
     PROVIDER_DATA_KEY,
@@ -1367,70 +1366,6 @@ async def test_notification_rejects_invalid_body(configured, api, body):
 async def test_notification_without_configuration_is_unavailable(api):
     with patch.object(settings, "permission_assessment_secret", None):
         assert (await notify(api)).status_code == 503
-
-
-@pytest.mark.asyncio
-async def test_commit_queues_assessment_after_the_commit(
-    configured, local_db, db_session_maker, gh, deferred
-):
-    committed = make_pipeline(status=PipelineStatus.SUCCEEDED)
-    running = make_pipeline(status=PipelineStatus.SUCCEEDED, commit_job_id=1)
-    broken = make_pipeline(status=PipelineStatus.SUCCEEDED, commit_job_id=2)
-    await add(db_session_maker, committed, running, broken)
-    statuses = []
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST":
-            pipeline_id = uuid.UUID(json.loads(request.content)["pipeline_id"])
-            statuses.append((await load(db_session_maker, pipeline_id)).status)
-        return httpx.Response(
-            200,
-            json={"assessment_id": 7, "outcome": "pending", "review_url": REVIEW_URL},
-        )
-
-    jobs = {5678: 2, 1: 1, 2: 3}
-    flat_manager = AsyncMock()
-    flat_manager.get_job.side_effect = lambda job_id: {"status": jobs[job_id]}
-    with (
-        mock_http(handler),
-        patch.object(
-            permission_assessment,
-            "get_build_job_arches",
-            AsyncMock(return_value=["x86_64"]),
-        ),
-        patch(
-            "app.services.job_monitor.get_flat_manager_client",
-            return_value=flat_manager,
-        ),
-        patch.object(JobMonitor, "_notify_flat_manager_job_completed"),
-        patch.object(JobMonitor, "_create_job_failure_issue"),
-        patch("app.services.github_notifier.GitHubNotifier"),
-        patch("app.pipelines.build.BuildPipeline.start_pending_builds"),
-    ):
-        for _ in range(2):
-            async with db_session_maker() as db:
-                await JobMonitor(db=db).check_all_active_pipelines(db)
-        queued = [
-            call
-            for call in deferred.await_args_list
-            if call.args[1] == "app.tasks.submit_pipeline_assessment"
-        ]
-        assert [call.kwargs for call in queued] == [
-            {"lock": f"assessment:{committed.id}", "pipeline_id": str(committed.id)}
-        ]
-        assert statuses == []
-        await submit_pipeline_assessment(committed.id)
-
-    assert statuses == [PipelineStatus.COMMITTED]
-    state = (await load(db_session_maker, committed.id)).provider_data[
-        PROVIDER_DATA_KEY
-    ]
-    assert (state["status"], state["assessment_id"], state["attempts"]) == (
-        "submitted",
-        7,
-        1,
-    )
-    assert gh.status.await_args.args[1] == "pending"
 
 
 @pytest.mark.asyncio

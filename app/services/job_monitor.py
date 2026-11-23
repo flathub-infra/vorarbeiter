@@ -2,7 +2,7 @@ import asyncio
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import structlog
@@ -19,6 +19,9 @@ from app.utils.flat_manager import (
     JobStatus,
     get_flat_manager_client,
 )
+
+if TYPE_CHECKING:
+    from app.services.flat_manager_events import JobFinished
 
 logger = structlog.get_logger(__name__)
 
@@ -97,23 +100,11 @@ class JobMonitor:
                 (Pipeline.created_at > cutoff_date)
                 & or_(
                     (Pipeline.status == PipelineStatus.SUCCEEDED)
-                    & Pipeline.commit_job_id.isnot(None),
-                    (Pipeline.status == PipelineStatus.COMMITTED)
-                    & Pipeline.publish_job_id.isnot(None),
-                    (Pipeline.status == PipelineStatus.PUBLISHING)
-                    & Pipeline.update_repo_job_id.isnot(None),
-                    (Pipeline.status == PipelineStatus.SUCCEEDED)
                     & Pipeline.build_id.isnot(None)
                     & Pipeline.commit_job_id.is_(None),
                     (Pipeline.status == PipelineStatus.COMMITTED)
                     & Pipeline.build_id.isnot(None)
                     & Pipeline.publish_job_id.is_(None),
-                    (Pipeline.status == PipelineStatus.PUBLISHED)
-                    & (Pipeline.published_at > cutoff_date)
-                    & (
-                        Pipeline.publish_job_id.isnot(None)
-                        | Pipeline.update_repo_job_id.isnot(None)
-                    ),
                 ),
                 (Pipeline.status == PipelineStatus.PUBLISHING)
                 & Pipeline.update_repo_job_id.is_(None)
@@ -205,35 +196,38 @@ class JobMonitor:
             "updated_pipelines": updated_count,
         }
 
-    async def check_and_update_pipeline_jobs(self, pipeline: Pipeline) -> bool:
+    async def check_and_update_pipeline_jobs(
+        self, pipeline: Pipeline, event: "JobFinished | None" = None
+    ) -> bool:
         updated = False
 
         if pipeline.status == PipelineStatus.RUNNING:
             return await self._expire_timed_out_running_build(pipeline)
 
         if (
-            pipeline.build_id
+            event is None
+            and pipeline.build_id
             and (pipeline.commit_job_id is None or pipeline.publish_job_id is None)
             and await self._fetch_missing_job_ids(pipeline)
         ):
             updated = True
 
         if pipeline.status == PipelineStatus.SUCCEEDED and pipeline.commit_job_id:
-            if await self._process_succeeded_pipeline(pipeline):
+            if await self._process_succeeded_pipeline(pipeline, event):
                 updated = True
         elif (
             pipeline.status == PipelineStatus.COMMITTED
             and pipeline.publish_job_id
             and pipeline.flat_manager_repo in ["beta", "stable"]
         ):
-            if await self._process_publish_job(pipeline):
+            if await self._process_publish_job(pipeline, event):
                 updated = True
         elif (
             pipeline.status == PipelineStatus.PUBLISHING
             and pipeline.update_repo_job_id
             and pipeline.flat_manager_repo in ["beta", "stable"]
         ):
-            if await self._process_update_repo_job(pipeline):
+            if await self._process_update_repo_job(pipeline, event):
                 updated = True
         elif (
             pipeline.status == PipelineStatus.PUBLISHING
@@ -442,12 +436,28 @@ class JobMonitor:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
 
-    async def _process_succeeded_pipeline(self, pipeline: Pipeline) -> bool:
+    async def _get_job(self, job_id: int, event: "JobFinished | None") -> JobResponse:
+        if event is None or event.job.id != job_id:
+            return await self.flat_manager.get_job(job_id)
+        return cast(
+            JobResponse,
+            {
+                "id": event.job.id,
+                "kind": event.job.kind,
+                "status": event.job.status,
+                "repo": event.job.repo,
+                "results": event.job.results,
+            },
+        )
+
+    async def _process_succeeded_pipeline(
+        self, pipeline: Pipeline, event: "JobFinished | None" = None
+    ) -> bool:
         if not pipeline.commit_job_id:
             return False
 
         try:
-            job_response = await self.flat_manager.get_job(pipeline.commit_job_id)
+            job_response = await self._get_job(pipeline.commit_job_id, event)
             job_status = JobStatus(job_response["status"])
 
             if job_status == JobStatus.ENDED:
@@ -527,9 +537,10 @@ class JobMonitor:
         expected_kind: JobKind,
         job_type: str,
         job_id_field_name: str,
+        event: "JobFinished | None" = None,
     ) -> tuple[JobStatus, JobResponse] | None:
         try:
-            job_response = await self.flat_manager.get_job(job_id)
+            job_response = await self._get_job(job_id, event)
             job_status = JobStatus(job_response["status"])
             job_kind = JobKind(job_response["kind"])
 
@@ -574,7 +585,9 @@ class JobMonitor:
                 pipeline, job_type, job_id, job_response
             )
 
-    async def _process_publish_job(self, pipeline: Pipeline) -> bool:
+    async def _process_publish_job(
+        self, pipeline: Pipeline, event: "JobFinished | None" = None
+    ) -> bool:
         if not pipeline.publish_job_id:
             return False
 
@@ -584,6 +597,7 @@ class JobMonitor:
             JobKind.PUBLISH,
             "publish",
             "publish_job_id",
+            event,
         )
         if result is None:
             return False
@@ -642,7 +656,9 @@ class JobMonitor:
             )
             return False
 
-    async def _process_update_repo_job(self, pipeline: Pipeline) -> bool:
+    async def _process_update_repo_job(
+        self, pipeline: Pipeline, event: "JobFinished | None" = None
+    ) -> bool:
         if not pipeline.update_repo_job_id:
             return False
 
@@ -652,6 +668,7 @@ class JobMonitor:
             JobKind.UPDATE_REPO,
             "update-repo",
             "update_repo_job_id",
+            event,
         )
         if result is None:
             return False
@@ -996,6 +1013,8 @@ class JobMonitor:
             from app.services.github_notifier import GitHubNotifier
 
             github_notifier = GitHubNotifier()
+            if "log" not in job_response:
+                job_response = await self.flat_manager.get_job(job_id)
             await github_notifier.create_stable_job_failure_issue(
                 pipeline, job_type, job_id, dict(job_response)
             )

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import attr
@@ -16,6 +16,8 @@ logger = structlog.get_logger(__name__)
 
 @attr.dataclass(kw_only=True)
 class QueueRetryStrategy(RetryStrategy):
+    max_wait: int | None = None
+
     def get_retry_decision(
         self, *, exception: BaseException, job: Job
     ) -> RetryDecision | None:
@@ -25,6 +27,10 @@ class QueueRetryStrategy(RetryStrategy):
         retry_after = getattr(exception, "retry_after", None)
         if retry_after:
             decision = RetryDecision(retry_in={"seconds": retry_after})
+        elif self.max_wait is not None:
+            cap = datetime.now(tz=UTC) + timedelta(seconds=self.max_wait)
+            if decision.retry_at is not None and decision.retry_at > cap:
+                decision = RetryDecision(retry_at=cap)
         logger.warning(
             "Task retry scheduled",
             queue=job.queue,

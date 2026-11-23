@@ -1,17 +1,18 @@
 import base64
 import functools
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import structlog
 from pydantic import AwareDatetime, BaseModel
-from sqlalchemy import update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import FlatManagerWebhookDelivery
+from app.models import FlatManagerWebhookDelivery, Pipeline, PipelineStatus
 from app.services.task_queue import defer
 from app.utils.flat_manager import JobKind, JobStatus, PublishedState, RepoState
 
@@ -20,6 +21,17 @@ logger = structlog.get_logger(__name__)
 TASK_NAME = "app.tasks.flat_manager_event"
 QUEUE = "flat-manager"
 JOB_FINISHED = "job.finished"
+ORPHAN_AFTER = timedelta(minutes=15)
+
+JOB_PIPELINE_STATES = {
+    JobKind.COMMIT: ("commit_job_id", PipelineStatus.SUCCEEDED),
+    JobKind.PUBLISH: ("publish_job_id", PipelineStatus.COMMITTED),
+    JobKind.UPDATE_REPO: ("update_repo_job_id", PipelineStatus.PUBLISHING),
+}
+
+
+class PipelineNotReady(Exception):
+    pass
 
 
 class FlatManagerJob(BaseModel):
@@ -84,6 +96,87 @@ async def record_event(event: FlatManagerEvent) -> bool:
     return True
 
 
+async def defer_transition_effects(
+    db: AsyncSession, pipeline: Pipeline, initial_status: PipelineStatus
+) -> None:
+    from app.pipelines.build import defer_start_pending
+    from app.services.github_notifier import NOTIFY_COMMITTED_TASK
+    from app.services.permission_assessment import SUBMIT_ASSESSMENT_TASK
+
+    if pipeline.status == initial_status:
+        return
+    await defer_start_pending(db)
+    if pipeline.status != PipelineStatus.COMMITTED:
+        return
+    await defer(
+        db,
+        SUBMIT_ASSESSMENT_TASK,
+        lock=f"assessment:{pipeline.id}",
+        pipeline_id=str(pipeline.id),
+    )
+    await defer(
+        db,
+        NOTIFY_COMMITTED_TASK,
+        lock=f"notify-committed:{pipeline.id}",
+        pipeline_id=str(pipeline.id),
+    )
+
+
+async def _matching_pipelines(db: AsyncSession, event: JobFinished) -> list[Pipeline]:
+    job, build = event.job, event.build
+    if job.kind == JobKind.CHECK:
+        if build is None:
+            return []
+        condition = Pipeline.build_id == build.id
+    else:
+        column = getattr(Pipeline, JOB_PIPELINE_STATES[job.kind][0])
+        condition = column == job.id
+        if build is not None:
+            condition = or_(
+                condition, (Pipeline.build_id == build.id) & column.is_(None)
+            )
+    result = await db.execute(
+        select(Pipeline).where(condition).order_by(Pipeline.id).with_for_update()
+    )
+    return list(result.scalars())
+
+
+async def _apply(db: AsyncSession, event: JobFinished, pipeline: Pipeline) -> None:
+    from app.services.job_monitor import JobMonitor
+
+    job = event.job
+    if job.kind == JobKind.CHECK:
+        logger.info(
+            "Flat-manager check job finished",
+            pipeline_id=str(pipeline.id),
+            job_id=job.id,
+            build_id=pipeline.build_id,
+        )
+        return
+
+    column, expected_status = JOB_PIPELINE_STATES[job.kind]
+    if getattr(pipeline, column) is None:
+        setattr(pipeline, column, job.id)
+        logger.info(
+            "Stored job id from flat-manager event",
+            pipeline_id=str(pipeline.id),
+            **{column: job.id},
+        )
+    if pipeline.status != expected_status:
+        logger.info(
+            "Ignoring flat-manager event for pipeline in another state",
+            pipeline_id=str(pipeline.id),
+            job_id=job.id,
+            job_kind=job.kind.name,
+            pipeline_status=pipeline.status.value,
+        )
+        return
+
+    initial_status = pipeline.status
+    await JobMonitor(db=db).check_and_update_pipeline_jobs(pipeline, event)
+    await defer_transition_effects(db, pipeline, initial_status)
+
+
 async def process_event(delivery_id: int) -> None:
     async with get_db() as db:
         claimed = await db.execute(
@@ -96,13 +189,28 @@ async def process_event(delivery_id: int) -> None:
             .returning(FlatManagerWebhookDelivery.payload)
         )
         payload = claimed.scalar_one_or_none()
-    if payload is None:
-        return
-    event = JobFinished.model_validate(payload["data"])
-    logger.info(
-        "Flat-manager event received",
-        delivery_id=delivery_id,
-        event_type=payload["type"],
-        job_id=event.job.id,
-        build_id=event.build.id if event.build else None,
-    )
+        if payload is None:
+            return
+        envelope = FlatManagerEvent.model_validate(payload)
+        event = JobFinished.model_validate(envelope.data)
+        log = logger.bind(
+            delivery_id=delivery_id,
+            event_type=envelope.type,
+            job_id=event.job.id,
+            job_kind=event.job.kind.name,
+            build_id=event.build.id if event.build else None,
+        )
+        if event.job.kind not in (*JOB_PIPELINE_STATES, JobKind.CHECK):
+            log.info("Flat-manager event needs no pipeline")
+            return
+
+        pipelines = await _matching_pipelines(db, event)
+        if not pipelines:
+            if datetime.now(tz=UTC) - envelope.created_at < ORPHAN_AFTER:
+                raise PipelineNotReady(delivery_id)
+            log.warning("Flat-manager event orphaned, no matching pipeline")
+            return
+
+        log.info("Processing flat-manager event", pipelines=len(pipelines))
+        for pipeline in pipelines:
+            await _apply(db, event, pipeline)

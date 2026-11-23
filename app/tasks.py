@@ -105,7 +105,11 @@ async def reconcile_run(pipeline_id: str, conclusion: str | None) -> None:
     await run_reconciler.reconcile_run(uuid.UUID(pipeline_id), conclusion)
 
 
-@app.task(name=flat_manager_events.TASK_NAME, queue=flat_manager_events.QUEUE)
+@app.task(
+    name=flat_manager_events.TASK_NAME,
+    queue=flat_manager_events.QUEUE,
+    retry=QueueRetryStrategy(max_attempts=8, exponential_wait=3, max_wait=300),
+)
 async def flat_manager_event(delivery_id: int) -> None:
     await flat_manager_events.process_event(delivery_id)
 

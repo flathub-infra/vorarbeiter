@@ -51,6 +51,7 @@ def deferred(request):
         patch("app.pipelines.build.defer", stub),
         patch("app.services.job_monitor.defer", stub),
         patch("app.services.permission_assessment.defer", stub),
+        patch("app.services.flat_manager_events.defer", stub),
     ):
         yield stub
 
