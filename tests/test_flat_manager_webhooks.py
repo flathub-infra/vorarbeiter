@@ -222,3 +222,26 @@ async def test_unconfigured_receiver_refuses(connector, api):
         response = await post(api)
 
     assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_secret_from_environment_is_accepted(connector, api, db_session_maker):
+    with (
+        patch.object(settings, "flat_manager_webhook_secret_file", None),
+        patch.object(settings, "flat_manager_webhook_secret", KEY_FILE.strip()),
+    ):
+        response = await post(api)
+
+    assert response.json() == {"status": "accepted"}
+    assert len(await inbox(db_session_maker)) == 1
+
+
+@pytest.mark.asyncio
+async def test_secret_file_wins_over_environment(connector, api, tmp_path):
+    other = tmp_path / "other-key"
+    other.write_text("bm90LXRoZS1yaWdodC1rZXk=\n")
+    with (
+        patch.object(settings, "flat_manager_webhook_secret_file", str(other)),
+        patch.object(settings, "flat_manager_webhook_secret", KEY_FILE.strip()),
+    ):
+        assert (await post(api)).status_code == 401

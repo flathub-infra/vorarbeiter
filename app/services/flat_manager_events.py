@@ -73,8 +73,11 @@ def _read_key(path: str) -> bytes:
 
 
 def webhook_key() -> bytes | None:
-    path = settings.flat_manager_webhook_secret_file
-    return _read_key(path) if path else None
+    if path := settings.flat_manager_webhook_secret_file:
+        return _read_key(path)
+    if secret := settings.flat_manager_webhook_secret:
+        return base64.b64decode(secret, validate=True)
+    return None
 
 
 async def record_event(event: FlatManagerEvent) -> None:
