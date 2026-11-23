@@ -21,7 +21,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "httpx2>=2.9.1",
     "pyjwt[crypto]>=2.14.0",
-    "procrastinate==3.11.0",
+    "procrastinate==3.12.0",
     "pydantic-ai-slim[openai,web-fetch]>=2.68.0",
     "zstandard>=0.25.0",
 ]
@@ -31,10 +31,10 @@ dev = [
     "pre-commit>=4.6.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "ruff==0.17.5",
+    "ruff==0.17.6",
     "pytest-xdist>=3.8.0",
     "granian[reload]>=2.7.9",
-    "pyrefly==1.4.1",
+    "pyrefly==1.5.0",
 ]
 
 [tool.mypy]
