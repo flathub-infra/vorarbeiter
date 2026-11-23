@@ -66,9 +66,9 @@ class Pipeline(Base):
 
     log_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     build_id: Mapped[int | None] = mapped_column(nullable=True)
-    commit_job_id: Mapped[int | None] = mapped_column(nullable=True)
-    publish_job_id: Mapped[int | None] = mapped_column(nullable=True)
-    update_repo_job_id: Mapped[int | None] = mapped_column(nullable=True)
+    commit_job_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    publish_job_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    update_repo_job_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     failure_issue_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     repro_pipeline_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     callback_token: Mapped[str] = mapped_column(

@@ -1,6 +1,7 @@
 from app.models.base import Base
 from app.models.build_diagnosis import BuildDiagnosis, BuildDiagnosisStatus
 from app.models.build_failure_issue import BuildFailureIssue
+from app.models.flat_manager_webhook_delivery import FlatManagerWebhookDelivery
 from app.models.github_task import GitHubTask, GitHubTaskStatus
 from app.models.inactive_repo_snapshot import InactiveRepoSnapshot
 from app.models.merge_request import MergeRequest, MergeStatus
@@ -12,6 +13,7 @@ __all__ = [
     "BuildDiagnosis",
     "BuildDiagnosisStatus",
     "BuildFailureIssue",
+    "FlatManagerWebhookDelivery",
     "GitHubTask",
     "GitHubTaskStatus",
     "InactiveRepoSnapshot",

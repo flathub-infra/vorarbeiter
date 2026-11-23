@@ -31,7 +31,7 @@ def setup_observability() -> None:
 
 
 SLOW_QUEUES = ["build-diagnosis"]
-FAST_QUEUES = ["builds", "github", "permission", "maintenance"]
+FAST_QUEUES = ["builds", "github", "permission", "maintenance", "flat-manager"]
 SLOW_CONCURRENCY = 2
 
 

@@ -6,6 +6,7 @@ from app.pipelines import BuildPipeline
 from app.queue import app
 from app.services import (
     build_diagnosis,
+    flat_manager_events,
     github_notifier,
     permission_assessment,
     run_reconciler,
@@ -102,6 +103,11 @@ async def notify_committed(pipeline_id: str) -> None:
 )
 async def reconcile_run(pipeline_id: str, conclusion: str | None) -> None:
     await run_reconciler.reconcile_run(uuid.UUID(pipeline_id), conclusion)
+
+
+@app.task(name=flat_manager_events.TASK_NAME, queue=flat_manager_events.QUEUE)
+async def flat_manager_event(delivery_id: int) -> None:
+    await flat_manager_events.process_event(delivery_id)
 
 
 @app.periodic(cron="*/10 * * * *")  # pyrefly: ignore[bad-argument-type]

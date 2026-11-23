@@ -49,6 +49,7 @@ class PublishedState(IntEnum):
     UNPUBLISHED = 0
     PUBLISHING = 1
     PUBLISHED = 2
+    FAILED = 3
 
 
 class RepoState(IntEnum):
