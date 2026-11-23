@@ -135,9 +135,12 @@ async def test_full_chain_commit_publish_update_repo(db_session_maker, env):
     )
     assert deferred_tasks(env["deferred"]) == [
         "app.tasks.start_pending_builds",
+        "app.tasks.publish_pipeline",
         "app.tasks.submit_pipeline_assessment",
         "app.tasks.notify_committed",
     ]
+    publish = env["deferred"].await_args_list[1]
+    assert publish.kwargs["lock"] == "publish:org.test.App:stable"
 
     await deliver(
         db_session_maker,
@@ -152,7 +155,23 @@ async def test_full_chain_commit_publish_update_repo(db_session_maker, env):
     final = await load(db_session_maker, Pipeline, pipeline.id)
     assert final.status == PipelineStatus.PUBLISHED
     env["publication"].assert_awaited_once()
+    assert deferred_tasks(env["deferred"])[-1] == "app.tasks.publish_pipeline"
     env["flat_manager"].get_job.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_event_retriggers_publish_for_committed_build(
+    db_session_maker, env
+):
+    pipeline = make_pipeline(status=PipelineStatus.COMMITTED)
+    await add(db_session_maker, pipeline)
+
+    await deliver(db_session_maker, payload(JobKind.CHECK, 40))
+
+    assert deferred_tasks(env["deferred"]) == ["app.tasks.publish_pipeline"]
+    assert (await load(db_session_maker, Pipeline, pipeline.id)).status == (
+        PipelineStatus.COMMITTED
+    )
 
 
 @pytest.mark.asyncio

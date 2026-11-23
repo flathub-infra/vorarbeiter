@@ -6,7 +6,9 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import get_db
 from app.models import Pipeline, PipelineStatus
+from app.services.task_queue import defer
 from app.utils.flat_manager import (
     CheckStatus,
     PublishedState,
@@ -15,6 +17,25 @@ from app.utils.flat_manager import (
 )
 
 logger = structlog.get_logger(__name__)
+
+PUBLISH_TASK = "app.tasks.publish_pipeline"
+
+
+class PublishNotReady(Exception):
+    pass
+
+
+async def defer_publish(db: AsyncSession, pipeline: Pipeline) -> None:
+    repo = pipeline.flat_manager_repo
+    if repo not in ("stable", "beta"):
+        return
+    await defer(
+        db,
+        PUBLISH_TASK,
+        lock=f"publish:{pipeline.app_id}:{repo}",
+        app_id=pipeline.app_id,
+        flat_manager_repo=repo,
+    )
 
 
 class PublishResult:
@@ -73,6 +94,33 @@ class PublishingService:
         )
 
         return result
+
+    async def publish_pipeline(self, app_id: str, flat_manager_repo: str) -> None:
+        async with get_db() as db:
+            query = (
+                select(Pipeline)
+                .where(
+                    Pipeline.status == PipelineStatus.COMMITTED,
+                    Pipeline.app_id == app_id,
+                    Pipeline.flat_manager_repo == flat_manager_repo,
+                )
+                .with_for_update()
+            )
+            group = list((await db.execute(query)).scalars())
+            if not group:
+                return
+            result = PublishResult()
+            await self._process_pipeline_group(
+                db, app_id, flat_manager_repo, group, result, datetime.now(tz=UTC)
+            )
+            waiting = [
+                str(pipeline.id)
+                for pipeline in group
+                if pipeline.status == PipelineStatus.COMMITTED
+                and str(pipeline.id) not in result.published
+            ]
+        if waiting:
+            raise PublishNotReady(waiting)
 
     async def _get_publishable_pipelines(self, db: AsyncSession) -> list[Pipeline]:
         query = select(Pipeline).where(

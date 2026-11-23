@@ -1,4 +1,5 @@
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6,7 +7,7 @@ import httpx2 as httpx
 import pytest
 
 from app.models import Pipeline, PipelineStatus
-from app.services.publishing import PublishingService, PublishResult
+from app.services.publishing import PublishingService, PublishNotReady, PublishResult
 
 
 @pytest.fixture
@@ -554,3 +555,128 @@ def test_handle_build_error_generic(publishing_service):
 
     assert len(result.errors) == 1
     assert "Unexpected error" in result.errors[0]["error"]
+
+
+@pytest.fixture
+def publish_db(db_session_maker):
+    @asynccontextmanager
+    async def get_test_db(*, use_replica: bool = False):
+        async with db_session_maker() as db:
+            yield db
+            await db.commit()
+
+    with (
+        patch("app.services.publishing.get_db", get_test_db),
+        patch(
+            "app.pipelines.build.BuildPipeline.fetch_and_store_job_id",
+            AsyncMock(),
+        ),
+        patch("app.services.github_notifier.GitHubNotifier"),
+    ):
+        yield db_session_maker
+
+
+async def add_committed(db_session_maker, count: int) -> list[Pipeline]:
+    now = datetime.now(UTC)
+    pipelines = [
+        Pipeline(
+            id=uuid.uuid4(),
+            app_id="org.test.App",
+            status=PipelineStatus.COMMITTED,
+            flat_manager_repo="stable",
+            build_id=n + 1,
+            started_at=now - timedelta(hours=n),
+            params={},
+        )
+        for n in range(count)
+    ]
+    async with db_session_maker() as db:
+        db.add_all(pipelines)
+        await db.commit()
+    return pipelines
+
+
+async def status_of(db_session_maker, pipeline: Pipeline) -> PipelineStatus:
+    async with db_session_maker() as db:
+        return (await db.get(Pipeline, pipeline.id)).status
+
+
+def build_info(repo_state: int) -> dict:
+    return {"build": {"repo_state": repo_state, "published_state": 0}, "checks": []}
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_publishes_newest_and_supersedes_rest(
+    publishing_service, publish_db
+):
+    newest, older = await add_committed(publish_db, 2)
+
+    with (
+        patch.object(
+            publishing_service.flat_manager,
+            "get_build_info",
+            AsyncMock(return_value=build_info(2)),
+        ),
+        patch.object(publishing_service.flat_manager, "publish") as publish,
+        patch.object(publishing_service.flat_manager, "purge") as purge,
+    ):
+        await publishing_service.publish_pipeline("org.test.App", "stable")
+
+    publish.assert_awaited_once_with(newest.build_id)
+    purge.assert_awaited_once_with(older.build_id)
+    assert await status_of(publish_db, older) == PipelineStatus.SUPERSEDED
+    assert await status_of(publish_db, newest) == PipelineStatus.COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_not_ready_retries_and_keeps_supersede(
+    publishing_service, publish_db
+):
+    newest, older = await add_committed(publish_db, 2)
+
+    with (
+        patch.object(
+            publishing_service.flat_manager,
+            "get_build_info",
+            AsyncMock(return_value=build_info(6)),
+        ),
+        patch.object(publishing_service.flat_manager, "publish") as publish,
+        patch.object(publishing_service.flat_manager, "purge"),
+        pytest.raises(PublishNotReady),
+    ):
+        await publishing_service.publish_pipeline("org.test.App", "stable")
+
+    publish.assert_not_called()
+    assert await status_of(publish_db, older) == PipelineStatus.SUPERSEDED
+    assert await status_of(publish_db, newest) == PipelineStatus.COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_validation_failure_does_not_retry(
+    publishing_service, publish_db
+):
+    [pipeline] = await add_committed(publish_db, 1)
+
+    with patch.object(
+        publishing_service.flat_manager,
+        "get_build_info",
+        AsyncMock(return_value=build_info(3)),
+    ):
+        await publishing_service.publish_pipeline("org.test.App", "stable")
+
+    assert await status_of(publish_db, pipeline) == PipelineStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_transport_error_retries(publishing_service, publish_db):
+    await add_committed(publish_db, 1)
+
+    with (
+        patch.object(
+            publishing_service.flat_manager,
+            "get_build_info",
+            AsyncMock(side_effect=httpx.ConnectError("down")),
+        ),
+        pytest.raises(PublishNotReady),
+    ):
+        await publishing_service.publish_pipeline("org.test.App", "stable")

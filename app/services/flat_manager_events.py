@@ -102,10 +102,13 @@ async def defer_transition_effects(
     from app.pipelines.build import defer_start_pending
     from app.services.github_notifier import NOTIFY_COMMITTED_TASK
     from app.services.permission_assessment import SUBMIT_ASSESSMENT_TASK
+    from app.services.publishing import defer_publish
 
     if pipeline.status == initial_status:
         return
     await defer_start_pending(db)
+    if pipeline.status in (PipelineStatus.COMMITTED, PipelineStatus.PUBLISHED):
+        await defer_publish(db, pipeline)
     if pipeline.status != PipelineStatus.COMMITTED:
         return
     await defer(
@@ -143,6 +146,7 @@ async def _matching_pipelines(db: AsyncSession, event: JobFinished) -> list[Pipe
 
 async def _apply(db: AsyncSession, event: JobFinished, pipeline: Pipeline) -> None:
     from app.services.job_monitor import JobMonitor
+    from app.services.publishing import defer_publish
 
     job = event.job
     if job.kind == JobKind.CHECK:
@@ -152,6 +156,8 @@ async def _apply(db: AsyncSession, event: JobFinished, pipeline: Pipeline) -> No
             job_id=job.id,
             build_id=pipeline.build_id,
         )
+        if pipeline.status == PipelineStatus.COMMITTED:
+            await defer_publish(db, pipeline)
         return
 
     column, expected_status = JOB_PIPELINE_STATES[job.kind]

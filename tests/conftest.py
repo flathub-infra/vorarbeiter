@@ -52,6 +52,7 @@ def deferred(request):
         patch("app.services.job_monitor.defer", stub),
         patch("app.services.permission_assessment.defer", stub),
         patch("app.services.flat_manager_events.defer", stub),
+        patch("app.services.publishing.defer", stub),
     ):
         yield stub
 

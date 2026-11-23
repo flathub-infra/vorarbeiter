@@ -9,6 +9,8 @@ from app.services import (
     flat_manager_events,
     github_notifier,
     permission_assessment,
+    publishing,
+    publishing_service,
     run_reconciler,
 )
 from app.services.task_queue import QueueRetryStrategy
@@ -112,6 +114,20 @@ async def reconcile_run(pipeline_id: str, conclusion: str | None) -> None:
 )
 async def flat_manager_event(delivery_id: int) -> None:
     await flat_manager_events.process_event(delivery_id)
+
+
+@app.task(
+    name=publishing.PUBLISH_TASK,
+    queue="flat-manager",
+    retry=QueueRetryStrategy(
+        max_attempts=10,
+        exponential_wait=2,
+        max_wait=900,
+        retry_exceptions={publishing.PublishNotReady},
+    ),
+)
+async def publish_pipeline(app_id: str, flat_manager_repo: str) -> None:
+    await publishing_service.publish_pipeline(app_id, flat_manager_repo)
 
 
 @app.periodic(cron="*/10 * * * *")  # pyrefly: ignore[bad-argument-type]
