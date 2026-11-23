@@ -92,6 +92,7 @@ class PublishingService:
                 str(pipeline.id)
                 for pipeline in group
                 if pipeline.status == PipelineStatus.COMMITTED
+                and not pipeline.review_required
                 and str(pipeline.id) not in result.published
             ]
         if waiting:

@@ -579,3 +579,28 @@ async def test_publish_pipeline_transport_error_retries(publishing_service, publ
         pytest.raises(PublishNotReady),
     ):
         await publishing_service.publish_pipeline("org.test.App", "stable")
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_under_review_waits_for_the_next_event(
+    publishing_service, publish_db
+):
+    [pipeline] = await add_committed(publish_db, 1)
+    info = build_info(6)
+    info["checks"] = [{"status": 4}]
+
+    with (
+        patch.object(
+            publishing_service.flat_manager,
+            "get_build_info",
+            AsyncMock(return_value=info),
+        ),
+        patch.object(publishing_service.flat_manager, "publish") as publish,
+    ):
+        await publishing_service.publish_pipeline("org.test.App", "stable")
+
+    publish.assert_not_called()
+    async with publish_db() as db:
+        row = await db.get(Pipeline, pipeline.id)
+        assert row.review_required is True
+        assert row.status == PipelineStatus.COMMITTED
