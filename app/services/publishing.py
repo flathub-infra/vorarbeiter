@@ -268,7 +268,13 @@ class PublishingService:
         )
 
         if published_state == PublishedState.PUBLISHED:
-            if pipeline.status != PipelineStatus.PUBLISHED:
+            if pipeline.publish_job_id is not None:
+                logger.info(
+                    "Pipeline published in flat-manager, waiting for publish job",
+                    pipeline_id=str(pipeline.id),
+                    publish_job_id=pipeline.publish_job_id,
+                )
+            elif pipeline.status != PipelineStatus.PUBLISHED:
                 logger.info(
                     "Pipeline already marked as published in flat-manager",
                     pipeline_id=str(pipeline.id),

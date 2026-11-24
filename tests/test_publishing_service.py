@@ -604,3 +604,30 @@ async def test_publish_pipeline_under_review_waits_for_the_next_event(
         row = await db.get(Pipeline, pipeline.id)
         assert row.review_required is True
         assert row.status == PipelineStatus.COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_leaves_tracked_publish_to_job_events(
+    publishing_service, publish_db
+):
+    [pipeline] = await add_committed(publish_db, 1)
+    async with publish_db() as db:
+        (await db.get(Pipeline, pipeline.id)).publish_job_id = 456
+        await db.commit()
+    info = {"build": {"repo_state": 2, "published_state": 2}, "checks": []}
+
+    with (
+        patch.object(
+            publishing_service.flat_manager,
+            "get_build_info",
+            AsyncMock(return_value=info),
+        ),
+        patch.object(publishing_service.flat_manager, "publish") as publish,
+    ):
+        await publishing_service.publish_pipeline("org.test.App", "stable")
+
+    publish.assert_not_called()
+    async with publish_db() as db:
+        row = await db.get(Pipeline, pipeline.id)
+        assert row.status == PipelineStatus.COMMITTED
+        assert row.published_at is None
