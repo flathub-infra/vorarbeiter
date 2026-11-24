@@ -616,13 +616,16 @@ async def _submit(
                     "attempts": attempts,
                 }
         except Exception as e:
-            logger.exception(
-                "Failed to submit permission assessment",
+            log = logger.bind(
                 pipeline_id=str(pipeline.id),
                 app_id=pipeline.app_id,
                 build_id=pipeline.build_id,
                 attempts=attempts,
             )
+            if isinstance(e, httpx.RemoteProtocolError) and attempts < MAX_ATTEMPTS:
+                log.warning("Failed to submit permission assessment", error=str(e))
+            else:
+                log.exception("Failed to submit permission assessment")
             state = {
                 "status": "failed",
                 "attempts": attempts,
