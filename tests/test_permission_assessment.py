@@ -306,7 +306,10 @@ async def test_records_skipped_pipeline(configured, local_db, db_session_maker):
 
 
 @pytest.mark.asyncio
-async def test_retries_failures_up_to_limit(configured, local_db, db_session_maker):
+@pytest.mark.parametrize("disconnect", [False, True], ids=["bad_gateway", "disconnect"])
+async def test_retries_failures_up_to_limit(
+    configured, local_db, db_session_maker, disconnect, caplog
+):
     pipeline = make_pipeline()
     await add(db_session_maker, pipeline)
     calls = 0
@@ -314,6 +317,10 @@ async def test_retries_failures_up_to_limit(configured, local_db, db_session_mak
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
+        if disconnect:
+            raise httpx.RemoteProtocolError(
+                "Server disconnected without sending a response."
+            )
         return httpx.Response(502, json={"detail": "flat_manager_unavailable"})
 
     with (
@@ -323,15 +330,23 @@ async def test_retries_failures_up_to_limit(configured, local_db, db_session_mak
             AsyncMock(return_value=["x86_64"]),
         ),
     ):
-        for _ in range(MAX_ATTEMPTS + 1):
+        for attempt in range(1, MAX_ATTEMPTS + 2):
+            caplog.clear()
             await submit_pending_assessments()
+            if disconnect and attempt <= MAX_ATTEMPTS:
+                assert [
+                    r.levelname
+                    for r in caplog.records
+                    if r.name == permission_assessment.__name__
+                    and "Failed to submit permission assessment" in r.getMessage()
+                ] == ["WARNING" if attempt < MAX_ATTEMPTS else "ERROR"]
 
     assert calls == MAX_ATTEMPTS
     stored = await load(db_session_maker, pipeline.id)
     state = stored.provider_data[PROVIDER_DATA_KEY]
     assert state["status"] == "failed"
     assert state["attempts"] == MAX_ATTEMPTS
-    assert "502" in state["last_error"]
+    assert ("Server disconnected" if disconnect else "502") in state["last_error"]
 
 
 @pytest.mark.asyncio
