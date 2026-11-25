@@ -38,7 +38,6 @@ PROVIDER_DATA_KEY = "permission_assessment"
 MAX_ATTEMPTS = 3
 LOOKBACK = timedelta(hours=24)
 REQUEST_TIMEOUT = 300.0
-STATUS_LOOKBACK = timedelta(days=30)
 STATUS_CONTEXT = "flathub/permissions"
 COMMENT_MARKER = "<!-- flathub-permission-review -->"
 STATUSES = {
@@ -525,28 +524,6 @@ async def _refresh(
         raise RuntimeError("Failed to report permission assessment")
 
 
-async def _refresh_statuses(client: httpx.AsyncClient) -> None:
-    async with get_db() as db:
-        result = await db.execute(
-            _submitted()
-            .where(Pipeline.created_at > datetime.now(UTC) - STATUS_LOOKBACK)
-            .order_by(Pipeline.created_at, Pipeline.id)
-        )
-        latest = {
-            (p.params.get("repo"), str(p.params["pr_number"])): p.id
-            for p in result.scalars()
-            if (p.params or {}).get("pr_number")
-        }
-    for pipeline_id in latest.values():
-        try:
-            async with get_db() as db:
-                pipeline = await db.get(Pipeline, pipeline_id)
-                if pipeline is not None:
-                    await _refresh(db, pipeline, client)
-        except Exception:
-            logger.exception("Failed to refresh status", pipeline_id=str(pipeline_id))
-
-
 async def refresh_permission_review(
     source_repository: str, pull_request_number: int
 ) -> None:
@@ -697,36 +674,3 @@ async def submit_pipeline_assessment(pipeline_id: UUID) -> str | None:
                 pipeline_id=str(pipeline_id),
             )
     return status
-
-
-async def submit_pending_assessments() -> dict[str, Any]:
-    if not _configured():
-        return {"status": "disabled"}
-
-    counts = {"submitted": 0, "skipped": 0, "failed": 0}
-    cutoff = datetime.now(UTC) - LOOKBACK
-    async with get_db() as db:
-        result = await db.execute(
-            select(Pipeline.id)
-            .where(
-                Pipeline.status == PipelineStatus.COMMITTED,
-                Pipeline.flat_manager_repo.in_(_repos()),
-                Pipeline.build_id.isnot(None),
-                Pipeline.created_at > cutoff,
-            )
-            .order_by(Pipeline.created_at)
-        )
-        pipeline_ids = list(result.scalars())
-
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        for pipeline_id in pipeline_ids:
-            async with get_db() as db:
-                pipeline = await db.get(Pipeline, pipeline_id)
-                status = await _submit(db, pipeline, client) if pipeline else None
-            if status:
-                counts[status] += 1
-
-        if settings.permission_status_repos:
-            await _refresh_statuses(client)
-
-    return {"status": "completed", **counts}

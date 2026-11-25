@@ -5,14 +5,10 @@ import time
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx2 as httpx
 import structlog
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
 from gql import Client, gql
 from gql.transport.exceptions import (
     TransportAlreadyConnected,
@@ -395,7 +391,6 @@ async def update_commit_status(
     target_url: str | None = None,
     description: str | None = None,
     context: str | None = None,
-    db: "AsyncSession | None" = None,
 ) -> bool:
     if not git_repo:
         logger.error(
@@ -451,18 +446,6 @@ async def update_commit_status(
             continue
 
         ok = False
-        if result.should_queue and db:
-            from app.services.github_task import GitHubTaskService
-
-            await GitHubTaskService().queue_task(
-                db,
-                task_type="commit_status",
-                method="post",
-                url=url,
-                payload=payload,
-                context=ctx,
-                retry_after=result.retry_after,
-            )
 
     return ok
 
@@ -534,7 +517,6 @@ async def create_pr_comment(
     git_repo: str,
     pr_number: int,
     comment: str,
-    db: "AsyncSession | None" = None,
 ) -> bool:
     if not git_repo:
         logger.error("Missing git_repo for GitHub PR comment. Skipping PR comment.")
@@ -558,19 +540,6 @@ async def create_pr_comment(
             pr_number=pr_number,
         )
         return True
-
-    if result.should_queue and db:
-        from app.services.github_task import GitHubTaskService
-
-        await GitHubTaskService().queue_task(
-            db,
-            task_type="pr_comment",
-            method="post",
-            url=url,
-            payload=payload,
-            context=ctx,
-            retry_after=result.retry_after,
-        )
 
     return False
 

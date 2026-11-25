@@ -17,12 +17,10 @@ from app.config import settings
 from app.logger import setup_logging
 
 COMMANDS = (
-    "github-tasks-cleanup",
     "inactive-repos-refresh",
     "prune-beta",
     "prune-stable",
     "webhook-deliveries-reconcile",
-    "permission-assess",
 )
 
 
@@ -38,19 +36,6 @@ def setup_observability() -> None:
             enable_tracing=True,
         )
         logger.info("Sentry integration initialized", dsn=settings.sentry_dsn)
-
-
-async def cleanup_github_tasks() -> dict[str, Any]:
-    from app.database import get_db
-    from app.services import github_task_service
-
-    async with get_db() as db:
-        deleted = await github_task_service.cleanup_old_tasks(db)
-
-    return {
-        "status": "completed",
-        "deleted_tasks": deleted,
-    }
 
 
 async def prune_repo(repo: str) -> dict[str, Any]:
@@ -114,12 +99,6 @@ async def reconcile_webhook_deliveries() -> dict[str, Any]:
         raise
 
 
-async def assess_permissions() -> dict[str, Any]:
-    from app.services.permission_assessment import submit_pending_assessments
-
-    return await submit_pending_assessments()
-
-
 async def close_flat_manager_client() -> None:
     from app.utils import flat_manager
 
@@ -132,8 +111,6 @@ async def close_flat_manager_client() -> None:
 
 async def dispatch(command: str) -> dict[str, Any]:
     match command:
-        case "github-tasks-cleanup":
-            return await cleanup_github_tasks()
         case "inactive-repos-refresh":
             return await refresh_inactive_repos()
         case "prune-beta":
@@ -142,8 +119,6 @@ async def dispatch(command: str) -> dict[str, Any]:
             return await prune_repo("stable")
         case "webhook-deliveries-reconcile":
             return await reconcile_webhook_deliveries()
-        case "permission-assess":
-            return await assess_permissions()
 
     raise ValueError(f"Unknown command: {command}")
 

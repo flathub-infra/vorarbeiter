@@ -10,8 +10,6 @@ from sqlalchemy.orm import aliased
 from app.database import get_db
 from app.models import (
     FlatManagerWebhookDelivery,
-    GitHubTask,
-    GitHubTaskStatus,
     Pipeline,
     PipelineStatus,
 )
@@ -29,7 +27,6 @@ PUBLISHED_REPOS = ("stable", "beta")
 
 async def recover_stale() -> dict[str, int]:
     from app.pipelines.build import START_DEBOUNCED_TASK
-    from app.services.github_task import GitHubTaskService
     from app.services.job_monitor import (
         BUILD_TIMEOUT_SAFETY_MARGIN,
         DEFAULT_BUILD_TIMEOUT,
@@ -177,12 +174,6 @@ async def recover_stale() -> dict[str, int]:
             )
         )
 
-    async with get_db() as db:
-        legacy_drained = await GitHubTaskService().process_pending_tasks(db)
-        legacy_pending = await db.scalar(
-            select(func.count()).where(GitHubTask.status == GitHubTaskStatus.PENDING)
-        )
-
     counts = {
         "expired": expired.rowcount,
         "debounced": len(debounced),
@@ -190,8 +181,6 @@ async def recover_stale() -> dict[str, int]:
         "unpublished": len(unpublished),
         "undelivered_events": len(undelivered),
         "abandoned_events": abandoned or 0,
-        "legacy_github_tasks_processed": legacy_drained,
-        "legacy_github_tasks_pending": legacy_pending or 0,
     }
     log = logger.warning if any(counts.values()) else logger.info
     log(

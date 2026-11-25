@@ -1,6 +1,6 @@
 import json
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -20,7 +20,7 @@ from app.services.permission_assessment import (
     PROVIDER_DATA_KEY,
     build_assessment_request,
     build_push_assessment_request,
-    submit_pending_assessments,
+    refresh_permission_review,
     submit_pipeline_assessment,
 )
 from app.utils.github import get_pull_request
@@ -208,10 +208,35 @@ async def load(db_session_maker, pipeline_id):
         return await db.scalar(select(Pipeline).where(Pipeline.id == pipeline_id))
 
 
+async def submit_pending_assessments():
+    counts = {"submitted": 0, "skipped": 0, "failed": 0}
+    async with permission_assessment.get_db() as db:
+        result = await db.execute(
+            select(Pipeline.id, Pipeline.params)
+            .where(Pipeline.status == PipelineStatus.COMMITTED)
+            .order_by(Pipeline.created_at)
+        )
+        rows = list(result.all())
+    for pipeline_id, _ in rows:
+        status = await submit_pipeline_assessment(pipeline_id)
+        if status:
+            counts[status] += 1
+    if settings.permission_status_repos:
+        pull_requests = {
+            (params["repo"], int(params["pr_number"]))
+            for _, params in rows
+            if params.get("pr_number")
+        }
+        for repo, number in sorted(pull_requests):
+            with suppress(Exception):
+                await refresh_permission_review(repo, number)
+    return {"status": "completed", **counts}
+
+
 @pytest.mark.asyncio
 async def test_disabled_without_configuration():
     with patch.object(settings, "permission_assessment_url", None):
-        assert await submit_pending_assessments() == {"status": "disabled"}
+        assert await submit_pipeline_assessment(uuid.uuid4()) is None
 
 
 @pytest.mark.asyncio
