@@ -7,7 +7,6 @@ import pytest
 from procrastinate.testing import InMemoryConnector
 from sqlalchemy import select
 
-from app.config import settings
 from app.models import Pipeline, PipelineStatus
 from app.pipelines.build import BuildPipeline
 from app.queue import app as queue_app
@@ -27,7 +26,7 @@ def connector(db_session_maker):
     with (
         patch("app.pipelines.build.get_db", get_test_db),
         patch("app.services.run_reconciler.get_db", get_test_db),
-        patch.object(settings, "ff_build_diagnosis", False),
+        patch("app.pipelines.build.enqueue_diagnosis", AsyncMock()),
         queue_app.replace_connector(connector),
     ):
         yield connector

@@ -15,6 +15,12 @@ from app.services import GitHubActionsService
 from tests.conftest import create_mock_get_db, finish_deferred_build
 
 
+@pytest.fixture(autouse=True)
+def no_diagnosis():
+    with patch("app.pipelines.build.enqueue_diagnosis", AsyncMock()):
+        yield
+
+
 @pytest.fixture
 def mock_provider():
     provider = AsyncMock(spec=GitHubActionsService)

@@ -1043,7 +1043,7 @@ async def comment_target(
 async def post_comment(pipeline: Pipeline, issues: list[dict[str, Any]]) -> None:
     git_repo = pipeline.params.get("repo")
     reportable = [i for i in issues if i["category"] not in UNREPORTABLE_CATEGORIES]
-    if not settings.ff_build_diagnosis_comments or not git_repo or not reportable:
+    if not git_repo or not reportable:
         return
 
     async with get_db() as db:

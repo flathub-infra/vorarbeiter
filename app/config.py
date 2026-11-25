@@ -25,8 +25,6 @@ class Settings(BaseSettings):
     sentry_dsn: str | None = None
     worker_fast_concurrency: int = 4
     worker_health_port: int = 8080
-    ff_build_diagnosis: bool = False
-    ff_build_diagnosis_comments: bool = False
     llm_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""

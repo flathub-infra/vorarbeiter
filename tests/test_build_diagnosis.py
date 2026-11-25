@@ -53,7 +53,6 @@ def connector(db_session_maker):
     with (
         patch("app.pipelines.build.get_db", get_test_db),
         patch("app.services.build_diagnosis.get_db", get_test_db),
-        patch.object(settings, "ff_build_diagnosis", True),
         patch.multiple(
             settings,
             llm_url="https://llm.example/v1",
@@ -290,7 +289,6 @@ async def test_cancelled_run_is_reported_without_models(
     with (
         mock_github(annotations=annotations),
         patch.object(build_diagnosis.agent, "run", run),
-        patch.object(settings, "ff_build_diagnosis_comments", True),
         patch("app.services.build_diagnosis.ensure_pr_comment", ensure),
     ):
         await diagnose(pipeline_id, attempts=0, rate_limit_retries=0)
@@ -815,7 +813,6 @@ async def test_comment_gates(db_session_maker, connector, category, newer, poste
     ensure = AsyncMock(return_value=True)
 
     with (
-        patch.object(settings, "ff_build_diagnosis_comments", True),
         patch("app.services.build_diagnosis.ensure_pr_comment", ensure),
     ):
         await post_comment(pipeline, [{**ISSUE, "category": category}])
@@ -854,7 +851,6 @@ async def test_comment_follows_stable_build_issue(
     ensure = AsyncMock(return_value=True)
 
     with (
-        patch.object(settings, "ff_build_diagnosis_comments", True),
         patch("app.services.build_diagnosis.ensure_pr_comment", ensure),
         patch(
             "app.services.build_diagnosis.get_github_issue",
