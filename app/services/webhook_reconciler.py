@@ -9,6 +9,7 @@ import structlog
 
 from app.config import settings
 from app.routes.webhooks import push_already_built, should_store_event
+from app.utils.github import get_ref_sha
 from app.utils.github_app import (
     GitHubAppInstallationAuth,
     GitHubAppRequestError,
@@ -192,19 +193,7 @@ class WebhookDeliveryReconciler:
             result.exhausted.append(guid)
             return
 
-        try:
-            ref_response = await self._request(
-                "get",
-                f"https://api.github.com/repos/{repository}/git/ref/"
-                f"{ref.removeprefix('refs/')}",
-            )
-        except GitHubAppRequestError as error:
-            if error.status_code != 404:
-                raise
-            logger.info("Skipping webhook delivery for deleted ref", **context)
-            result.stale.append(guid)
-            return
-        current_sha = (ref_response.json().get("object") or {}).get("sha")
+        current_sha = await get_ref_sha(repository, ref)
         if current_sha != after:
             logger.info(
                 "Skipping stale webhook delivery", current_sha=current_sha, **context

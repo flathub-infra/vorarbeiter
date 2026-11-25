@@ -315,6 +315,21 @@ def get_github_client() -> GitHubAPIClient:
     return _github_client
 
 
+async def get_ref_sha(git_repo: str, ref: str) -> str | None:
+    result = await get_github_client().request_with_result(
+        "get",
+        f"https://api.github.com/repos/{git_repo}/git/ref/{ref.removeprefix('refs/')}",
+        context={"git_repo": git_repo, "ref": ref},
+        raise_for_status=False,
+    )
+    response = result.response
+    if response is not None and response.status_code == 404:
+        return None
+    if response is None or response.status_code != 200:
+        raise GitHubUnavailable(result.retry_after)
+    return (response.json().get("object") or {}).get("sha")
+
+
 async def is_reviewer_or_admin(username: str) -> bool:
     client = get_github_client()
     for team in ("admins", "reviewers"):

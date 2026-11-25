@@ -1,13 +1,9 @@
-import hashlib
-import hmac
-import json
 import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import httpx2 as httpx
 import pytest
-from fastapi.testclient import TestClient
 from procrastinate.testing import InMemoryConnector
 from sqlalchemy import select
 
@@ -15,6 +11,7 @@ from app.config import settings
 from app.models import Pipeline, PipelineStatus
 from app.pipelines.build import BuildPipeline
 from app.queue import app as queue_app
+from app.routes.webhooks import process_github_webhook
 from app.services import run_reconciler
 
 
@@ -335,30 +332,18 @@ async def test_workflow_run_ignores_other_events(
     assert not connector.jobs
 
 
-def test_workflow_run_event_header_routes_to_reconciliation(client: TestClient):
+@pytest.mark.asyncio
+async def test_workflow_run_event_header_routes_to_reconciliation():
     pipeline_id = uuid.uuid4()
     payload = {**workflow_run_payload(1), "sender": {"login": "github-actions"}}
-    body = json.dumps(payload).encode()
-    signature = hmac.new(
-        settings.github_webhook_secret.encode(), body, hashlib.sha256
-    ).hexdigest()
 
     with patch(
         "app.routes.webhooks.enqueue_run_reconciliation",
         AsyncMock(return_value=pipeline_id),
     ) as enqueue:
-        response = client.post(
-            "/api/webhooks/github",
-            content=body,
-            headers={
-                "X-GitHub-Delivery": str(uuid.uuid4()),
-                "X-GitHub-Event": "workflow_run",
-                "X-Hub-Signature-256": f"sha256={signature}",
-            },
-        )
+        response = await process_github_webhook(uuid.uuid4(), "workflow_run", payload)
 
-    assert response.status_code == 202
-    assert response.json()["pipeline_id"] == str(pipeline_id)
+    assert response["pipeline_id"] == str(pipeline_id)
     enqueue.assert_awaited_once_with(payload)
 
 

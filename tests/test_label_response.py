@@ -4,11 +4,9 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx2 as httpx
 import pytest
 
-from app.config import settings
-from app.main import app
+from app.routes.webhooks import process_github_webhook
 from app.services.label_response import (
     LABEL_RESPONSES,
     MARKER_TEMPLATE,
@@ -261,20 +259,16 @@ def labeled_payload(
 
 
 async def deliver(payload: dict, delivery_id: str | None = None):
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as api:
-        return await api.post(
-            "/api/webhooks/github",
-            json=payload,
-            headers={"X-GitHub-Delivery": delivery_id or str(uuid.uuid4())},
-        )
+    return await process_github_webhook(
+        uuid.UUID(delivery_id) if delivery_id else uuid.uuid4(),
+        "pull_request",
+        payload,
+    )
 
 
 @pytest.mark.asyncio
 async def test_webhook_posts_label_response_for_flathub_submission():
     with (
-        patch.object(settings, "github_webhook_secret", ""),
         patch(
             "app.routes.webhooks.respond_to_label", AsyncMock(return_value=True)
         ) as respond,
@@ -282,7 +276,7 @@ async def test_webhook_posts_label_response_for_flathub_submission():
     ):
         response = await deliver(labeled_payload())
 
-    assert response.status_code == 202
+    assert response["message"] == "Label response posted."
     respond.assert_awaited_once_with("flathub/flathub", 123, "too-new")
     close.assert_awaited_once_with("flathub/flathub", 123)
 
@@ -293,14 +287,14 @@ async def test_redelivered_webhook_posts_once():
     payload = labeled_payload()
 
     with (
-        patch.object(settings, "github_webhook_secret", ""),
         patch("app.utils.github.get_github_client", return_value=client),
     ):
         delivery_id = str(uuid.uuid4())
         first = await deliver(payload, delivery_id)
         second = await deliver(payload, delivery_id)
 
-    assert (first.status_code, second.status_code) == (202, 202)
+    assert first["message"] == "Label response posted."
+    assert second["message"] == "Label response posted."
     assert len(client.posts) == 1
     assert [url for url, _ in client.closed] == [
         "https://api.github.com/repos/flathub/flathub/issues/123"
@@ -319,10 +313,8 @@ async def test_redelivered_webhook_posts_once():
 )
 async def test_webhook_ignores_other_labels_and_repositories(payload):
     with (
-        patch.object(settings, "github_webhook_secret", ""),
         patch("app.routes.webhooks.respond_to_label", AsyncMock()) as respond,
     ):
-        response = await deliver(payload)
+        await deliver(payload)
 
-    assert response.status_code == 202
     respond.assert_not_awaited()

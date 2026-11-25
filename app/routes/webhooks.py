@@ -44,10 +44,12 @@ from app.utils.flat_manager import get_flat_manager_client, get_flat_manager_rep
 from app.utils.github import (
     COMMENT_REACTION_TASK,
     REVIEWERS_MENTION,
+    GitHubUnavailable,
     add_issue_comment,
     close_github_issue,
     create_pr_comment,
     get_github_client,
+    get_ref_sha,
     is_issue_edited,
     normalize_git_oid,
     parse_build_ref_from_log,
@@ -1219,6 +1221,31 @@ async def push_already_built(repository: str, ref: str, sha: str | None) -> bool
     return sha is not None and latest_sha == sha
 
 
+GITHUB_WEBHOOK_TASK = "app.tasks.process_github_webhook"
+
+
+class PushProcessingFailed(Exception):
+    def __init__(self, retry_after: float | None = None):
+        super().__init__("Push processing failed")
+        self.retry_after = retry_after
+
+
+def is_push_payload(payload: dict[str, Any]) -> bool:
+    return "commits" in payload and bool(payload.get("ref"))
+
+
+async def is_replayable(event_name: str | None, payload: dict[str, Any]) -> bool:
+    if event_name == "workflow_run":
+        return True
+    if not is_push_payload(payload):
+        return False
+    try:
+        head = await get_ref_sha(payload["repository"]["full_name"], payload["ref"])
+    except GitHubUnavailable as e:
+        raise PushProcessingFailed(e.retry_after) from e
+    return head == payload.get("after")
+
+
 @webhooks_router.post(
     "/github",
     status_code=status.HTTP_202_ACCEPTED,
@@ -1271,15 +1298,32 @@ async def receive_github_webhook(
         )
 
     try:
-        repo_name = payload["repository"]["full_name"]
-        actor_login = payload["sender"]["login"]
+        _ = (payload["repository"]["full_name"], payload["sender"]["login"])
     except KeyError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Missing expected key in GitHub payload: {e}",
         )
 
-    if x_github_event == "workflow_run":
+    async with get_db() as db:
+        await defer(
+            db,
+            GITHUB_WEBHOOK_TASK,
+            lock=f"github-webhook:{delivery_id}",
+            delivery_id=str(delivery_id),
+            event_name=x_github_event,
+            payload=payload,
+        )
+    return {"message": "Webhook received", "event_id": str(delivery_id)}
+
+
+async def process_github_webhook(
+    delivery_id: uuid.UUID, event_name: str | None, payload: dict[str, Any]
+) -> dict[str, Any]:
+    repo_name = payload["repository"]["full_name"]
+    actor_login = payload["sender"]["login"]
+
+    if event_name == "workflow_run":
         pipeline_id = await enqueue_run_reconciliation(payload)
         return {
             "message": "Webhook received",
@@ -1306,7 +1350,7 @@ async def receive_github_webhook(
         pr_number = payload["pull_request"].get("number")
         if type(pr_number) is not int or pr_number <= 0:
             return {"message": "Webhook received but ignored due to missing PR number."}
-    is_push_event = "commits" in payload and payload.get("ref", "")
+    is_push_event = is_push_payload(payload)
 
     event = WebhookEvent(
         id=delivery_id,
@@ -1358,7 +1402,7 @@ async def receive_github_webhook(
         if raw_comment.startswith("/invite"):
             from app.services import invite_service
 
-            asyncio.create_task(invite_service.handle_invite_command(payload))
+            await invite_service.handle_invite_command(payload)
             return {"message": "Invite command received and processing."}
 
     if (
@@ -1371,7 +1415,7 @@ async def receive_github_webhook(
         if raw_comment.startswith("/merge"):
             from app.services import merge_service
 
-            asyncio.create_task(merge_service.handle_merge_command(payload))
+            await merge_service.handle_merge_command(payload)
             return {"message": "Merge command received and processing."}
 
     if (
@@ -1385,12 +1429,12 @@ async def receive_github_webhook(
         if raw_comment.startswith("/merge") and payload["issue"].get("pull_request"):
             from app.services import merge_service
 
-            asyncio.create_task(merge_service.handle_app_merge_command(payload))
+            await merge_service.handle_app_merge_command(payload)
             return {"message": "Merge command received and processing."}
         if raw_comment.strip() == "/close" and repo_name not in ignored_repos:
             from app.services import merge_service
 
-            asyncio.create_task(merge_service.handle_close_command(payload))
+            await merge_service.handle_close_command(payload)
             return {"message": "Close command received and processing."}
 
     if (
@@ -1553,12 +1597,11 @@ async def receive_github_webhook(
             logger.exception(
                 "Database error",
                 error=str(e),
-                event_id=str(event.id) if event else None,
+                event_id=str(event.id),
             )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database error occurred while processing webhook: {e}",
-            )
+            if is_push_event:
+                raise PushProcessingFailed() from e
+            raise
 
     response = {"message": "Webhook received", "event_id": str(event.id)}
     if pipeline_id:

@@ -117,7 +117,8 @@ async def reconcile(github: FakeGitHub):
     reconciler = WebhookDeliveryReconciler(
         HOOK_ID, auth=FakeAuth(github), sleep=AsyncMock()
     )
-    return await reconciler.reconcile(now=NOW)
+    with patch("app.utils.github.get_github_client", return_value=github):
+        return await reconciler.reconcile(now=NOW)
 
 
 @pytest.mark.asyncio

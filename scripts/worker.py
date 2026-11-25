@@ -33,6 +33,8 @@ def setup_observability() -> None:
 SLOW_QUEUES = ["build-diagnosis"]
 FAST_QUEUES = ["builds", "github", "permission", "maintenance", "flat-manager"]
 SLOW_CONCURRENCY = 2
+WEBHOOK_QUEUES = ["webhooks"]
+WEBHOOK_CONCURRENCY = 4
 
 
 async def serve_health(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -59,6 +61,11 @@ async def run() -> None:
                     queues=FAST_QUEUES,
                     concurrency=settings.worker_fast_concurrency,
                     **options,
+                )
+            ),
+            asyncio.create_task(
+                app.run_worker_async(
+                    queues=WEBHOOK_QUEUES, concurrency=WEBHOOK_CONCURRENCY, **options
                 )
             ),
         ]

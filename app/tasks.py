@@ -1,9 +1,13 @@
 import uuid
+from typing import Any
 
+import sentry_sdk
+import structlog
 from procrastinate import JobContext, RetryStrategy, builtin_tasks
 
 from app.pipelines import BuildPipeline
 from app.queue import app
+from app.routes import webhooks
 from app.services import (
     build_diagnosis,
     flat_manager_events,
@@ -17,6 +21,10 @@ from app.services import (
 from app.services.task_queue import QueueRetryStrategy
 from app.utils import github
 from app.utils.github import GitHubUnavailable, retry_after_hint, transient_failure
+
+logger = structlog.get_logger(__name__)
+
+WEBHOOK_PUSH_MAX_ATTEMPTS = 10
 
 
 @app.task(
@@ -56,6 +64,49 @@ async def retry_reprocheck(pipeline_id: str, callback_data: dict) -> None:
 @app.task(queue="builds")
 async def start_pending_builds() -> None:
     await BuildPipeline().start_pending_builds()
+
+
+@app.task(
+    name=webhooks.GITHUB_WEBHOOK_TASK,
+    queue="webhooks",
+    retry=QueueRetryStrategy(
+        max_attempts=WEBHOOK_PUSH_MAX_ATTEMPTS,
+        exponential_wait=2,
+        max_wait=900,
+        retry_exceptions={webhooks.PushProcessingFailed},
+    ),
+    pass_context=True,
+)
+async def process_github_webhook(
+    context: JobContext,
+    delivery_id: str,
+    event_name: str | None,
+    payload: dict[str, Any],
+) -> None:
+    try:
+        if context.job.attempts and not await webhooks.is_replayable(
+            event_name, payload
+        ):
+            logger.warning(
+                "Skipping replayed GitHub webhook",
+                delivery_id=delivery_id,
+                event_name=event_name,
+            )
+            return
+        await webhooks.process_github_webhook(
+            uuid.UUID(delivery_id), event_name, payload
+        )
+    except webhooks.PushProcessingFailed:
+        if context.job.attempts >= WEBHOOK_PUSH_MAX_ATTEMPTS:
+            logger.error(
+                "Push webhook retries exhausted",
+                delivery_id=delivery_id,
+                repository=payload["repository"]["full_name"],
+                ref=payload["ref"],
+                sha=payload.get("after"),
+            )
+            sentry_sdk.capture_message("Push webhook retries exhausted", level="error")
+        raise
 
 
 @app.task(queue="builds")
