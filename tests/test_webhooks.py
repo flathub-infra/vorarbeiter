@@ -322,10 +322,11 @@ async def test_push_processing_failure_is_retried(mock_db):
         attempts=1,
     )
     strategy = tasks.process_github_webhook.retry_strategy
+    assert strategy is not None
     assert strategy.get_retry_decision(exception=failure.value, job=job) is not None
-    assert (
-        strategy.get_retry_decision(exception=failure.value.__cause__, job=job) is None
-    )
+    cause = failure.value.__cause__
+    assert isinstance(cause, OperationalError)
+    assert strategy.get_retry_decision(exception=cause, job=job) is None
 
 
 @pytest.mark.asyncio
