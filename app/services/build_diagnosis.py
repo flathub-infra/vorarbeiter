@@ -105,7 +105,7 @@ SPOT_SUMMARY = (
 GITHUB_CANCELLED_SUMMARY = (
     'GitHub cancelled the build runner. Comment "bot, build" to retry.'
 )
-UNREPORTABLE_CATEGORIES = {"infrastructure", "unknown"}
+UNREPORTABLE_CATEGORIES = {"unknown"}
 CATEGORY_HINTS = {
     "source-download": "If the host is unreliable, add a fallback URL to that source "
     "with the mirror-urls key.",
