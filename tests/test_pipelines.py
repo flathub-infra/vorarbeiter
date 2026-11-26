@@ -2597,6 +2597,24 @@ async def test_supersedes_pending_pipeline_without_build_id():
 
 
 @pytest.mark.asyncio
+async def test_numeric_uuid_round_trip(db_session_maker):
+    numeric_uuid = uuid.UUID("1e" + "9" * 30)
+    async with db_session_maker() as db:
+        db.add_all(
+            [
+                Pipeline(id=numeric_uuid, app_id="org.example.One", params={}),
+                Pipeline(app_id="org.example.Two", params={}),
+            ]
+        )
+        await db.commit()
+
+    async with db_session_maker() as db:
+        pipeline = await db.get(Pipeline, numeric_uuid)
+        assert pipeline is not None
+        assert pipeline.id == numeric_uuid
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "old_ref,expected",
     [
