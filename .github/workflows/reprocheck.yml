@@ -38,7 +38,7 @@ on:
 
 jobs:
   update-log-url:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     steps:
       - name: Report log URL to the backend
         run: |
@@ -53,7 +53,7 @@ jobs:
             "${{ inputs.callback_url }}/log_url"
 
   setup-runner:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     outputs:
       runner: ${{ steps.set-runner.outputs.runner }}
       timeout: ${{ steps.set-runner.outputs.timeout }}
@@ -203,7 +203,7 @@ jobs:
           cat "$LOG_FILE" || true
 
   callback:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     needs: [reprocheck]
     if: ${{ always() && needs.reprocheck.result == 'failure' }}
     steps:
