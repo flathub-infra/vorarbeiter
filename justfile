@@ -28,6 +28,7 @@ detect-appid $path:
     #!/usr/bin/env python3
     import glob
     import os
+    import re
     import sys
 
     import gi
@@ -76,7 +77,9 @@ detect-appid $path:
                     continue
 
                 if appid:
-                    if os.path.splitext(manifest_file)[0] == appid:
+                    if not isinstance(appid, str) or not re.fullmatch(r"[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*){2,}", appid, re.ASCII) or len(appid) > 255:
+                        print(f"Invalid app-id in file {manifest_file}, discarding")
+                    elif os.path.splitext(manifest_file)[0] == appid:
                         print(f"Found appid: {appid}")
                         with open("app_id", "w") as f:
                             f.write(f"{appid}\n")

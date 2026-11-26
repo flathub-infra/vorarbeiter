@@ -1760,6 +1760,32 @@ def test_pipeline_metadata_callback_submission_app_id(
     create_token_subset.assert_awaited_with(build_id=12345, app_id="org.real.AppId")
 
 
+@pytest.mark.parametrize(
+    "detected_app_id",
+    ["org.real.App$(id)", "org.real.App\nBASH_ENV=x", "org.App", "1org.real.App"],
+)
+def test_pipeline_metadata_callback_rejects_invalid_app_id(
+    mock_get_db, sample_pipeline, detected_app_id
+):
+    test_client = TestClient(app)
+    sample_pipeline.app_id = "flathub"
+    mock_get_db_session = create_mock_get_db(mock_get_db)
+
+    with (
+        patch("app.routes.pipelines.get_db", mock_get_db_session),
+        patch("app.pipelines.build.get_db", mock_get_db_session),
+    ):
+        mock_get_db.get.return_value = sample_pipeline
+        response = test_client.post(
+            f"/api/pipelines/{sample_pipeline.id}/callback/metadata",
+            json={"app_id": detected_app_id},
+            headers={"Authorization": "Bearer test_token_12345"},
+        )
+
+    assert response.status_code == 400
+    assert sample_pipeline.app_id == "flathub"
+
+
 def test_pipeline_metadata_callback_end_of_life(mock_get_db, sample_pipeline):
     test_client = TestClient(app)
 

@@ -1,3 +1,4 @@
+import re
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -6,13 +7,23 @@ if TYPE_CHECKING:
     from app.pipelines import CallbackData
 from app.schemas.pipelines import PipelineLogUrlCallback, PipelineStatusCallback
 
+_APP_ID_PATTERN = re.compile(r"[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*){2,}", re.ASCII)
+
 
 class MetadataCallbackValidator:
     def validate_and_parse(self, data: dict[str, Any]) -> "CallbackData":
+        app_id = data.get("app_id")
+        if app_id is not None and (
+            not isinstance(app_id, str)
+            or len(app_id) > 255
+            or not _APP_ID_PATTERN.fullmatch(app_id)
+        ):
+            raise ValueError("Invalid app_id")
+
         from app.pipelines import CallbackData
 
         return CallbackData(
-            app_id=data.get("app_id"),
+            app_id=app_id,
             end_of_life=data.get("end_of_life"),
             end_of_life_rebase=data.get("end_of_life_rebase"),
             verified_sha=data.get("verified_sha"),
