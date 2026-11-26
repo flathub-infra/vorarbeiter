@@ -29,6 +29,7 @@ from app.utils.github import (
     get_github_client,
     set_pr_labels,
 )
+from app.utils.github_app import GitHubAppInstallationAuth
 from app.utils.manifest import detect_appid_from_github
 
 logger = structlog.get_logger(__name__)
@@ -900,6 +901,9 @@ class MergeService:
     async def _dispatch_merge_workflow(self, merge_request: MergeRequest) -> None:
         client = get_github_client()
         callback_url = f"{settings.base_url}/api/merge/{merge_request.id}/callback"
+        push_token = await GitHubAppInstallationAuth("github_push_app").scoped_token(
+            [merge_request.app_id], {"contents": "write", "workflows": "write"}
+        )
 
         payload = {
             "ref": "main",
@@ -908,7 +912,7 @@ class MergeService:
                 "expected_sha": merge_request.pr_head_sha,
                 "appid": merge_request.app_id,
                 "target_branch": merge_request.target_branch,
-                "flathubbot_token": settings.flathubbot_token,
+                "push_token": push_token,
                 "callback_url": callback_url,
                 "callback_token": merge_request.callback_token,
             },

@@ -17,8 +17,8 @@ on:
         description: 'Target branch on flathub/<appid> (master, beta, branch/*)'
         required: true
         default: 'master'
-      flathubbot_token:
-        description: 'flathubbot token (push to flathub/<appid>)'
+      push_token:
+        description: 'Repo-scoped GitHub App token (push to flathub/<appid>)'
         required: true
       callback_url:
         description: 'Vorarbeiter callback URL'
@@ -110,9 +110,9 @@ jobs:
         working-directory: repo
         run: |
           set -euo pipefail
-          FLATHUBBOT_TOKEN="$(jq -r '.inputs.flathubbot_token' $GITHUB_EVENT_PATH)"
-          echo "::add-mask::$FLATHUBBOT_TOKEN"
-          AUTH_B64="$(printf 'x-access-token:%s' "$FLATHUBBOT_TOKEN" | base64 -w0)"
+          PUSH_TOKEN="$(jq -r '.inputs.push_token' $GITHUB_EVENT_PATH)"
+          echo "::add-mask::$PUSH_TOKEN"
+          AUTH_B64="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)"
           echo "::add-mask::$AUTH_B64"
           git -c http.extraheader="Authorization: Basic $AUTH_B64" \
               push "https://github.com/flathub/$APPID.git" \

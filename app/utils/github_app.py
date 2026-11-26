@@ -49,29 +49,28 @@ class InstallationAuth(Protocol):
 class GitHubAppInstallationAuth:
     REFRESH_MARGIN = timedelta(minutes=5)
 
-    def __init__(self) -> None:
+    def __init__(self, settings_prefix: str = "github_app") -> None:
+        self._settings_prefix = settings_prefix
         self._token: str | None = None
         self._expires_at: datetime | None = None
         self._client: GitHubAPIClient | None = None
 
     def _configuration(self) -> tuple[int, int, Path]:
-        app_id = settings.github_app_id
-        installation_id = settings.github_app_installation_id
-        key_file = settings.github_app_private_key_file
+        prefix = self._settings_prefix
+        app_id = getattr(settings, f"{prefix}_id")
+        installation_id = getattr(settings, f"{prefix}_installation_id")
+        key_file = getattr(settings, f"{prefix}_private_key_file")
         missing = []
         if app_id is None:
-            missing.append("GITHUB_APP_ID")
+            missing.append(f"{prefix.upper()}_ID")
         if installation_id is None:
-            missing.append("GITHUB_APP_INSTALLATION_ID")
+            missing.append(f"{prefix.upper()}_INSTALLATION_ID")
         if not key_file:
-            missing.append("GITHUB_APP_PRIVATE_KEY_FILE")
+            missing.append(f"{prefix.upper()}_PRIVATE_KEY_FILE")
         if missing:
             raise GitHubAppAuthenticationError(
                 f"Missing GitHub App configuration: {', '.join(missing)}"
             )
-        assert app_id is not None
-        assert installation_id is not None
-        assert key_file is not None
         return app_id, installation_id, Path(key_file)
 
     def _app_jwt(self, app_id: int, key_file: Path) -> str:
@@ -92,7 +91,7 @@ class GitHubAppInstallationAuth:
             algorithm="RS256",
         )
 
-    async def _refresh(self) -> None:
+    async def _exchange(self, **kwargs: Any) -> tuple[str, datetime]:
         app_id, installation_id, key_file = self._configuration()
         app_jwt = self._app_jwt(app_id, key_file)
         for attempt in range(TOKEN_EXCHANGE_RATE_LIMIT_RETRIES + 1):
@@ -101,6 +100,7 @@ class GitHubAppInstallationAuth:
                 "post",
                 f"https://api.github.com/app/installations/{installation_id}/access_tokens",
                 raise_for_status=False,
+                **kwargs,
             )
             response = result.response
             is_rate_limited = result.error_type == "rate_limit" or (
@@ -137,10 +137,20 @@ class GitHubAppInstallationAuth:
                 raise GitHubAppAuthenticationError(
                     "GitHub App token exchange returned an unexpected response"
                 )
-            self._token = token
-            self._expires_at = expires_at.astimezone(UTC)
-            self._client = GitHubAPIClient(token, authorization_scheme="Bearer")
-            return
+            return token, expires_at.astimezone(UTC)
+        raise AssertionError("unreachable")
+
+    async def _refresh(self) -> None:
+        self._token, self._expires_at = await self._exchange()
+        self._client = GitHubAPIClient(self._token, authorization_scheme="Bearer")
+
+    async def scoped_token(
+        self, repositories: list[str], permissions: dict[str, str]
+    ) -> str:
+        token, _ = await self._exchange(
+            json={"repositories": repositories, "permissions": permissions}
+        )
+        return token
 
     @staticmethod
     def _is_rate_limit_response(response: httpx.Response) -> bool:

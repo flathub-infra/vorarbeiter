@@ -67,6 +67,43 @@ async def test_installation_token_is_cached_until_refresh_margin():
 
 
 @pytest.mark.asyncio
+async def test_scoped_token_requests_repository_and_permissions():
+    auth = GitHubAppInstallationAuth("github_push_app")
+    token_response = httpx.Response(
+        201,
+        json={"token": "scoped-token", "expires_at": "2999-01-01T00:00:00Z"},
+    )
+    exchange_client = Mock()
+    exchange_client.request_with_result = AsyncMock(
+        return_value=GitHubAPIResult(response=token_response)
+    )
+
+    with (
+        patch.object(auth, "_app_jwt", return_value="app-jwt"),
+        patch("app.utils.github_app.GitHubAPIClient", return_value=exchange_client),
+        patch("app.utils.github_app.settings.github_push_app_id", 1),
+        patch("app.utils.github_app.settings.github_push_app_installation_id", 2),
+        patch(
+            "app.utils.github_app.settings.github_push_app_private_key_file",
+            "/private-key.pem",
+        ),
+    ):
+        token = await auth.scoped_token(["org.example.App"], {"contents": "write"})
+
+    assert token == "scoped-token"
+    exchange_client.request_with_result.assert_awaited_once_with(
+        "post",
+        "https://api.github.com/app/installations/2/access_tokens",
+        raise_for_status=False,
+        json={
+            "repositories": ["org.example.App"],
+            "permissions": {"contents": "write"},
+        },
+    )
+    assert auth._client is None
+
+
+@pytest.mark.asyncio
 async def test_invalidated_installation_token_is_exchanged_again():
     auth = GitHubAppInstallationAuth()
     responses = [

@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     github_app_id: int | None = None
     github_app_installation_id: int | None = None
     github_app_private_key_file: str | None = None
+    github_push_app_id: int | None = None
+    github_push_app_installation_id: int | None = None
+    github_push_app_private_key_file: str | None = None
     github_webhook_hook_id: int | None = None
     github_webhook_secret: str = "test_webhook_secret"
     flat_manager_token: str = "test_repo_token"
