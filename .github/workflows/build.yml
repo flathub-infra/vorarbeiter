@@ -78,14 +78,17 @@ jobs:
     needs: [check-event-type, update-log-url]
     steps:
       - name: Set variables
+        env:
+          GIT_REF: ${{ inputs.git_ref }}
+          INPUT_PR_TARGET_BRANCH: ${{ inputs.pr_target_branch }}
         run: |
           echo "APP_ID=${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "BRANCH=${{ inputs.flat_manager_repo }}" >> $GITHUB_ENV
           # sync this env var name with linter
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
-          echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
+          echo "REF=$GIT_REF" >> $GITHUB_ENV
           echo "EXPECTED_SUBMISSION_SHA=${{ inputs.expected_submission_sha }}" >> $GITHUB_ENV
-          echo "PR_TARGET_BRANCH=${{ inputs.pr_target_branch }}" >> $GITHUB_ENV
+          echo "PR_TARGET_BRANCH=$INPUT_PR_TARGET_BRANCH" >> $GITHUB_ENV
 
       - name: Create work directory
         run: |
@@ -367,14 +370,17 @@ jobs:
           metrics: disk
 
       - name: Set variables
+        env:
+          GIT_REF: ${{ inputs.git_ref }}
+          INPUT_PR_TARGET_BRANCH: ${{ inputs.pr_target_branch }}
         run: |
           echo "APP_ID=${{ inputs.app_id }}" >> $GITHUB_ENV
           echo "BRANCH=${{ inputs.flat_manager_repo }}" >> $GITHUB_ENV
           # sync this env var name with linter
           echo "REPO=https://github.com/flathub/${{ inputs.app_id }}" >> $GITHUB_ENV
-          echo "REF=${{ inputs.git_ref }}" >> $GITHUB_ENV
+          echo "REF=$GIT_REF" >> $GITHUB_ENV
           echo "EXPECTED_SUBMISSION_SHA=${{ inputs.expected_submission_sha }}" >> $GITHUB_ENV
-          echo "PR_TARGET_BRANCH=${{ inputs.pr_target_branch }}" >> $GITHUB_ENV
+          echo "PR_TARGET_BRANCH=$INPUT_PR_TARGET_BRANCH" >> $GITHUB_ENV
           echo "BUILD_URL=${{ inputs.build_url }}" >> $GITHUB_ENV
           echo "BUILD_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           REPO_TOKEN="$(jq -r '.inputs.flat_manager_token // empty' $GITHUB_EVENT_PATH)"
