@@ -142,7 +142,7 @@ async def test_start_pipeline(build_pipeline, mock_db, submission):
 
 @pytest.mark.asyncio
 async def test_start_pipeline_keeps_debounced_request_pending_without_side_effects(
-    build_pipeline, mock_db
+    build_pipeline, mock_provider, mock_db
 ):
     pipeline = Pipeline(
         id=uuid.uuid4(),
@@ -157,7 +157,7 @@ async def test_start_pipeline_keeps_debounced_request_pending_without_side_effec
         provider_data={},
     )
     mock_db.get.return_value = pipeline
-    build_pipeline.provider.dispatch.reset_mock()
+    build_pipeline.provider = mock_provider
     with (
         patch("app.pipelines.build.get_db", create_mock_get_db(mock_db)),
         patch.object(
