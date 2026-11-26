@@ -766,6 +766,43 @@ async def test_receive_github_webhook_dispatches_invite_comment(is_pr: bool):
     mock_handle_invite.assert_awaited_once_with(payload)
 
 
+@pytest.mark.parametrize(
+    ("body", "is_pr", "posted"),
+    [
+        ("/review\n", True, True),
+        ("/review", False, False),
+        ("/reviewed", True, False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_receive_github_webhook_replies_to_review_comment(
+    body: str, is_pr: bool, posted: bool
+):
+    issue = {"number": 42, **({"pull_request": {"url": "u"}} if is_pr else {})}
+    payload = {
+        **SAMPLE_FLATHUB_MERGE_PAYLOAD,
+        "comment": {"body": body},
+        "issue": issue,
+    }
+
+    with (
+        patch(
+            "app.routes.webhooks.add_issue_comment", new_callable=AsyncMock
+        ) as mock_add_comment,
+        patch(
+            "app.routes.webhooks.get_db",
+            create_mock_get_db(AsyncMock(spec=AsyncSession)),
+        ),
+    ):
+        await process_github_webhook(uuid.uuid4(), None, payload)
+
+    if posted:
+        mock_add_comment.assert_awaited_once()
+        assert mock_add_comment.call_args_list[0].args[:2] == ("flathub/flathub", 42)
+    else:
+        mock_add_comment.assert_not_awaited()
+
+
 def test_should_store_event_admin_ping():
     from app.routes.webhooks import should_store_event
 

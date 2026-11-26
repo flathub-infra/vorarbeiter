@@ -110,6 +110,11 @@ INACTIVE_REPO_TEST_BUILD_MSG = (
     "🚧 Pull requests in this repository are no longer built automatically due to "
     "inactivity. To request a test build, comment `bot, build` on this PR."
 )
+REVIEW_COMMAND_MSG = (
+    "![you have been /reviewed](https://dl.flathub.org/assets/reviewed.jpg)\n"
+    "\n"
+    "There is no `/review` command. A reviewer will look at this when they can."
+)
 
 TEST_BUILD_ENQUEUED_MSG = "🚧 Test build enqueued."
 
@@ -1417,6 +1422,11 @@ async def process_github_webhook(
 
             await merge_service.handle_merge_command(payload)
             return {"message": "Merge command received and processing."}
+        if raw_comment.strip() == "/review":
+            await add_issue_comment(
+                repo_name, payload["issue"]["number"], REVIEW_COMMAND_MSG
+            )
+            return {"message": "Review command received."}
 
     if (
         repo_name.startswith("flathub/")
