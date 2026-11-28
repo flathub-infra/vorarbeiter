@@ -111,7 +111,9 @@ CLOSE_COMMENT_TEMPLATE = (
     "[verify your app](https://docs.flathub.org/docs/for-app-authors/verification) "
     "to let users know it's coming from you.\n"
     "- Follow the [Flathub blog](https://docs.flathub.org/blog) for the latest "
-    "announcements.\n\n"
+    "announcements.\n"
+    " - Feel free to contact us at any time via our "
+    "[Matrix channel](https://matrix.to/#/#flathub:matrix.org).\n\n"
     "Thanks!"
 )
 
