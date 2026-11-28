@@ -99,19 +99,19 @@ def resolve_target_branch(
 
 
 CLOSE_COMMENT_TEMPLATE = (
-    "A repository for this submission has been created: {repo_url} "
-    "and it will be published to Flathub within a few hours.\n"
-    "You will receive an [invite]({repo_url}/invitations) "
-    "to be a collaborator on the repository. Please make sure to enable "
-    "2FA on GitHub and accept the invite within a week.\n"
-    "Please go through the [App maintenance guide]"
-    "(https://docs.flathub.org/docs/for-app-authors/maintenance) "
-    "if you have never maintained an app on Flathub before.\n"
-    "If you are the original developer (or an authorized party), please "
+    "A repository for this submission has been created: {repo_url}\n\n"
+    "It will be published to Flathub within a few hours.\n\n"
+    "Next steps:\n\n"
+    "- Accept the [invite]({repo_url}/invitations) to be a collaborator on the "
+    "repository within a week. Make sure to enable 2FA on GitHub first.\n"
+    "- If you have never maintained an app on Flathub before, go through the "
+    "[App maintenance guide]"
+    "(https://docs.flathub.org/docs/for-app-authors/maintenance).\n"
+    "- If you are the original developer (or an authorized party), "
     "[verify your app](https://docs.flathub.org/docs/for-app-authors/verification) "
     "to let users know it's coming from you.\n"
-    "Please follow the [Flathub blog](https://docs.flathub.org/blog) for the latest "
-    "announcements.\n"
+    "- Follow the [Flathub blog](https://docs.flathub.org/blog) for the latest "
+    "announcements.\n\n"
     "Thanks!"
 )
 
