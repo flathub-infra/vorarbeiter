@@ -112,7 +112,7 @@ CLOSE_COMMENT_TEMPLATE = (
     "to let users know it's coming from you.\n"
     "- Follow the [Flathub blog](https://docs.flathub.org/blog) for the latest "
     "announcements.\n"
-    " - Feel free to contact us at any time via our "
+    "- Feel free to contact us at any time via our "
     "[Matrix channel](https://matrix.to/#/#flathub:matrix.org).\n\n"
     "Thanks!"
 )
