@@ -3746,6 +3746,54 @@ async def test_create_pipeline_bot_cancel_no_pr_url():
 
 
 @pytest.mark.asyncio
+async def test_bot_cancel_finds_running_submission_with_resolved_app_id(
+    db_session_maker,
+):
+    from sqlalchemy import select
+
+    from app.routes.webhooks import create_pipeline
+
+    running = Pipeline(
+        app_id="org.example.App",
+        params={"repo": "flathub/flathub", "ref": "refs/pull/42/head"},
+        status=PipelineStatus.RUNNING,
+    )
+    other_repo = Pipeline(
+        app_id="org.other.App",
+        params={"repo": "flathub/org.other.App", "ref": "refs/pull/42/head"},
+        status=PipelineStatus.RUNNING,
+    )
+    payload = {
+        **SAMPLE_BOT_CANCEL_PAYLOAD,
+        "repository": {"full_name": "flathub/flathub"},
+    }
+    event = WebhookEvent(
+        id=uuid.uuid4(),
+        payload=payload,
+        repository="flathub/flathub",
+        actor="test-actor",
+    )
+    async with db_session_maker() as db:
+        db.add_all([running, other_repo])
+        await db.commit()
+        with (
+            patch("app.routes.webhooks.get_db", create_mock_get_db(db)),
+            patch("app.routes.webhooks.cancel_pipeline", AsyncMock()) as cancel,
+            patch("app.routes.webhooks.create_pr_comment", AsyncMock()),
+            patch("app.routes.webhooks.get_flat_manager_client"),
+            patch("app.routes.webhooks.GitHubActionsService"),
+        ):
+            assert await create_pipeline(event) is None
+
+        statuses = {row.id: row.status for row in await db.scalars(select(Pipeline))}
+    assert statuses == {
+        running.id: PipelineStatus.CANCELLED,
+        other_repo.id: PipelineStatus.RUNNING,
+    }
+    assert [c.args[0] for c in cancel.await_args_list] == [running.id]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "base_ref, expected_pr_target_branch",
     [

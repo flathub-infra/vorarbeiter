@@ -1822,16 +1822,12 @@ async def create_pipeline(event: WebhookEvent) -> uuid.UUID | None:
             ] = []
 
             async with get_db() as db:
-                query = (
-                    select(Pipeline)
-                    .where(
-                        Pipeline.app_id == app_id,
-                        Pipeline.status.in_(
-                            [PipelineStatus.PENDING, PipelineStatus.RUNNING]
-                        ),
-                        text("params->>'ref' = :ref"),
-                    )
-                    .params(ref=pr_ref)
+                query = select(Pipeline).where(
+                    Pipeline.status.in_(
+                        [PipelineStatus.PENDING, PipelineStatus.RUNNING]
+                    ),
+                    Pipeline.params["repo"].as_string() == repo,
+                    Pipeline.params["ref"].as_string() == pr_ref,
                 )
                 result = await db.execute(query)
                 active_pipelines = list(result.scalars().all())
